@@ -1,0 +1,38 @@
+{
+  "schema_version": 1,
+  "models": [
+    {
+      "id": "sdxl-base-1.0",
+      "purpose": "concept",
+      "filename": "sd_xl_base_1.0.safetensors",
+      "source_url": "https://huggingface.co/stabilityai/stable-diffusion-xl-base-1.0",
+      "download_url": "https://huggingface.co/stabilityai/stable-diffusion-xl-base-1.0/resolve/main/sd_xl_base_1.0.safetensors?download=true",
+      "license": "CreativeML Open RAIL++-M",
+      "license_url": "https://huggingface.co/stabilityai/stable-diffusion-xl-base-1.0/blob/main/LICENSE.md",
+      "commercial_review": "required",
+      "installed_sha256": null
+    },
+    {
+      "id": "flux.1-schnell",
+      "purpose": "optional-concept",
+      "filename": null,
+      "source_url": "https://github.com/black-forest-labs/flux",
+      "download_url": null,
+      "license": "Apache-2.0",
+      "license_url": "https://github.com/black-forest-labs/flux/blob/main/LICENSE.md",
+      "commercial_review": "required",
+      "installed_sha256": null
+    },
+    {
+      "id": "triposr",
+      "purpose": "optional-mesh-seed",
+      "filename": null,
+      "source_url": "https://github.com/VAST-AI-Research/TripoSR",
+      "download_url": null,
+      "license": "MIT",
+      "license_url": "https://github.com/VAST-AI-Research/TripoSR/blob/main/LICENSE",
+      "commercial_review": "required",
+      "installed_sha256": null
+    }
+  ]
+}

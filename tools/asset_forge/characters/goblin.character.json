@@ -1,0 +1,22 @@
+{
+  "id": "goblin",
+  "source": "asset_sources/ember-defense/assets/goblin/master/goblin.blend",
+  "animation_object": "Armature",
+  "max_polygons": 35000,
+  "cell_size": [256, 256],
+  "render_size": [512, 512],
+  "orthographic_scale": 4.2,
+  "camera_target_height": 0.95,
+  "camera_distance": 10.0,
+  "camera_height": 7.0,
+  "target_height_fraction": 0.58,
+  "directions": ["north", "south", "east", "west"],
+  "animations": {
+    "idle": { "actions": ["idle", "Idle"], "frames": 4, "loop": true },
+    "walk": { "actions": ["walk", "Walk"], "frames": 6, "loop": true },
+    "attack": { "actions": ["attack", "Attack"], "frames": 6, "loop": false },
+    "hit": { "actions": ["hit", "Hit"], "frames": 2, "loop": false },
+    "death": { "actions": ["death", "Death"], "frames": 6, "loop": false }
+  },
+  "output_path_pattern": "asset_sources/ember-defense/assets/goblin/sheets/goblin_{animation}_{direction}_sheet.png"
+}

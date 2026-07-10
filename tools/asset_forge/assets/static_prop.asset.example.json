@@ -1,0 +1,16 @@
+{
+  "id": "example_prop",
+  "source": "tools/asset_forge/sources/example_prop.blend",
+  "cell_size": [256, 256],
+  "render_size": [512, 512],
+  "orthographic_scale": 4.6,
+  "camera_target_height": 1.15,
+  "camera_distance": 10.0,
+  "camera_height": 7.0,
+  "target_height_fraction": 0.82,
+  "directions": ["north", "south", "east", "west"],
+  "animations": {
+    "still": { "actions": [], "frames": 1, "loop": false }
+  },
+  "output_path_pattern": "unity/EmberDefenseUnity/Assets/Art/Props/example_prop_{animation}_{direction}.png"
+}

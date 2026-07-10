@@ -1,0 +1,29 @@
+{
+  "schema_version": 1,
+  "id": "rtx3080-laptop-8gb",
+  "display_name": "RTX 3080 Laptop 8 GB",
+  "comfyui": {
+    "base_url": "http://127.0.0.1:8188",
+    "launch_args": ["--listen", "127.0.0.1", "--port", "8188", "--lowvram", "--preview-method", "none"],
+    "max_parallel_jobs": 1,
+    "concept_width": 768,
+    "concept_height": 768,
+    "turnaround_width": 1216,
+    "turnaround_height": 832,
+    "batch_size": 1,
+    "steps": 28,
+    "cfg": 6.5,
+    "sampler": "dpmpp_2m",
+    "scheduler": "karras"
+  },
+  "blender": {
+    "render_engine": "BLENDER_EEVEE_NEXT",
+    "concurrent_processes": 1
+  },
+  "mesh_seed": {
+    "engine": "triposr",
+    "enabled_by_default": false,
+    "max_parallel_jobs": 1,
+    "texture_resolution": 1024
+  }
+}
