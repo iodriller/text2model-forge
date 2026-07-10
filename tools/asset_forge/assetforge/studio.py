@@ -78,7 +78,8 @@ def dashboard(state: StudioState) -> str:
         )
         cards.append(f"""<section class="card"><h2>{html.escape(asset['display_name'])}</h2><p class="muted">{html.escape(asset['asset_id'])} · {html.escape(asset['kind'])}</p><div>{stages}</div><a class="button" href="/asset/{html.escape(asset['asset_id'])}">Open production card</a></section>""")
     empty = '<section class="card"><h2>No assets yet</h2><p class="muted">Create the first structured production brief.</p><a class="button" href="/new">New asset</a></section>'
-    return f"<h2>{html.escape(status['project_id'])}</h2><div class="grid">{''.join(cards) if cards else empty}</div>"
+    body = "".join(cards) if cards else empty
+    return f'<h2>{html.escape(status["project_id"])}</h2><div class="grid">{body}</div>'
 
 
 def new_asset_form() -> str:
@@ -105,7 +106,7 @@ def job_page(state: StudioState, job_id: str) -> str:
     with state.lock:
         job = dict(state.jobs.get(job_id, {"state": "unknown", "error": "job not found"}))
     refresh = '<meta http-equiv="refresh" content="2">' if job.get("state") in {"queued", "running"} else ""
-    return refresh + f"<section class="card"><h2>Generation job</h2><pre>{html.escape(json.dumps(job, indent=2))}</pre><a class="button" href="/">Dashboard</a></section>"
+    return refresh + f'<section class="card"><h2>Generation job</h2><pre>{html.escape(json.dumps(job, indent=2))}</pre><a class="button" href="/">Dashboard</a></section>'
 
 
 def serve(workspace: Path, host: str = "127.0.0.1", port: int = 8765) -> None:
