@@ -183,7 +183,7 @@ def init_workspace(
     write_json(destination, project, overwrite=False)
     write_json(root / "style" / "style-profile.json", style, overwrite=False)
     write_json(root / "models" / "model-registry.json", models, overwrite=False)
-    write_json(root / "hardware" / "rtx3080-8gb.profile.json", hardware, overwrite=False)
+    write_json(root / "hardware" / f"{project['hardware_profile']}.profile.json", hardware, overwrite=False)
     (root / "assets").mkdir(exist_ok=True)
     return project
 

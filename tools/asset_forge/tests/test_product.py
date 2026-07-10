@@ -35,7 +35,7 @@ class WorkspaceTests(unittest.TestCase):
         self.assertEqual("test_game", project["project_id"])
         self.assertTrue((self.workspace / "style" / "style-profile.json").is_file())
         self.assertTrue((self.workspace / "models" / "model-registry.json").is_file())
-        self.assertTrue((self.workspace / "hardware" / "rtx3080-8gb.profile.json").is_file())
+        self.assertTrue((self.workspace / "hardware" / "rtx3080-laptop-8gb.profile.json").is_file())
 
     def test_asset_prompt_and_workflow_are_deterministic(self):
         create_asset(self.workspace, "iron_guard", "Iron Guard", "character", "readable shield tank", "defender")
