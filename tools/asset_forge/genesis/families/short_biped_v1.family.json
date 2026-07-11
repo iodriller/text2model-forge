@@ -1,0 +1,66 @@
+{
+  "schema_version": 1,
+  "stage": "family_contract",
+  "id": "short_biped_v1",
+  "display_name": "Short Biped",
+  "body_plan": "biped",
+  "topology_strategy": "watertight_reference_target_then_preserved_variant_fit",
+  "topology_graph": {
+    "points": [
+      "pelvis", "chest", "neck", "head", "snout", "jaw", "ear_tip_l", "ear_tip_r",
+      "shoulder_l", "elbow_l", "wrist_l", "shoulder_r", "elbow_r", "wrist_r",
+      "hip_l", "knee_l", "ankle_l", "toe_l", "hip_r", "knee_r", "ankle_r", "toe_r"
+    ],
+    "edges": [
+      ["pelvis", "chest"], ["chest", "neck"], ["neck", "head"],
+      ["head", "snout"], ["head", "jaw"], ["head", "ear_tip_l"], ["head", "ear_tip_r"],
+      ["chest", "shoulder_l"], ["shoulder_l", "elbow_l"], ["elbow_l", "wrist_l"],
+      ["chest", "shoulder_r"], ["shoulder_r", "elbow_r"], ["elbow_r", "wrist_r"],
+      ["pelvis", "hip_l"], ["hip_l", "knee_l"], ["knee_l", "ankle_l"], ["ankle_l", "toe_l"],
+      ["pelvis", "hip_r"], ["hip_r", "knee_r"], ["knee_r", "ankle_r"], ["ankle_r", "toe_r"]
+    ],
+    "radii": {
+      "pelvis": 0.3, "chest": 0.33, "neck": 0.19, "head": 0.3, "snout": 0.16, "jaw": 0.17,
+      "ear_tip_l": 0.055, "ear_tip_r": 0.055,
+      "shoulder_l": 0.17, "elbow_l": 0.145, "wrist_l": 0.13,
+      "shoulder_r": 0.17, "elbow_r": 0.145, "wrist_r": 0.13,
+      "hip_l": 0.2, "knee_l": 0.17, "ankle_l": 0.145, "toe_l": 0.14,
+      "hip_r": 0.2, "knee_r": 0.17, "ankle_r": 0.145, "toe_r": 0.14
+    },
+    "root_point": "pelvis",
+    "subdivision_levels": 2
+  },
+  "skeleton": [
+    {"name": "hips", "head": "pelvis", "tail": "chest"},
+    {"name": "spine", "head": "chest", "tail": "neck", "parent": "hips"},
+    {"name": "head", "head": "neck", "tail": "head", "parent": "spine"},
+    {"name": "jaw", "head": "head", "tail": "jaw", "parent": "head"},
+    {"name": "ear.L", "head": "head", "tail": "ear_tip_l", "parent": "head"},
+    {"name": "ear.R", "head": "head", "tail": "ear_tip_r", "parent": "head"},
+    {"name": "upper_arm.L", "head": "shoulder_l", "tail": "elbow_l", "parent": "spine"},
+    {"name": "forearm.L", "head": "elbow_l", "tail": "wrist_l", "parent": "upper_arm.L"},
+    {"name": "upper_arm.R", "head": "shoulder_r", "tail": "elbow_r", "parent": "spine"},
+    {"name": "forearm.R", "head": "elbow_r", "tail": "wrist_r", "parent": "upper_arm.R"},
+    {"name": "thigh.L", "head": "hip_l", "tail": "knee_l", "parent": "hips"},
+    {"name": "shin.L", "head": "knee_l", "tail": "ankle_l", "parent": "thigh.L"},
+    {"name": "foot.L", "head": "ankle_l", "tail": "toe_l", "parent": "shin.L"},
+    {"name": "thigh.R", "head": "hip_r", "tail": "knee_r", "parent": "hips"},
+    {"name": "shin.R", "head": "knee_r", "tail": "ankle_r", "parent": "thigh.R"},
+    {"name": "foot.R", "head": "ankle_r", "tail": "toe_r", "parent": "shin.R"}
+  ],
+  "required_controls": ["jaw", "ear.L", "ear.R"],
+  "attachment_sockets": {
+    "hand.L": "forearm.L",
+    "hand.R": "forearm.R",
+    "head": "head"
+  },
+  "motion_provider": "procedural_short_biped_v1",
+  "required_actions": ["idle", "walk", "attack", "hit", "death"],
+  "motion_thresholds": {
+    "max_foot_slip_m": 0.025,
+    "max_grip_error_m": 0.01,
+    "min_attack_tip_travel_m": 0.35,
+    "max_non_adjacent_triangle_overlaps": 0,
+    "max_area_ratio": 1.8
+  }
+}

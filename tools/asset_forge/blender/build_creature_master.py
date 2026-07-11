@@ -280,11 +280,20 @@ def build_head(profile, armature, materials, created):
         ellipsoid("Morph.Cranium", modules["cranium"])
     if "eyes" in modules:
         spec = modules["eyes"]
+        pupil_spec = spec.get("pupil")
         for side, sign in (("L", -1.0), ("R", 1.0)):
             eye_spec = dict(spec)
             eye_spec["right"] = sign * float(spec["spacing"])
             eye_spec["scale"] = [spec["radius"], spec["radius"], spec["radius"] * 0.72]
             ellipsoid(f"Morph.Eye.{side}", eye_spec)
+            if pupil_spec:
+                radius = float(pupil_spec.get("radius", float(spec["radius"]) * 0.42))
+                pupil = dict(pupil_spec)
+                pupil["right"] = sign * float(spec["spacing"])
+                pupil["forward"] = float(spec.get("forward", 0.0)) + float(pupil_spec.get("forward_offset", 0.02))
+                pupil["up"] = float(spec.get("up", 0.0)) + float(pupil_spec.get("up_offset", 0.0))
+                pupil["scale"] = [radius, radius * 0.9, radius]
+                ellipsoid(f"Morph.Pupil.{side}", pupil)
     if "brow" in modules:
         spec = modules["brow"]
         for side, sign in (("L", -1.0), ("R", 1.0)):
@@ -324,16 +333,44 @@ def build_head(profile, armature, materials, created):
             value = add_ear(f"Morph.Ear.{side}", sign, spec, frame, materials[spec["material"]], armature, bone)
             created.append(value.name)
     if modules.get("skullcap", {}).get("enabled"):
+        spec = modules["skullcap"]
         cap = {
-            "scale": [0.25, 0.20, 0.22], "forward": -0.12, "up": 0.08,
-            "material": modules["skullcap"]["material"],
+            "scale": spec.get("scale", [0.25, 0.20, 0.22]),
+            "forward": spec.get("forward", -0.12),
+            "up": spec.get("up", 0.08),
+            "material": spec["material"],
         }
         ellipsoid("Morph.Skullcap", cap)
+
+
+def adapt_donor_body(profile, armature, materials, created):
+    """Keep the donor's own skinned mesh instead of rebuilding the body from
+    primitives. The donor mesh already deforms correctly under every shipping
+    action (it is the mesh those actions were rigged against); species identity
+    is layered on top via the head build and posture bake, exactly like the
+    footman's helmet sits on this same body. Never delete this mesh: doing so
+    was the root cause of the first Creature DNA goblin's joint gaps and
+    walk/taunt/death failures (disconnected primitives with no shared surface)."""
+    body = profile.get("body")
+    donor_name = body.get("donor_object", "Warrior_Body")
+    donor = bpy.data.objects.get(donor_name)
+    if donor is None:
+        raise RuntimeError(
+            f"donor_mesh_adapt body needs {donor_name!r}, which was not found "
+            "(check remove_objects does not delete it)"
+        )
+    donor.data.materials.clear()
+    donor.data.materials.append(materials[body.get("skin_material", "skin")])
+    smooth(donor)
+    created.append(donor.name)
 
 
 def build_body(profile, armature, materials, created):
     body = profile.get("body")
     if not isinstance(body, dict):
+        return
+    if body.get("construction") == "donor_mesh_adapt":
+        adapt_donor_body(profile, armature, materials, created)
         return
     for spec in body.get("segments", []):
         center, direction, _forward, _right, length = bone_frame(armature, spec["bone"])

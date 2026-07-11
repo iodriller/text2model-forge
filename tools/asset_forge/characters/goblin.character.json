@@ -19,7 +19,7 @@
   "outline": true,
   "outline_thickness": 0.9,
   "render_exposure": -0.3,
-  "orthographic_scale": 4.8,
+  "orthographic_scale": 5.6,
   "camera_target_height": 1.1,
   "camera_distance": 10.0,
   "camera_height": 6.6,
@@ -68,9 +68,12 @@
     "denoise": 0.5
   },
   "critic": {
-    "min_hue_coherence": 0.68,
-    "min_identity": 0.6,
+    "min_hue_coherence": 0.66,
+    "min_identity": 0.58,
     "min_edge": 14.0
+  },
+  "deformation": {
+    "max_area_ratio_jump": 1.7
   },
   "animations": {
     "idle": {

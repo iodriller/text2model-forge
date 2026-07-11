@@ -1,0 +1,56 @@
+{
+  "schema_version": 1,
+  "stage": "family_contract",
+  "id": "winged_quadruped_v1",
+  "display_name": "Winged Quadruped",
+  "body_plan": "winged_quadruped",
+  "topology_strategy": "watertight_reference_target_then_preserved_variant_fit",
+  "topology_graph": {
+    "points": [
+      "pelvis", "spine_mid", "chest", "neck", "head", "snout", "jaw", "horn_tip_l", "horn_tip_r",
+      "front_shoulder_l", "front_elbow_l", "front_ankle_l", "front_toe_l", "front_shoulder_r", "front_elbow_r", "front_ankle_r", "front_toe_r",
+      "rear_hip_l", "rear_knee_l", "rear_ankle_l", "rear_toe_l", "rear_hip_r", "rear_knee_r", "rear_ankle_r", "rear_toe_r",
+      "wing_root_l", "wing_elbow_l", "wing_wrist_l", "wing_tip_l", "wing_root_r", "wing_elbow_r", "wing_wrist_r", "wing_tip_r",
+      "tail_1", "tail_2", "tail_tip"
+    ],
+    "edges": [
+      ["pelvis", "spine_mid"], ["spine_mid", "chest"], ["chest", "neck"], ["neck", "head"], ["head", "snout"], ["head", "jaw"], ["head", "horn_tip_l"], ["head", "horn_tip_r"],
+      ["chest", "front_shoulder_l"], ["front_shoulder_l", "front_elbow_l"], ["front_elbow_l", "front_ankle_l"], ["front_ankle_l", "front_toe_l"],
+      ["chest", "front_shoulder_r"], ["front_shoulder_r", "front_elbow_r"], ["front_elbow_r", "front_ankle_r"], ["front_ankle_r", "front_toe_r"],
+      ["pelvis", "rear_hip_l"], ["rear_hip_l", "rear_knee_l"], ["rear_knee_l", "rear_ankle_l"], ["rear_ankle_l", "rear_toe_l"],
+      ["pelvis", "rear_hip_r"], ["rear_hip_r", "rear_knee_r"], ["rear_knee_r", "rear_ankle_r"], ["rear_ankle_r", "rear_toe_r"],
+      ["chest", "wing_root_l"], ["wing_root_l", "wing_elbow_l"], ["wing_elbow_l", "wing_wrist_l"], ["wing_wrist_l", "wing_tip_l"],
+      ["chest", "wing_root_r"], ["wing_root_r", "wing_elbow_r"], ["wing_elbow_r", "wing_wrist_r"], ["wing_wrist_r", "wing_tip_r"],
+      ["pelvis", "tail_1"], ["tail_1", "tail_2"], ["tail_2", "tail_tip"]
+    ],
+    "radii": {
+      "pelvis": 0.4, "spine_mid": 0.4, "chest": 0.4, "neck": 0.25, "head": 0.3, "snout": 0.18, "jaw": 0.15, "horn_tip_l": 0.04, "horn_tip_r": 0.04,
+      "front_shoulder_l": 0.17, "front_elbow_l": 0.14, "front_ankle_l": 0.12, "front_toe_l": 0.12,
+      "front_shoulder_r": 0.17, "front_elbow_r": 0.14, "front_ankle_r": 0.12, "front_toe_r": 0.12,
+      "rear_hip_l": 0.21, "rear_knee_l": 0.17, "rear_ankle_l": 0.14, "rear_toe_l": 0.13,
+      "rear_hip_r": 0.21, "rear_knee_r": 0.17, "rear_ankle_r": 0.14, "rear_toe_r": 0.13,
+      "wing_root_l": 0.12, "wing_elbow_l": 0.1, "wing_wrist_l": 0.08, "wing_tip_l": 0.04,
+      "wing_root_r": 0.12, "wing_elbow_r": 0.1, "wing_wrist_r": 0.08, "wing_tip_r": 0.04,
+      "tail_1": 0.22, "tail_2": 0.16, "tail_tip": 0.08
+    },
+    "root_point": "pelvis",
+    "subdivision_levels": 1
+  },
+  "skeleton": [
+    {"name": "hips", "head": "pelvis", "tail": "spine_mid"}, {"name": "spine", "head": "spine_mid", "tail": "chest", "parent": "hips"},
+    {"name": "neck", "head": "chest", "tail": "neck", "parent": "spine"}, {"name": "head", "head": "neck", "tail": "head", "parent": "neck"}, {"name": "jaw", "head": "head", "tail": "jaw", "parent": "head"},
+    {"name": "front_upper.L", "head": "front_shoulder_l", "tail": "front_elbow_l", "parent": "spine"}, {"name": "front_lower.L", "head": "front_elbow_l", "tail": "front_ankle_l", "parent": "front_upper.L"}, {"name": "front_foot.L", "head": "front_ankle_l", "tail": "front_toe_l", "parent": "front_lower.L"},
+    {"name": "front_upper.R", "head": "front_shoulder_r", "tail": "front_elbow_r", "parent": "spine"}, {"name": "front_lower.R", "head": "front_elbow_r", "tail": "front_ankle_r", "parent": "front_upper.R"}, {"name": "front_foot.R", "head": "front_ankle_r", "tail": "front_toe_r", "parent": "front_lower.R"},
+    {"name": "rear_upper.L", "head": "rear_hip_l", "tail": "rear_knee_l", "parent": "hips"}, {"name": "rear_lower.L", "head": "rear_knee_l", "tail": "rear_ankle_l", "parent": "rear_upper.L"}, {"name": "rear_foot.L", "head": "rear_ankle_l", "tail": "rear_toe_l", "parent": "rear_lower.L"},
+    {"name": "rear_upper.R", "head": "rear_hip_r", "tail": "rear_knee_r", "parent": "hips"}, {"name": "rear_lower.R", "head": "rear_knee_r", "tail": "rear_ankle_r", "parent": "rear_upper.R"}, {"name": "rear_foot.R", "head": "rear_ankle_r", "tail": "rear_toe_r", "parent": "rear_lower.R"},
+    {"name": "wing_upper.L", "head": "wing_root_l", "tail": "wing_elbow_l", "parent": "spine"}, {"name": "wing_lower.L", "head": "wing_elbow_l", "tail": "wing_wrist_l", "parent": "wing_upper.L"}, {"name": "wing_tip.L", "head": "wing_wrist_l", "tail": "wing_tip_l", "parent": "wing_lower.L"},
+    {"name": "wing_upper.R", "head": "wing_root_r", "tail": "wing_elbow_r", "parent": "spine"}, {"name": "wing_lower.R", "head": "wing_elbow_r", "tail": "wing_wrist_r", "parent": "wing_upper.R"}, {"name": "wing_tip.R", "head": "wing_wrist_r", "tail": "wing_tip_r", "parent": "wing_lower.R"},
+    {"name": "tail.1", "head": "pelvis", "tail": "tail_1", "parent": "hips"}, {"name": "tail.2", "head": "tail_1", "tail": "tail_2", "parent": "tail.1"}, {"name": "tail.3", "head": "tail_2", "tail": "tail_tip", "parent": "tail.2"}
+  ],
+  "required_controls": ["jaw", "wing_upper.L", "wing_upper.R", "tail.1"],
+  "attachment_sockets": {"mouth": "head", "back": "spine"},
+  "motion_provider": "procedural_winged_quadruped_v1",
+  "required_actions": ["idle", "walk", "attack", "hit", "death", "fly"],
+  "motion_thresholds": {"max_foot_slip_m": 0.03, "min_attack_tip_travel_m": 0.15, "max_non_adjacent_triangle_overlaps": 0, "max_area_ratio": 2.0},
+  "preview": {"camera": [4.8, 6.8, 3.4], "target": [0.0, 0.0, 1.0], "ortho_scale": 5.2}
+}

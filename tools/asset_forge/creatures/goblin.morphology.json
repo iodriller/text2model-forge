@@ -18,7 +18,6 @@
   ],
   "remove_objects": [
     "Face",
-    "Warrior_Body",
     "Warrior_Sword",
     "ShoulderPad.L",
     "ShoulderPad.R"
@@ -26,29 +25,29 @@
   "posture": {
     "space": "bone_local_pose",
     "apply_to_every_action": true,
+    "_comment": "Spine stays at 0 so the goblin inherits the donor rig's own clean animations (the footman's motion). A static spine hunch baked onto every frame corrupts walk/death/taunt (fall+lean=bow) -- proven regression. Only a small head-forward peer is kept for gremlin character; the head barely moves in locomotion so it does not distort the motion.",
     "bones_degrees_xyz": {
-      "Abdomen": [5.0, 0.0, 0.0],
-      "Torso": [7.0, 0.0, 0.0],
-      "Neck": [6.0, 0.0, 0.0],
-      "Head": [-14.0, 0.0, 0.0]
+      "Abdomen": [0.0, 0.0, 0.0],
+      "Torso": [0.0, 0.0, 0.0],
+      "Neck": [3.0, 0.0, 0.0],
+      "Head": [-7.0, 0.0, 0.0]
     }
   },
   "head": {
     "bone": "Head",
     "remove_donor_face": true,
     "modules": {
-      "cranium": {
-        "scale": [0.205, 0.205, 0.235],
-        "forward": -0.01,
-        "up": 0.02,
-        "material": "skin"
-      },
       "eyes": {
         "spacing": 0.082,
         "forward": 0.19,
         "up": 0.035,
         "radius": 0.031,
-        "material": "eye"
+        "material": "eye",
+        "pupil": {
+          "radius": 0.014,
+          "forward_offset": 0.02,
+          "material": "pupil"
+        }
       },
       "brow": {
         "width": 0.145,
@@ -105,34 +104,18 @@
         "material": "skin"
       },
       "skullcap": {
-        "enabled": false,
-        "material": "hood"
+        "enabled": true,
+        "material": "hood",
+        "scale": [0.235, 0.205, 0.21],
+        "forward": -0.10,
+        "up": 0.075
       }
     }
   },
   "body": {
-    "construction": "bone_parented_organic_modules",
-    "segments": [
-      {"name": "Body.Pelvis", "bone": "Hips", "radius_right": 0.23, "radius_depth": 0.16, "length_scale": 0.82, "material": "cloth"},
-      {"name": "Body.Abdomen", "bone": "Abdomen", "radius_right": 0.22, "radius_depth": 0.15, "length_scale": 0.90, "material": "skin"},
-      {"name": "Body.Vest", "bone": "Torso", "radius_right": 0.285, "radius_depth": 0.185, "length_scale": 0.94, "material": "leather"},
-      {"name": "Body.UpperArm.L", "bone": "UpperArm.L", "radius_right": 0.095, "radius_depth": 0.095, "length_scale": 0.92, "material": "skin"},
-      {"name": "Body.UpperArm.R", "bone": "UpperArm.R", "radius_right": 0.095, "radius_depth": 0.095, "length_scale": 0.92, "material": "skin"},
-      {"name": "Body.LowerArm.L", "bone": "LowerArm.L", "radius_right": 0.082, "radius_depth": 0.082, "length_scale": 0.92, "material": "skin"},
-      {"name": "Body.LowerArm.R", "bone": "LowerArm.R", "radius_right": 0.082, "radius_depth": 0.082, "length_scale": 0.92, "material": "skin"},
-      {"name": "Body.Hand.L", "bone": "Fist.L", "radius_right": 0.09, "radius_depth": 0.08, "length_scale": 1.25, "material": "skin"},
-      {"name": "Body.Hand.R", "bone": "Fist.R", "radius_right": 0.09, "radius_depth": 0.08, "length_scale": 1.25, "material": "skin"},
-      {"name": "Body.UpperLeg.L", "bone": "UpperLeg.L", "radius_right": 0.12, "radius_depth": 0.13, "length_scale": 0.90, "material": "cloth"},
-      {"name": "Body.UpperLeg.R", "bone": "UpperLeg.R", "radius_right": 0.12, "radius_depth": 0.13, "length_scale": 0.90, "material": "cloth"},
-      {"name": "Body.LowerLeg.L", "bone": "LowerLeg.L", "radius_right": 0.10, "radius_depth": 0.11, "length_scale": 0.92, "material": "leather"},
-      {"name": "Body.LowerLeg.R", "bone": "LowerLeg.R", "radius_right": 0.10, "radius_depth": 0.11, "length_scale": 0.92, "material": "leather"}
-    ],
-    "attachments": [
-      {"name": "Body.Belt", "bone": "Hips", "scale": [0.255, 0.18, 0.07], "offset": [0.0, 0.02, 0.0], "material": "iron"},
-      {"name": "Body.Loincloth.Front", "bone": "Hips", "scale": [0.19, 0.055, 0.25], "offset": [0.0, -0.18, 0.14], "material": "cloth"},
-      {"name": "Body.Foot.L", "bone": "LowerLeg.L", "at_tail": true, "scale": [0.105, 0.16, 0.085], "offset": [0.0, -0.02, 0.09], "material": "leather"},
-      {"name": "Body.Foot.R", "bone": "LowerLeg.R", "at_tail": true, "scale": [0.105, 0.16, 0.085], "offset": [0.0, -0.02, 0.09], "material": "leather"}
-    ]
+    "construction": "donor_mesh_adapt",
+    "donor_object": "Warrior_Body",
+    "skin_material": "skin"
   },
   "equipment": {
     "weapon": {
@@ -144,6 +127,7 @@
   "materials": {
     "skin": {"color": [0.23, 0.29, 0.13], "roughness": 0.82},
     "eye": {"color": [0.85, 0.46, 0.06], "roughness": 0.32, "emission": 0.08},
+    "pupil": {"color": [0.02, 0.02, 0.02], "roughness": 0.4},
     "mouth": {"color": [0.045, 0.018, 0.014], "roughness": 0.9},
     "tusk": {"color": [0.68, 0.62, 0.45], "roughness": 0.62},
     "hood": {"color": [0.10, 0.065, 0.035], "roughness": 0.9},
@@ -153,7 +137,7 @@
   },
   "silhouette_contract": {
     "required_landmarks": [
-      "Morph.Cranium",
+      "Morph.Skullcap",
       "Morph.Eye.L",
       "Morph.Eye.R",
       "Morph.Brow.L",

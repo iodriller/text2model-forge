@@ -91,9 +91,45 @@ Species profiles live in `tools/asset_forge/creatures/`; family contracts live i
 `winged_quadruped_v1` contract and cannot publish while that family remains marked
 `contract_only`.  See `DESIGN/creature_dna_pipeline.md`.
 
-## Motion storyboard prototype (not production art)
+## Genesis: create anatomy without a donor pack
 
-The ComfyUI/OpenPose path is retained only for exploring poses. Testing showed that reference
+Genesis is the second mesh-acquisition branch. It generates a semantic, watertight
+shape target from a versioned specification while explicitly preventing that voxel
+mesh from being mistaken for production topology:
+
+```powershell
+.\scripts\asset_forge.ps1 genesis-target `
+  -GenesisSpec tools/asset_forge/genesis/goblin_short_biped.genesis.json
+```
+
+The command validates the spec, fuses its volumes in Blender, writes a preview and a
+hash-bound mesh report under `artifacts/asset-forge-genesis/<id>/`, and verifies that
+the target is one watertight component. The report remains
+`production_eligible=false` and names `canonical_topology_fit` as the required next
+stage. The target describes anatomy; it is never skinned, animated, or published.
+
+Build and validate the complete canonical engineering proof for either registered
+family with the same command:
+
+```powershell
+.\scripts\asset_forge.ps1 genesis-build `
+  -GenesisSpec tools/asset_forge/genesis/goblin_short_biped.genesis.json
+
+.\scripts\asset_forge.ps1 genesis-build `
+  -GenesisSpec tools/asset_forge/genesis/dragon_winged_quadruped.genesis.json
+```
+
+This adds a family contract, watertight UV master, semantic rig, normalized weights,
+required actions, foot/grip/reach/intersection audits, and a four-panel review board.
+The canonical validator remains `production_eligible=false` until surface bake, sheet
+QA, license review, and owner art approval pass.
+
+See `DESIGN/asset_forge_genesis_plan.md` for the verified two-branch architecture,
+motion contracts, GPU/tool decisions, and staged implementation plan.
+
+## Human motion storyboard prototype (not production art)
+
+The pose-map/ComfyUI path is retained only for exploring humanoid poses. Testing showed that reference
 img2img still changes silhouette, equipment, and anatomy between frames and cannot provide the
 four genuine directions required by the portrait battlefield. Its manifest is therefore marked
 `production.eligible=false`; the CLI and Unity importer refuse to promote or copy it as final art.
@@ -215,16 +251,17 @@ there as a permanent rule.
 This creates a small animated Blender fixture, renders `north/south/east/west`, packs sheets, and validates every
 output. Results go to `artifacts/asset-forge-fixture/` and are not game art.
 
-## Start from the owned humanoid rig
+## Render the repository-authored humanoid fixture
 
 ```powershell
 .\scripts\asset_forge.ps1 template
 ```
 
 This generates `artifacts/asset-forge-template/source/humanoid_template.blend` from repository-owned Python, then
-renders and validates its four-direction idle, walk, attack, shoot, hit, and death actions. Open that file in Blender,
-replace or reshape the neutral construction mesh, adjust equipment/materials, and save the approved master under
-`tools/asset_forge/sources/<unit>.blend`. This removes the blank-file, rig, action-naming, camera, and export setup work.
+renders and validates its four-direction idle, walk, attack, shoot, hit, and death actions. Its body is made from
+separate rigid bone-parented objects: it proves cameras, action naming, sheet packing, and rendering, but it is **not**
+an animation-safe continuous/skinned canonical topology. Do not use it as the Genesis family template or claim its
+2D render proof validates joint deformation.
 
 ## Render a real character
 

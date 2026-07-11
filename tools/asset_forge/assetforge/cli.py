@@ -223,6 +223,51 @@ def build_parser() -> argparse.ArgumentParser:
     critic.add_argument("--repo-root", type=Path, default=Path.cwd())
     critic.add_argument("--report", type=Path, required=True)
 
+    deform = sub.add_parser(
+        "check-deformation",
+        help="check 2D silhouette continuity, area, and baseline drift in raw action renders",
+    )
+    deform.add_argument("--config", type=Path, required=True)
+    deform.add_argument("--repo-root", type=Path, default=Path.cwd())
+    deform.add_argument("--frames-root", type=Path, required=True)
+    deform.add_argument("--report", type=Path, required=True)
+
+    genesis_spec = sub.add_parser(
+        "validate-genesis-spec",
+        help="validate a from-scratch semantic anatomy specification",
+    )
+    genesis_spec.add_argument("--spec", type=Path, required=True)
+
+    genesis_target = sub.add_parser(
+        "validate-genesis-target",
+        help="verify a fused anatomy target while keeping it blocked from production",
+    )
+    genesis_target.add_argument("--spec", type=Path, required=True)
+    genesis_target.add_argument("--target", type=Path, required=True)
+    genesis_target.add_argument("--build-report", type=Path, required=True)
+
+    family_contract = sub.add_parser(
+        "validate-family-contract",
+        help="validate a reusable canonical topology/deformation family contract",
+    )
+    family_contract.add_argument("--contract", type=Path, required=True)
+
+    canonical_master = sub.add_parser(
+        "validate-canonical-master",
+        help="gate a fitted, skinned, action-bearing canonical family master",
+    )
+    canonical_master.add_argument("--contract", type=Path, required=True)
+    canonical_master.add_argument("--master", type=Path, required=True)
+    canonical_master.add_argument("--build-report", type=Path, required=True)
+
+    canonical_review = sub.add_parser(
+        "canonical-review",
+        help="compose representative canonical-master renders and gate metrics",
+    )
+    canonical_review.add_argument("--frames-root", type=Path, required=True)
+    canonical_review.add_argument("--build-report", type=Path, required=True)
+    canonical_review.add_argument("--output", type=Path, required=True)
+
     qa = sub.add_parser("qa-sheets", help="run commercial sheet QA and create a review contact sheet")
     qa.add_argument("--config", type=Path, required=True)
     qa.add_argument("--repo-root", type=Path, default=Path.cwd())
@@ -408,6 +453,27 @@ def execute(args: argparse.Namespace) -> object:
         if not report["passed"]:
             raise ForgeError("Art-direction critique failed; inspect " + str(args.report.resolve()))
         return report
+    if args.command == "check-deformation":
+        from .deformation import critique_deformation
+        report = critique_deformation(args.config, args.repo_root.resolve(), args.frames_root, args.report)
+        if not report["passed"]:
+            raise ForgeError("Render-space deformation preflight failed (silhouette split, area jump, or baseline drift); inspect " + str(args.report.resolve()))
+        return report
+    if args.command == "validate-genesis-spec":
+        from .genesis import validate_genesis_spec
+        return validate_genesis_spec(args.spec)
+    if args.command == "validate-genesis-target":
+        from .genesis import validate_anatomy_target
+        return validate_anatomy_target(args.spec, args.target, args.build_report)
+    if args.command == "validate-family-contract":
+        from .families import validate_family_contract
+        return validate_family_contract(args.contract)
+    if args.command == "validate-canonical-master":
+        from .families import validate_canonical_master
+        return validate_canonical_master(args.contract, args.master, args.build_report)
+    if args.command == "canonical-review":
+        from .canonical_review import compose_canonical_review
+        return compose_canonical_review(args.frames_root, args.build_report, args.output)
     if args.command == "qa-sheets":
         report = validate_sheets(args.config, args.repo_root.resolve(), args.report, args.contact_sheet)
         if not report["passed"]:
