@@ -1,0 +1,22 @@
+{
+  "schema_version": 1,
+  "id": "goblin",
+  "display_name": "Ash Goblin",
+  "archetype": "goblin",
+  "scale": 0.8,
+  "bulk": 0.9,
+  "limb_bulk": 0.8,
+  "head_scale": 1.42,
+  "palette": {
+    "skin": "#6d8a3c",
+    "cloth": "#4a3a26",
+    "cloth_dark": "#2c2318",
+    "leather": "#5c3a22",
+    "metal": "#6f7b84",
+    "metal_edge": "#a7b3ba",
+    "gold": "#a97e35",
+    "bone": "#d8c79a",
+    "eye": "#ffd23f",
+    "ember": "#e0521f"
+  }
+}

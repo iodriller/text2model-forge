@@ -13,6 +13,29 @@
       "installed_sha256": null
     },
     {
+      "id": "dreamshaper-xl-v2-turbo",
+      "purpose": "motion-storyboard-prototype",
+      "filename": "dreamshaper_xl_v2_turbo.safetensors",
+      "source_url": "https://huggingface.co/Lykon/dreamshaper-xl-v2-turbo",
+      "download_url": "https://huggingface.co/Lykon/dreamshaper-xl-v2-turbo/resolve/main/DreamShaperXL_Turbo_v2_1.safetensors?download=true",
+      "license": "CreativeML Open RAIL++-M",
+      "license_url": "https://huggingface.co/Lykon/dreamshaper-xl-v2-turbo",
+      "commercial_review": "required",
+      "installed_sha256": null,
+      "sampler_settings": {"steps": 7, "cfg": 2.5, "sampler": "dpmpp_sde", "scheduler": "karras"}
+    },
+    {
+      "id": "controlnet-openpose-sdxl-xinsir",
+      "purpose": "motion-storyboard-pose-control",
+      "filename": "controlnet_openpose_sdxl_xinsir.safetensors",
+      "source_url": "https://huggingface.co/xinsir/controlnet-openpose-sdxl-1.0",
+      "download_url": "https://huggingface.co/xinsir/controlnet-openpose-sdxl-1.0/resolve/main/diffusion_pytorch_model.safetensors?download=true",
+      "license": "Apache-2.0",
+      "license_url": "https://huggingface.co/xinsir/controlnet-openpose-sdxl-1.0",
+      "commercial_review": "required",
+      "installed_sha256": null
+    },
+    {
       "id": "flux.1-schnell",
       "purpose": "optional-concept",
       "filename": null,

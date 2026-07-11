@@ -1,0 +1,22 @@
+{
+  "schema_version": 1,
+  "id": "footman",
+  "display_name": "Gate Footman",
+  "archetype": "footman",
+  "scale": 1.0,
+  "bulk": 1.18,
+  "limb_bulk": 1.12,
+  "head_scale": 1.18,
+  "palette": {
+    "skin": "#8a5c42",
+    "cloth": "#24406b",
+    "cloth_dark": "#1c2f4e",
+    "leather": "#5f351d",
+    "metal": "#8298ac",
+    "metal_edge": "#d8e2ec",
+    "gold": "#b3853a",
+    "bone": "#c8b791",
+    "eye": "#d7b376",
+    "ember": "#ff7a2f"
+  }
+}

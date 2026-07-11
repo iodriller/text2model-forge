@@ -58,6 +58,26 @@ Before the license-stage approval, run `forge.ps1 compliance`. It rejects unregi
 missing generated outputs, incomplete non-original input records, and assets whose license state is not
 `original-confirmed` or `mixed-reviewed`.
 
+## Motion storyboard prototype (not production art)
+
+The ComfyUI/OpenPose path is retained only for exploring poses. Testing showed that reference
+img2img still changes silhouette, equipment, and anatomy between frames and cannot provide the
+four genuine directions required by the portrait battlefield. Its manifest is therefore marked
+`production.eligible=false`; the CLI and Unity importer refuse to promote or copy it as final art.
+See `DESIGN/asset_forge_animation_plan.md` for the failure record and production decision.
+
+```powershell
+.\scripts\setup_local_ai.ps1 download-animation-models -AcceptSdxlLicense
+.\scripts\forge.ps1 register-model --workspace <ws> --model-id dreamshaper-xl-v2-turbo --file tools/asset_forge/runtime/comfyui/models/checkpoints/dreamshaper_xl_v2_turbo.safetensors --reviewer <name>
+.\scripts\forge.ps1 register-model --workspace <ws> --model-id controlnet-openpose-sdxl-xinsir --file tools/asset_forge/runtime/comfyui/models/controlnet/controlnet_openpose_sdxl_xinsir.safetensors --reviewer <name>
+.\scripts\forge.ps1 poses --workspace <ws> --preview          # editable pose pack + control-image previews
+.\scripts\forge.ps1 animate --workspace <ws> --asset-id footman --actions idle,walk,attack,hit,death --reference <approved-concept.png> --seed 3001
+.\scripts\forge.ps1 pack-sheets --workspace <ws> --asset-id footman   # prototype review only
+```
+
+Use these outputs to discuss timing or pose ideas, then author the motion on one owned Blender
+master. `create-unit --to-unity` intentionally fails with migration instructions.
+
 ## One-time setup
 
 From the repository root:
@@ -69,6 +89,28 @@ From the repository root:
 
 The setup creates `tools/asset_forge/.venv` and installs only Pillow. Blender 5.x is discovered from `PATH` or the
 standard Windows install folders. ComfyUI is optional and is not installed by this script.
+
+## One-command production character
+
+Copy a `.factory.json` and `.character.json`, adjust proportions, palette, equipment, actions,
+sample frames, contact phases, and output paths, then run:
+
+```powershell
+.\scripts\asset_forge.ps1 build -CharacterConfig tools/asset_forge/characters/goblin.character.json
+```
+
+The command creates the original rigged `.blend`, renders every configured action in genuine
+`north/south/east/west`, packs fixed-camera sheets without per-frame scaling, rejects clipping,
+static attacks, missed hit poses, bad death silhouettes, and missing phases, creates review GIFs,
+hash-locks the master/QA/config in a schema-2 manifest, and packages the accepted result for Unity.
+The editor preparation workflow applies production units after the legacy placeholder roster.
+
+Current review examples:
+
+- `asset_sources/ember-defense/assets/footman/reports/production-review/footman_all_actions.gif`
+- `asset_sources/ember-defense/assets/footman/reports/production-review/footman_gameplay_transition.gif`
+- `asset_sources/ember-defense/assets/goblin/reports/production-review/goblin_all_actions.gif`
+- `asset_sources/ember-defense/assets/goblin/reports/production-review/goblin_gameplay_transition.gif`
 
 ## Prove the pipeline
 

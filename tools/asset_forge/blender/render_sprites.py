@@ -15,6 +15,7 @@ def parse_args():
     parser.add_argument("--repo-root", required=True)
     parser.add_argument("--frames-root", required=True)
     parser.add_argument("--source")
+    parser.add_argument("--actions", help="optional comma-separated incremental render subset")
     return parser.parse_args(raw)
 
 
@@ -83,6 +84,15 @@ def configure_scene(config):
     scene.render.image_settings.color_mode = "RGBA"
     scene.render.film_transparent = True
     scene.render.image_settings.color_depth = "8"
+    scene.render.use_freestyle = bool(config.get("outline", True))
+    if scene.render.use_freestyle:
+        scene.render.line_thickness = float(config.get("outline_thickness", 0.72))
+        line_set = scene.view_layers[0].freestyle_settings.linesets[0]
+        if line_set.linestyle is None:
+            line_set.linestyle = bpy.data.linestyles.new("Asset Forge Outline")
+        line_style = line_set.linestyle
+        line_style.color = (0.012, 0.016, 0.02)
+        line_style.alpha = 0.92
     for look in ("AgX - Medium High Contrast", "Medium High Contrast"):
         try:
             scene.view_settings.look = look
@@ -100,14 +110,25 @@ def configure_scene(config):
     bpy.context.collection.objects.link(camera)
     scene.camera = camera
 
-    add_sun((-4.0, -5.0, 8.0), 1050.0, (1.0, 0.82, 0.64))
+    add_sun((-4.0, -5.0, 8.0), 1400.0, (1.0, 0.86, 0.68))
     fill_data = bpy.data.lights.new(name="AssetForgeFill", type="AREA")
-    fill_data.energy = 500.0
-    fill_data.color = (0.18, 0.30, 0.52)
+    fill_data.energy = 650.0
+    fill_data.color = (0.24, 0.38, 0.60)
     fill_data.size = 6.0
     fill = bpy.data.objects.new(name="AssetForgeFill", object_data=fill_data)
     bpy.context.collection.objects.link(fill)
     fill.location = (4.0, 3.0, 5.0)
+
+    # Cool top rim pulls the silhouette off dark battlefield backgrounds; pointing
+    # straight down keeps all four camera directions lit identically.
+    rim_data = bpy.data.lights.new(name="AssetForgeRim", type="AREA")
+    rim_data.energy = 850.0
+    rim_data.color = (0.55, 0.70, 0.95)
+    rim_data.shape = "DISK"
+    rim_data.size = 3.5
+    rim = bpy.data.objects.new(name="AssetForgeRim", object_data=rim_data)
+    bpy.context.collection.objects.link(rim)
+    rim.location = (0.0, 0.0, 7.5)
     return scene, camera
 
 
@@ -128,7 +149,105 @@ def position_camera(camera, direction, config):
     camera.rotation_euler = (target - camera.location).to_track_quat("-Z", "Y").to_euler()
 
 
-def sampled_frame(action, index, count, loop):
+def build_depth_tree(scene, config):
+    """Compositor tree whose OUTPUT is normalized depth (white = near).
+
+    Assigned to the scene only during the dedicated depth render pass, so the
+    grayscale is written through the ordinary PNG path (File Output nodes inside
+    Blender 5 node groups only speak multilayer EXR).
+    """
+    scene.view_layers[0].use_pass_z = True
+    tree = bpy.data.node_groups.new("AssetForgeDepth", "CompositorNodeTree")
+    tree.interface.new_socket("Image", in_out="OUTPUT", socket_type="NodeSocketColor")
+    layers = tree.nodes.new("CompositorNodeRLayers")
+    layers.scene = bpy.context.scene
+    group_output = tree.nodes.new("NodeGroupOutput")
+    if "Depth" not in layers.outputs:
+        raise RuntimeError(
+            "Render Layers node exposes no Depth output; passes: "
+            + ", ".join(s.name for s in layers.outputs)
+        )
+
+    distance = float(config.get("camera_distance", 10.0))
+    height = float(config.get("camera_height", 7.0))
+    target_height = float(config.get("camera_target_height", 1.15))
+    camera_span = math.sqrt(distance * distance + (height - target_height) ** 2)
+    # Blender 5 unified the utility nodes: Map Range is a shader-style node here.
+    map_range = tree.nodes.new("ShaderNodeMapRange")
+    map_range.clamp = True
+    map_range.inputs["From Min"].default_value = camera_span - 2.6
+    map_range.inputs["From Max"].default_value = camera_span + 2.6
+    map_range.inputs["To Min"].default_value = 1.0
+    map_range.inputs["To Max"].default_value = 0.0
+    tree.links.new(layers.outputs["Depth"], map_range.inputs["Value"])
+    tree.links.new(map_range.outputs["Result"], group_output.inputs[0])
+    return tree
+
+
+def render_depth(scene, depth_tree, depth_path):
+    freestyle = scene.render.use_freestyle
+    look = scene.view_settings.look
+    view_transform = scene.view_settings.view_transform
+    scene.render.use_freestyle = False
+    scene.compositing_node_group = depth_tree
+    scene.render.use_compositing = True
+    scene.view_settings.view_transform = "Standard"
+    scene.view_settings.look = "None"
+    scene.render.filepath = depth_path
+    try:
+        bpy.ops.render.render(write_still=True)
+    finally:
+        scene.render.use_freestyle = freestyle
+        scene.render.use_compositing = False
+        scene.compositing_node_group = None
+        scene.view_settings.view_transform = view_transform
+        scene.view_settings.look = look
+
+
+def equipment_objects(patterns):
+    import fnmatch
+
+    matched = []
+    for obj in bpy.data.objects:
+        if obj.type != "MESH":
+            continue
+        if any(fnmatch.fnmatchcase(obj.name, pattern) for pattern in patterns):
+            matched.append(obj)
+    if patterns and not matched:
+        available = ", ".join(sorted(obj.name for obj in bpy.data.objects if obj.type == "MESH"))[:400]
+        raise RuntimeError(f"No meshes match equipment_objects {patterns}. Meshes: {available}")
+    return matched
+
+
+def render_equipment_mask(scene, equipment, mask_path):
+    """Alpha-only render of just the equipment meshes: ground truth for integrity QA."""
+    hidden = []
+    for obj in bpy.data.objects:
+        if obj.type == "MESH" and obj not in equipment and not obj.hide_render:
+            obj.hide_render = True
+            hidden.append(obj)
+    freestyle = scene.render.use_freestyle
+    compositing = scene.render.use_compositing
+    scene.render.use_freestyle = False
+    scene.render.use_compositing = False
+    scene.render.filepath = mask_path
+    try:
+        bpy.ops.render.render(write_still=True)
+    finally:
+        scene.render.use_freestyle = freestyle
+        scene.render.use_compositing = compositing
+        for obj in hidden:
+            obj.hide_render = False
+
+
+def sampled_frame(action, index, count, loop, animation_config):
+    explicit = animation_config.get("sample_frames")
+    if explicit is not None:
+        if len(explicit) != count:
+            raise RuntimeError(
+                f"sample_frames has {len(explicit)} values but frames is {count}"
+            )
+        return float(explicit[index])
     start, end = float(action.frame_range[0]), float(action.frame_range[1])
     if count <= 1:
         return start
@@ -153,8 +272,20 @@ def main():
         animation_object.animation_data_create()
     scene, camera = configure_scene(config)
     frames_root = os.path.abspath(args.frames_root)
+    depth_tree = build_depth_tree(scene, config) if config.get("depth_pass") else None
+    scene.render.use_compositing = False
+    equipment = equipment_objects(config.get("equipment_objects") or [])
+
+    selected_actions = None
+    if args.actions:
+        selected_actions = {value.strip() for value in args.actions.split(",") if value.strip()}
+        unknown = selected_actions.difference(config["animations"])
+        if unknown:
+            raise RuntimeError(f"Unknown incremental actions: {sorted(unknown)}")
 
     for animation_name, animation_config in config["animations"].items():
+        if selected_actions is not None and animation_name not in selected_actions:
+            continue
         action_names = animation_config.get("actions", [])
         action = find_action(action_names) if action_names else None
         if action is not None and animation_object is None:
@@ -167,11 +298,21 @@ def main():
             position_camera(camera, direction, config)
             output_folder = os.path.join(frames_root, config["id"], animation_name, direction)
             os.makedirs(output_folder, exist_ok=True)
+            depth_folder = os.path.join(frames_root, config["id"] + "-depth", animation_name, direction)
+            equip_folder = os.path.join(frames_root, config["id"] + "-equip", animation_name, direction)
+            if depth_tree is not None:
+                os.makedirs(depth_folder, exist_ok=True)
+            if equipment:
+                os.makedirs(equip_folder, exist_ok=True)
             for index in range(frame_count):
-                frame = sampled_frame(action, index, frame_count, loop) if action is not None else float(index + 1)
+                frame = sampled_frame(action, index, frame_count, loop, animation_config) if action is not None else float(index + 1)
                 scene.frame_set(int(math.floor(frame)), subframe=frame - math.floor(frame))
                 scene.render.filepath = os.path.join(output_folder, f"{index:02d}.png")
                 bpy.ops.render.render(write_still=True)
+                if depth_tree is not None:
+                    render_depth(scene, depth_tree, os.path.join(depth_folder, f"{index:02d}.png"))
+                if equipment:
+                    render_equipment_mask(scene, equipment, os.path.join(equip_folder, f"{index:02d}.png"))
 
     if animation_object is not None:
         animation_object.animation_data.action = None

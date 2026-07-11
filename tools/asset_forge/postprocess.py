@@ -35,6 +35,19 @@ def fit_frame(source, cell_size, height_fraction):
     return destination
 
 
+def fixed_camera_frame(source, cell_size):
+    """Preserve one camera-space scale across every pose and direction.
+
+    Per-frame cropping makes a crouch or death grow to standing height and creates
+    visible size pumping.  Production masters are rendered through a locked camera,
+    so the complete render canvas is the authoritative framing.
+    """
+    source = source.convert("RGBA")
+    if source.size == tuple(cell_size):
+        return source.copy()
+    return source.resize(tuple(cell_size), Image.Resampling.LANCZOS)
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--config", required=True)
@@ -49,6 +62,7 @@ def main():
 
     cell_size = tuple(int(value) for value in config["cell_size"])
     height_fraction = float(config.get("target_height_fraction", 0.78))
+    packing_mode = config.get("packing_mode", "fit_each_frame")
     records = []
     for animation_name, animation_config in config["animations"].items():
         frame_count = int(animation_config["frames"])
@@ -59,7 +73,11 @@ def main():
                 if not os.path.isfile(path):
                     raise RuntimeError(f"Missing rendered frame: {path}")
                 with Image.open(path) as image:
-                    cells.append(fit_frame(image, cell_size, height_fraction))
+                    cells.append(
+                        fixed_camera_frame(image, cell_size)
+                        if packing_mode == "fixed_camera"
+                        else fit_frame(image, cell_size, height_fraction)
+                    )
 
             sheet = Image.new("RGBA", (cell_size[0] * frame_count, cell_size[1]), (0, 0, 0, 0))
             for index, cell in enumerate(cells):
@@ -73,7 +91,7 @@ def main():
     report_path = os.path.abspath(args.report)
     os.makedirs(os.path.dirname(report_path), exist_ok=True)
     with open(report_path, "w", encoding="utf-8") as handle:
-        json.dump({"character": config["id"], "sheets": records}, handle, indent=2)
+        json.dump({"character": config["id"], "packing_mode": packing_mode, "sheets": records}, handle, indent=2)
     print(f"ASSET_FORGE_SHEETS={len(records)}")
 
 

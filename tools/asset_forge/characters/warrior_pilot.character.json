@@ -1,0 +1,154 @@
+{
+  "schema_version": 2,
+  "id": "warrior_pilot",
+  "display_name": "Warrior Pilot (Quaternius CC0)",
+  "source_kind": "owned_blender_master",
+  "master_license": "CC0-1.0 (Quaternius RPG Characters pack)",
+  "source": "tools/asset_forge/runtime/quaternius_rpg/Blends/Warrior.blend",
+  "animation_object": "CharacterArmature",
+  "max_polygons": 60000,
+  "cell_size": [
+    256,
+    256
+  ],
+  "render_size": [
+    768,
+    768
+  ],
+  "packing_mode": "fixed_camera",
+  "outline": true,
+  "outline_thickness": 0.72,
+  "orthographic_scale": 5.6,
+  "camera_target_height": 1.3,
+  "camera_distance": 10.0,
+  "camera_height": 6.6,
+  "directions": [
+    "north",
+    "south",
+    "east",
+    "west"
+  ],
+  "baseline_tolerance": 14,
+  "min_occupancy": 0.02,
+  "min_motion": 0.01,
+  "default_facing": "north",
+  "pixels_per_unit": 256,
+  "pivot_x": 0.5,
+  "pivot_y": 0.07,
+  "prefab_scale": 1.45,
+  "health_bar_y": 0.82,
+  "overpaint": {
+    "enabled": true,
+    "checkpoint": "dreamshaper_xl_v2_turbo.safetensors",
+    "seed": 77,
+    "steps": 8,
+    "cfg": 3.0,
+    "denoise": 0.42,
+    "prompt": "grizzled human footman of a dark fantasy kingdom, full body, battle-worn blackened steel plate armor with dull brass trim, deep cobalt tabard, dented helmet, scarred shield, notched arming sword",
+    "negative": "bare head, missing sword",
+    "control": "depth",
+    "control_strength": 0.65,
+    "anchor": true
+  },
+  "animations": {
+    "idle": {
+      "actions": [
+        "Idle_Weapon",
+        "Idle"
+      ],
+      "frames": 6,
+      "fps": 8,
+      "loop": true,
+      "sample_frames": [
+        1,
+        13,
+        25,
+        38,
+        50,
+        63
+      ]
+    },
+    "walk": {
+      "actions": [
+        "Walk"
+      ],
+      "frames": 8,
+      "fps": 12,
+      "loop": true,
+      "sample_frames": [
+        1,
+        5,
+        9,
+        13,
+        17,
+        21,
+        25,
+        29
+      ]
+    },
+    "attack": {
+      "actions": [
+        "Sword_Attack"
+      ],
+      "frames": 10,
+      "fps": 16,
+      "loop": false,
+      "baseline_tolerance": 22,
+      "sample_frames": [
+        1,
+        3,
+        5,
+        7,
+        9,
+        11,
+        13,
+        15,
+        17,
+        20
+      ],
+      "phases": {
+        "anticipation_frame": 3,
+        "contact_frame": 5,
+        "recovery_frame": 8
+      }
+    },
+    "hit": {
+      "actions": [
+        "RecieveHit"
+      ],
+      "frames": 4,
+      "fps": 14,
+      "loop": false,
+      "sample_frames": [
+        1,
+        6,
+        11,
+        15
+      ]
+    },
+    "death": {
+      "actions": [
+        "Death"
+      ],
+      "frames": 8,
+      "fps": 10,
+      "loop": false,
+      "baseline_tolerance": 80,
+      "sample_frames": [
+        1,
+        5,
+        9,
+        13,
+        17,
+        21,
+        25,
+        28
+      ]
+    }
+  },
+  "output_path_pattern": "artifacts/asset-forge-pilot/warrior/warrior_{animation}_{direction}_sheet.png",
+  "depth_pass": true,
+  "equipment_objects": [
+    "Warrior_Sword"
+  ]
+}

@@ -5,6 +5,7 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
+import uuid
 from pathlib import Path
 from typing import Any
 
@@ -117,6 +118,37 @@ class ComfyClient:
 
     def system_stats(self) -> dict[str, Any]:
         return self._json("/system_stats")
+
+    def upload_image(self, name: str, data: bytes, subfolder: str = "assetforge") -> str:
+        boundary = "----AssetForge" + uuid.uuid4().hex
+        parts = []
+        for field, value in (("overwrite", "true"), ("type", "input"), ("subfolder", subfolder)):
+            parts.append(
+                f"--{boundary}\r\nContent-Disposition: form-data; name=\"{field}\"\r\n\r\n{value}\r\n".encode("utf-8")
+            )
+        parts.append(
+            (
+                f"--{boundary}\r\nContent-Disposition: form-data; name=\"image\"; filename=\"{name}\"\r\n"
+                "Content-Type: image/png\r\n\r\n"
+            ).encode("utf-8")
+        )
+        parts.append(data)
+        parts.append(f"\r\n--{boundary}--\r\n".encode("utf-8"))
+        body = b"".join(parts)
+        request = urllib.request.Request(
+            self.base_url + "/upload/image",
+            data=body,
+            headers={"Content-Type": f"multipart/form-data; boundary={boundary}"},
+            method="POST",
+        )
+        try:
+            with urllib.request.urlopen(request, timeout=self.timeout) as response:
+                value = json.loads(response.read().decode("utf-8"))
+        except (urllib.error.URLError, TimeoutError, json.JSONDecodeError) as error:
+            raise ForgeError(f"ComfyUI image upload failed for {name}: {error}") from error
+        stored = value.get("name", name)
+        stored_subfolder = value.get("subfolder", subfolder)
+        return f"{stored_subfolder}/{stored}" if stored_subfolder else stored
 
     def checkpoints(self) -> list[str]:
         request = urllib.request.Request(self.base_url + "/models/checkpoints")

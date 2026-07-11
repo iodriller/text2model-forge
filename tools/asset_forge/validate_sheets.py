@@ -24,8 +24,10 @@ def main():
     cell_width, cell_height = (int(value) for value in config["cell_size"])
     failures = []
     checked = []
+    default_baseline_tolerance = int(config.get("baseline_tolerance", 1))
     for animation_name, animation_config in config["animations"].items():
         frame_count = int(animation_config["frames"])
+        baseline_tolerance = int(animation_config.get("baseline_tolerance", default_baseline_tolerance))
         for direction in config["directions"]:
             relative = config["output_path_pattern"].format(animation=animation_name, direction=direction)
             path = absolute(repo_root, relative)
@@ -46,10 +48,10 @@ def main():
                     if box is None:
                         failures.append(f"Transparent frame {index} in {relative}")
                         continue
-                    if box[0] <= 0 or box[2] >= cell_width or box[1] <= 0:
+                    if box[0] <= 0 or box[2] >= cell_width or box[1] <= 0 or box[3] >= cell_height:
                         failures.append(f"Clipped frame {index} in {relative}: alpha bounds {box}")
                     baselines.append(box[3])
-                if baselines and max(baselines) - min(baselines) > 1:
+                if baselines and max(baselines) - min(baselines) > baseline_tolerance:
                     failures.append(f"Baseline drift in {relative}: {baselines}")
                 item["dimensions"] = list(image.size)
                 item["frames"] = frame_count

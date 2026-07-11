@@ -7,20 +7,26 @@ import subprocess
 import sys
 from pathlib import Path
 
+from .animate import DEFAULT_CHECKPOINT, DEFAULT_CONTROLNET, generate_animation
 from .comfy import ComfyClient, build_sdxl_workflow, generate
 from .blender_worker import audit_master
+from .pose import load_pack, materialize_pack, render_action_frames
+from .sheets import pack_sheets
 from .core import (
     APPROVAL_STAGES,
     ASSET_KINDS,
     ForgeError,
+    approval_status,
     approve_artifact,
     asset_root,
     build_prompt_pack,
     create_asset,
     init_workspace,
+    load_asset,
     load_project,
     package_root,
     project_status,
+    read_json,
     register_model,
     write_json,
 )
@@ -28,6 +34,7 @@ from .compliance import build_compliance_report
 from .mesh import run_triposr
 from .exporter import export_asset
 from .qa import validate_sheets
+from .production import package_production_unit
 
 
 def print_json(value: object) -> None:
@@ -107,6 +114,49 @@ def build_parser() -> argparse.ArgumentParser:
     run.add_argument("--comfy-url", default="http://127.0.0.1:8188")
     run.add_argument("--timeout", type=float, default=900)
 
+    unit = sub.add_parser("create-unit", help="create a diffusion motion prototype for review (never production eligible)")
+    unit.add_argument("--workspace", type=Path, required=True)
+    unit.add_argument("--asset-id", required=True)
+    unit.add_argument("--name", help="required only when the asset does not exist yet")
+    unit.add_argument("--kind", choices=sorted(ASSET_KINDS), default="character")
+    unit.add_argument("--role", help="required only when the asset does not exist yet")
+    unit.add_argument("--faction", default="neutral")
+    unit.add_argument("--primary-action", choices=["attack", "shoot", "cast", "none"], default="attack")
+    unit.add_argument("--reference", type=Path, help="identity image; defaults to the latest approved concept")
+    unit.add_argument("--actions", help="comma-separated; defaults to the asset's required actions")
+    unit.add_argument("--seed", type=int, default=1001)
+    unit.add_argument("--denoise", type=float, default=0.68)
+    unit.add_argument("--control-strength", type=float, default=0.85)
+    unit.add_argument("--pack", default="humanoid_side_east")
+    unit.add_argument("--comfy-url", default="http://127.0.0.1:8188")
+    unit.add_argument("--timeout", type=float, default=600)
+    unit.add_argument("--to-unity", type=Path, help=argparse.SUPPRESS)
+
+    poses = sub.add_parser("poses", help="materialize the editable pose pack and render control-image previews")
+    poses.add_argument("--workspace", type=Path, required=True)
+    poses.add_argument("--pack", default="humanoid_side_east")
+    poses.add_argument("--preview", action="store_true", help="render every action's control images for review")
+
+    animate = sub.add_parser("animate", help="generate pose-controlled motion-board frames (prototype only)")
+    animate.add_argument("--workspace", type=Path, required=True)
+    animate.add_argument("--asset-id", required=True)
+    animate.add_argument("--actions", required=True, help="comma-separated, e.g. idle,walk,attack")
+    animate.add_argument("--reference", type=Path, required=True, help="approved concept image that locks identity")
+    animate.add_argument("--checkpoint", default=DEFAULT_CHECKPOINT)
+    animate.add_argument("--controlnet", default=DEFAULT_CONTROLNET)
+    animate.add_argument("--pack", default="humanoid_side_east")
+    animate.add_argument("--seed", type=int, default=1001)
+    animate.add_argument("--denoise", type=float, default=0.6)
+    animate.add_argument("--control-strength", type=float, default=0.85)
+    animate.add_argument("--comfy-url", default="http://127.0.0.1:8188")
+    animate.add_argument("--timeout", type=float, default=600)
+
+    pack = sub.add_parser("pack-sheets", help="pack generated frames into baseline-locked sheets and run QA")
+    pack.add_argument("--workspace", type=Path, required=True)
+    pack.add_argument("--asset-id", required=True)
+    pack.add_argument("--actions", help="comma-separated; defaults to every action with rendered frames")
+    pack.add_argument("--pack", default="humanoid_side_east")
+
     approve = sub.add_parser("approve", help="create an immutable hash-bound stage approval")
     approve.add_argument("--workspace", type=Path, required=True)
     approve.add_argument("--asset-id", required=True)
@@ -128,11 +178,25 @@ def build_parser() -> argparse.ArgumentParser:
     audit.add_argument("--report", type=Path, required=True)
     audit.add_argument("--blender")
 
+    overpaint = sub.add_parser("overpaint", help="repaint rendered frames with SDXL img2img; alpha stays 3D ground truth")
+    overpaint.add_argument("--config", type=Path, required=True, help="character config with an 'overpaint' block")
+    overpaint.add_argument("--frames-root", type=Path, required=True)
+    overpaint.add_argument("--limit", type=int, help="process only the first N frames (tuning runs)")
+    overpaint.add_argument("--comfy-url", default="http://127.0.0.1:8188")
+    overpaint.add_argument("--timeout", type=float, default=300)
+
     qa = sub.add_parser("qa-sheets", help="run commercial sheet QA and create a review contact sheet")
     qa.add_argument("--config", type=Path, required=True)
     qa.add_argument("--repo-root", type=Path, default=Path.cwd())
     qa.add_argument("--report", type=Path, required=True)
     qa.add_argument("--contact-sheet", type=Path)
+
+    package = sub.add_parser("package-production", help="gate, review, and package one owned Blender unit for Unity")
+    package.add_argument("--config", type=Path, required=True)
+    package.add_argument("--repo-root", type=Path, default=Path.cwd())
+    package.add_argument("--qa-report", type=Path, required=True)
+    package.add_argument("--destination", type=Path, required=True)
+    package.add_argument("--review-root", type=Path, required=True)
 
     export = sub.add_parser("export", help="export approved sheets through a generic or engine-specific adapter")
     export.add_argument("--workspace", type=Path, required=True)
@@ -181,6 +245,91 @@ def execute(args: argparse.Namespace) -> object:
     if args.command == "generate":
         outputs = generate(args.workspace, args.asset_id, args.mode, args.checkpoint, args.seed, args.comfy_url, args.timeout)
         return {"outputs": [str(path.resolve()) for path in outputs]}
+    if args.command == "create-unit":
+        if args.to_unity:
+            raise ForgeError(
+                "Diffusion animation frames are motion prototypes and cannot be copied into Unity as final art. "
+                "Build one owned Blender master, run qa-sheets, then use package-production."
+            )
+        try:
+            asset = load_asset(args.workspace, args.asset_id)
+        except ForgeError:
+            if not (args.name and args.role):
+                raise ForgeError(
+                    f"Asset {args.asset_id!r} does not exist; pass --name and --role to create it"
+                ) from None
+            asset = create_asset(
+                args.workspace, args.asset_id, args.name, args.kind, args.role,
+                args.faction, args.primary_action,
+            )
+        build_prompt_pack(args.workspace, args.asset_id)
+        reference = args.reference
+        if reference is None:
+            status = approval_status(args.workspace, args.asset_id).get("concept", {})
+            if status.get("approved"):
+                reference = Path(read_json(Path(status["approval"]))["artifact"])
+        if reference is None:
+            raise ForgeError(
+                "No identity reference: pass --reference, or generate concepts "
+                "(assetforge generate --mode concept) and approve one (assetforge approve --stage concept)"
+            )
+        if args.actions:
+            actions = [item.strip() for item in args.actions.split(",") if item.strip()]
+        else:
+            actions = list(asset.get("production", {}).get("required_actions", [])) or ["idle", "walk", "attack", "hit", "death"]
+        animation = generate_animation(
+            args.workspace, args.asset_id, actions,
+            reference=reference, pack_id=args.pack, seed=args.seed,
+            denoise=args.denoise, control_strength=args.control_strength,
+            base_url=args.comfy_url, timeout_seconds=args.timeout,
+        )
+        report = pack_sheets(args.workspace, args.asset_id, actions, args.pack)
+        if not report["passed"]:
+            raise ForgeError("Sheet QA failed; failures: " + "; ".join(report["failures"][:8]))
+        payload = {
+            "asset_id": args.asset_id,
+            "actions": sorted(animation["actions"]),
+            "sheet_qa_passed": True,
+            "production_eligible": False,
+            "production_blocker": "diffusion_frame_sequence_has_no_single_master_identity_lock",
+            "unit_manifest": report["unit_manifest"],
+            "gameplay_preview": report["gameplay_preview"],
+        }
+        return payload
+    if args.command == "poses":
+        path = materialize_pack(args.workspace, args.pack)
+        result = {"pose_pack": str(path)}
+        if args.preview:
+            pack = load_pack(args.workspace, args.pack)
+            preview_root = args.workspace.resolve() / "poses" / "preview" / args.pack
+            for action_name in pack.get("actions", {}):
+                folder = preview_root / action_name
+                folder.mkdir(parents=True, exist_ok=True)
+                for index, image in enumerate(render_action_frames(pack, action_name)):
+                    image.save(folder / f"{index:02d}.png", "PNG")
+            result["preview"] = str(preview_root)
+        return result
+    if args.command == "animate":
+        return generate_animation(
+            args.workspace,
+            args.asset_id,
+            [item.strip() for item in args.actions.split(",") if item.strip()],
+            checkpoint=args.checkpoint,
+            controlnet=args.controlnet,
+            reference=args.reference,
+            pack_id=args.pack,
+            seed=args.seed,
+            denoise=args.denoise,
+            control_strength=args.control_strength,
+            base_url=args.comfy_url,
+            timeout_seconds=args.timeout,
+        )
+    if args.command == "pack-sheets":
+        actions = [item.strip() for item in args.actions.split(",") if item.strip()] if args.actions else None
+        report = pack_sheets(args.workspace, args.asset_id, actions, args.pack)
+        if not report["passed"]:
+            raise ForgeError("Sheet QA failed; failures: " + "; ".join(report["failures"][:8]))
+        return report
     if args.command == "approve":
         path = approve_artifact(args.workspace, args.asset_id, args.stage, args.artifact, args.reviewer, args.notes)
         return {"approval": str(path.resolve())}
@@ -196,11 +345,22 @@ def execute(args: argparse.Namespace) -> object:
         return {"mesh_seeds": [str(path.resolve()) for path in meshes]}
     if args.command == "audit-master":
         return audit_master(args.config, args.report, args.blender)
+    if args.command == "overpaint":
+        from .overpaint import overpaint_frames
+        return overpaint_frames(args.config, args.frames_root, args.limit, args.comfy_url, args.timeout)
     if args.command == "qa-sheets":
         report = validate_sheets(args.config, args.repo_root.resolve(), args.report, args.contact_sheet)
         if not report["passed"]:
             raise ForgeError("Sheet QA failed; inspect " + str(args.report.resolve()))
         return report
+    if args.command == "package-production":
+        return package_production_unit(
+            args.config,
+            args.repo_root,
+            args.qa_report,
+            args.destination,
+            args.review_root,
+        )
     if args.command == "export":
         return export_asset(args.workspace, args.asset_id, args.destination, args.adapter, not args.allow_unapproved)
     if args.command == "status":
