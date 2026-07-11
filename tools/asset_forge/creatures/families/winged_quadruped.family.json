@@ -1,0 +1,40 @@
+{
+  "schema_version": 1,
+  "id": "winged_quadruped_v1",
+  "display_name": "Winged Quadruped",
+  "implementation_status": "contract_only",
+  "rig_backend": "rigify_modular",
+  "required_bones": [
+    "root",
+    "spine",
+    "neck",
+    "head",
+    "jaw",
+    "tail",
+    "wing.L",
+    "wing.R",
+    "front_paw.L",
+    "front_paw.R",
+    "rear_paw.L",
+    "rear_paw.R"
+  ],
+  "supported_anatomy_modules": [
+    "cranium",
+    "eyes",
+    "brow",
+    "snout",
+    "jaw",
+    "nostrils",
+    "horns",
+    "frill",
+    "wings",
+    "tail",
+    "claws"
+  ],
+  "required_proof_views": [
+    "south",
+    "east",
+    "north"
+  ],
+  "notes": "Dragon-family contract. It deliberately cannot use the humanoid adapter; a Rigify quadruped/paw/spine rig plus authored wing chains is required before production."
+}

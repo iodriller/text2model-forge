@@ -58,6 +58,39 @@ Before the license-stage approval, run `forge.ps1 compliance`. It rejects unregi
 missing generated outputs, incomplete non-original input records, and assets whose license state is not
 `original-confirmed` or `mixed-reviewed`.
 
+## Creature DNA: goblins, ogres, and dragons
+
+Do not solve a creature by repainting a human frame sequence.  Creature anatomy is a
+versioned Blender input and must pass a geometry-only proof before texture baking:
+
+```powershell
+.\scripts\create_creature_proof.ps1 `
+  -CharacterConfig tools/asset_forge/characters/goblin.character.json
+```
+
+The command builds a disposable master under `artifacts/asset-forge-morphology/`,
+validates all semantic landmarks and action-wide posture coverage, renders only idle
+and attack, and creates `<unit>_morphology_proof.png`.  It does not alter Unity and
+does not consume ComfyUI/GPU diffusion time.
+
+After a full build, rerender a tuned action without discarding all other frames:
+
+```powershell
+.\scripts\asset_forge.ps1 render `
+  -CharacterConfig tools/asset_forge/characters/goblin.character.json `
+  -Actions attack
+```
+
+The incremental path deletes and replaces only the named action folders, then
+repacks and validates the complete sheet set.  A normal render without `-Actions`
+still performs a clean deterministic rebuild.
+
+Species profiles live in `tools/asset_forge/creatures/`; family contracts live in
+`tools/asset_forge/creatures/families/`.  Ogre-like bipeds reuse
+`biped_humanoid_v1` with different proportions.  Dragons must use the separate
+`winged_quadruped_v1` contract and cannot publish while that family remains marked
+`contract_only`.  See `DESIGN/creature_dna_pipeline.md`.
+
 ## Motion storyboard prototype (not production art)
 
 The ComfyUI/OpenPose path is retained only for exploring poses. Testing showed that reference
@@ -70,10 +103,14 @@ See `DESIGN/asset_forge_animation_plan.md` for the failure record and production
 .\scripts\setup_local_ai.ps1 download-animation-models -AcceptSdxlLicense
 .\scripts\forge.ps1 register-model --workspace <ws> --model-id dreamshaper-xl-v2-turbo --file tools/asset_forge/runtime/comfyui/models/checkpoints/dreamshaper_xl_v2_turbo.safetensors --reviewer <name>
 .\scripts\forge.ps1 register-model --workspace <ws> --model-id controlnet-openpose-sdxl-xinsir --file tools/asset_forge/runtime/comfyui/models/controlnet/controlnet_openpose_sdxl_xinsir.safetensors --reviewer <name>
+.\scripts\forge.ps1 register-model --workspace <ws> --model-id controlnet-depth-sdxl-xinsir --file tools/asset_forge/runtime/comfyui/models/controlnet/controlnet_depth_sdxl_xinsir.safetensors --reviewer <name>
 .\scripts\forge.ps1 poses --workspace <ws> --preview          # editable pose pack + control-image previews
 .\scripts\forge.ps1 animate --workspace <ws> --asset-id footman --actions idle,walk,attack,hit,death --reference <approved-concept.png> --seed 3001
 .\scripts\forge.ps1 pack-sheets --workspace <ws> --asset-id footman   # prototype review only
 ```
+
+For this repository, `download-animation-models` registers all three installed hashes automatically when the Asset
+Forge environment and workspace already exist. The explicit commands remain useful for a portable/new workspace.
 
 Use these outputs to discuss timing or pose ideas, then author the motion on one owned Blender
 master. `create-unit --to-unity` intentionally fails with migration instructions.
@@ -102,8 +139,17 @@ sample frames, contact phases, and output paths, then run:
 The command creates the original rigged `.blend`, renders every configured action in genuine
 `north/south/east/west`, packs fixed-camera sheets without per-frame scaling, rejects clipping,
 static attacks, missed hit poses, bad death silhouettes, and missing phases, creates review GIFs,
-hash-locks the master/QA/config in a schema-2 manifest, and packages the accepted result for Unity.
-The editor preparation workflow applies production units after the legacy placeholder roster.
+and hash-locks the master/QA/config in a staged schema-2 manifest. It does not replace Unity art.
+
+After the owner visually accepts the generated board/GIF, bind approval to those exact bytes and publish:
+
+```powershell
+.\scripts\forge.ps1 approve --workspace asset_sources/ember-defense --asset-id footman --stage sheets --artifact asset_sources/ember-defense/assets/footman/reports/production-review/footman_acceptance_board.png --reviewer <name>
+.\scripts\asset_forge.ps1 publish -CharacterConfig tools/asset_forge/characters/footman.character.json
+```
+
+`publish` refuses stale approvals by checking the acceptance-board SHA-256. The editor preparation workflow applies
+published production units after the legacy placeholder roster.
 
 Current review examples:
 
@@ -111,6 +157,54 @@ Current review examples:
 - `asset_sources/ember-defense/assets/footman/reports/production-review/footman_gameplay_transition.gif`
 - `asset_sources/ember-defense/assets/goblin/reports/production-review/goblin_all_actions.gif`
 - `asset_sources/ember-defense/assets/goblin/reports/production-review/goblin_gameplay_transition.gif`
+
+### Deterministic surface-overpaint contract
+
+Per-frame diffusion is never allowed to own motion, silhouette, equipment, alpha, or heraldry. When an
+`overpaint` block is enabled, Blender renders beauty, true depth, and equipment-protection passes. Asset Forge then:
+
+1. paints action frames together with one persistent hash-recorded style anchor;
+2. constrains the optional surface treatment with the real Blender depth pass;
+3. restores every protected sword, shield, club, and emblem pixel from the authored master;
+4. writes chunks to a resumable staging area, leaving source frames unchanged after interruption;
+5. promotes the complete set atomically only when every required mask and protected pixel passes;
+6. records model, anchor, inputs, workflow, protection coverage, and result in schema-3 provenance;
+7. blocks production packaging if that provenance is missing, old, or failing.
+
+This is the zero-drift boundary: AI can suggest painted surface character, while the rigged master remains the
+authority for identity-critical geometry. Re-running the direct `assetforge overpaint` command resumes matching
+staged chunks. Running `asset_forge.ps1 build` intentionally starts a clean deterministic render.
+
+### Texture master bake (paint once, render forever)
+
+When a character config has an enabled `texture_master` block, the paint moves from frames to the surface and
+per-frame diffusion is retired for that unit:
+
+1. `bake-master` renders 6 orbit + 2 elevated canonical views of the master (flat neutral light, true depth);
+2. all views plus the unit's persistent style anchor ride ONE depth-controlled SDXL img2img call as a grid;
+3. Blender projects the painted views back onto every mesh (facing^2 x depth-visibility x alpha weighting over a
+   freshly smart-unwrapped `AssetForgeBake` UV) and bakes a texture atlas per mesh; texels no view can see fall
+   back to a diffuse-color bake of the original authored materials;
+4. the result is saved as `<master>_baked.blend` with packed atlases plus unit icon/portrait renders, and
+   `asset_forge.ps1 build` renders all sheets from it directly — no overpaint stage, no depth/equipment passes,
+   no protection machinery, because drift is structurally impossible when every frame samples one painted surface.
+
+Consistency this way is mathematical, not statistical, and a full 4-direction rebuild costs minutes, which is what
+makes automated iteration (below) affordable.
+
+```powershell
+.\scripts\asset_forge.ps1 bake -CharacterConfig tools/asset_forge/characters/footman.character.json   # force rebake
+.\scripts\asset_forge.ps1 build -CharacterConfig tools/asset_forge/characters/footman.character.json  # bake if stale + full chain
+```
+
+### Automated art direction (critic)
+
+Every `build` must pass `assetforge critique` after mechanical QA: masked tone inside the dark-fantasy band, muted
+saturation, interior edge energy at 96 px gameplay size, hue coherence between consecutive frames, and palette
+identity of every sheet against idle/south. Thresholds live in `assetforge/critic.py` (override per unit via a
+`critic` block). The judgment half of the standard lives in `tools/asset_forge/RUBRIC.md`; the reviewing agent
+applies it to each acceptance board before the owner ever sees a candidate, and every owner rejection is appended
+there as a permanent rule.
 
 ## Prove the pipeline
 

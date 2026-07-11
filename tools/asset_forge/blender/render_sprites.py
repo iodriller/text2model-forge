@@ -2,6 +2,7 @@ import argparse
 import json
 import math
 import os
+import shutil
 import sys
 
 import bpy
@@ -16,6 +17,11 @@ def parse_args():
     parser.add_argument("--frames-root", required=True)
     parser.add_argument("--source")
     parser.add_argument("--actions", help="optional comma-separated incremental render subset")
+    parser.add_argument(
+        "--skip-aux-passes",
+        action="store_true",
+        help="skip depth/equipment/protection passes (baked-texture masters need no overpaint support)",
+    )
     return parser.parse_args(raw)
 
 
@@ -99,6 +105,7 @@ def configure_scene(config):
             break
         except TypeError:
             continue
+    scene.view_settings.exposure = float(config.get("render_exposure", 0.0))
     if scene.world is None:
         scene.world = bpy.data.worlds.new("AssetForgeWorld")
     scene.world.color = (0.018, 0.022, 0.03)
@@ -219,25 +226,64 @@ def equipment_objects(patterns):
     return matched
 
 
+def mask_material(name, color):
+    material = bpy.data.materials.get(name) or bpy.data.materials.new(name)
+    material.use_nodes = True
+    node = material.node_tree.nodes.get("Principled BSDF")
+    node.inputs["Base Color"].default_value = (*color, 1.0)
+    node.inputs["Roughness"].default_value = 1.0
+    emission = node.inputs.get("Emission Color") or node.inputs.get("Emission")
+    if emission is not None:
+        emission.default_value = (*color, 1.0)
+    strength = node.inputs.get("Emission Strength")
+    if strength is not None:
+        strength.default_value = 1.0
+    return material
+
+
 def render_equipment_mask(scene, equipment, mask_path):
-    """Alpha-only render of just the equipment meshes: ground truth for integrity QA."""
-    hidden = []
+    """Visibility-aware white/black material mask; body occlusion is preserved."""
+    white = mask_material("AssetForge Mask White", (1.0, 1.0, 1.0))
+    black = mask_material("AssetForge Mask Black", (0.0, 0.0, 0.0))
+    slot_backups = []
     for obj in bpy.data.objects:
-        if obj.type == "MESH" and obj not in equipment and not obj.hide_render:
-            obj.hide_render = True
-            hidden.append(obj)
+        if obj.type != "MESH" or obj.hide_render:
+            continue
+        if not obj.material_slots:
+            obj.data.materials.append(None)
+            added_slot = True
+        else:
+            added_slot = False
+        target = white if obj in equipment else black
+        for slot in obj.material_slots:
+            slot_backups.append((obj, slot, slot.link, slot.material, added_slot))
+            slot.link = "OBJECT"
+            slot.material = target
     freestyle = scene.render.use_freestyle
     compositing = scene.render.use_compositing
+    look = scene.view_settings.look
+    view_transform = scene.view_settings.view_transform
     scene.render.use_freestyle = False
     scene.render.use_compositing = False
+    scene.view_settings.view_transform = "Standard"
+    scene.view_settings.look = "None"
     scene.render.filepath = mask_path
     try:
         bpy.ops.render.render(write_still=True)
     finally:
         scene.render.use_freestyle = freestyle
         scene.render.use_compositing = compositing
-        for obj in hidden:
-            obj.hide_render = False
+        scene.view_settings.view_transform = view_transform
+        scene.view_settings.look = look
+        added_objects = set()
+        for obj, slot, link, material, added_slot in slot_backups:
+            slot.material = material
+            slot.link = link
+            if added_slot:
+                added_objects.add(obj)
+        for obj in added_objects:
+            if obj.data.materials and obj.data.materials[-1] is None:
+                obj.data.materials.pop(index=len(obj.data.materials) - 1)
 
 
 def sampled_frame(action, index, count, loop, animation_config):
@@ -272,9 +318,11 @@ def main():
         animation_object.animation_data_create()
     scene, camera = configure_scene(config)
     frames_root = os.path.abspath(args.frames_root)
-    depth_tree = build_depth_tree(scene, config) if config.get("depth_pass") else None
+    depth_tree = build_depth_tree(scene, config) if config.get("depth_pass") and not args.skip_aux_passes else None
     scene.render.use_compositing = False
-    equipment = equipment_objects(config.get("equipment_objects") or [])
+    equipment = [] if args.skip_aux_passes else equipment_objects(config.get("equipment_objects") or [])
+    protected_patterns = config.get("protected_objects") or config.get("equipment_objects") or []
+    protected = [] if args.skip_aux_passes else equipment_objects(protected_patterns)
 
     selected_actions = None
     if args.actions:
@@ -300,10 +348,13 @@ def main():
             os.makedirs(output_folder, exist_ok=True)
             depth_folder = os.path.join(frames_root, config["id"] + "-depth", animation_name, direction)
             equip_folder = os.path.join(frames_root, config["id"] + "-equip", animation_name, direction)
+            protect_folder = os.path.join(frames_root, config["id"] + "-protect", animation_name, direction)
             if depth_tree is not None:
                 os.makedirs(depth_folder, exist_ok=True)
             if equipment:
                 os.makedirs(equip_folder, exist_ok=True)
+            if protected:
+                os.makedirs(protect_folder, exist_ok=True)
             for index in range(frame_count):
                 frame = sampled_frame(action, index, frame_count, loop, animation_config) if action is not None else float(index + 1)
                 scene.frame_set(int(math.floor(frame)), subframe=frame - math.floor(frame))
@@ -312,7 +363,14 @@ def main():
                 if depth_tree is not None:
                     render_depth(scene, depth_tree, os.path.join(depth_folder, f"{index:02d}.png"))
                 if equipment:
-                    render_equipment_mask(scene, equipment, os.path.join(equip_folder, f"{index:02d}.png"))
+                    equip_path = os.path.join(equip_folder, f"{index:02d}.png")
+                    render_equipment_mask(scene, equipment, equip_path)
+                if protected:
+                    protect_path = os.path.join(protect_folder, f"{index:02d}.png")
+                    if {obj.name for obj in protected} == {obj.name for obj in equipment}:
+                        shutil.copy2(equip_path, protect_path)
+                    else:
+                        render_equipment_mask(scene, protected, protect_path)
 
     if animation_object is not None:
         animation_object.animation_data.action = None

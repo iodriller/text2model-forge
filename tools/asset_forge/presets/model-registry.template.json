@@ -36,6 +36,17 @@
       "installed_sha256": null
     },
     {
+      "id": "controlnet-depth-sdxl-xinsir",
+      "purpose": "surface-overpaint-depth-control",
+      "filename": "controlnet_depth_sdxl_xinsir.safetensors",
+      "source_url": "https://huggingface.co/xinsir/controlnet-depth-sdxl-1.0",
+      "download_url": "https://huggingface.co/xinsir/controlnet-depth-sdxl-1.0/resolve/main/diffusion_pytorch_model.safetensors?download=true",
+      "license": "Apache-2.0",
+      "license_url": "https://huggingface.co/xinsir/controlnet-depth-sdxl-1.0",
+      "commercial_review": "required",
+      "installed_sha256": null
+    },
+    {
       "id": "flux.1-schnell",
       "purpose": "optional-concept",
       "filename": null,

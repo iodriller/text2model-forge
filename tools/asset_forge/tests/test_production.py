@@ -7,7 +7,7 @@ import pytest
 from PIL import Image, ImageDraw
 
 from assetforge.cli import build_parser, execute
-from assetforge.core import ForgeError
+from assetforge.core import ForgeError, sha256_file
 from assetforge.production import package_production_unit, validate_production_config
 
 
@@ -63,7 +63,15 @@ def production_fixture(root: Path) -> tuple[Path, Path]:
     config_path = root / "unit.character.json"
     write_json(config_path, config)
     qa_path = root / "qa.json"
-    write_json(qa_path, {"asset_id": "unit", "passed": True})
+    qa_sheets = []
+    for action in ACTIONS:
+        for direction in DIRECTIONS:
+            sheet = root / "sheets" / f"unit_{action}_{direction}_sheet.png"
+            qa_sheets.append({
+                "path": sheet.relative_to(root).as_posix(),
+                "sha256": sha256_file(sheet),
+            })
+    write_json(qa_path, {"asset_id": "unit", "passed": True, "sheets": qa_sheets})
     return config_path, qa_path
 
 
@@ -97,6 +105,20 @@ def test_package_builds_hash_locked_manifest_and_review_reels(tmp_path: Path) ->
     assert len(manifest["actions"]) == len(ACTIONS) * len(DIRECTIONS)
     assert Path(result["review"]["all_actions"]).is_file()
     assert Path(result["review"]["gameplay_transition"]).is_file()
+    assert Path(result["review"]["acceptance_board"]).is_file()
+
+
+def test_package_rejects_sheet_changed_after_qa(tmp_path: Path) -> None:
+    config_path, qa_path = production_fixture(tmp_path)
+    make_sheet(tmp_path / "sheets" / "unit_idle_south_sheet.png", (220, 20, 20, 255))
+    with pytest.raises(ForgeError, match="sheet changed after QA"):
+        package_production_unit(
+            config_path,
+            tmp_path,
+            qa_path,
+            tmp_path / "unity-unit",
+            tmp_path / "review",
+        )
 
 
 def test_diffusion_create_unit_cannot_copy_to_unity(tmp_path: Path) -> None:
@@ -108,3 +130,59 @@ def test_diffusion_create_unit_cannot_copy_to_unity(tmp_path: Path) -> None:
     ])
     with pytest.raises(ForgeError, match="motion prototypes"):
         execute(args)
+
+
+def test_enabled_overpaint_cannot_package_without_passing_provenance(tmp_path: Path) -> None:
+    config_path, qa_path = production_fixture(tmp_path)
+    config = json.loads(config_path.read_text(encoding="utf-8"))
+    config["depth_pass"] = True
+    config["equipment_objects"] = ["Sword*"]
+    config["overpaint"] = {
+        "enabled": True,
+        "control": "depth",
+        "anchor": True,
+        "protect_equipment": True,
+        "fail_closed": True,
+    }
+    write_json(config_path, config)
+    with pytest.raises(ForgeError, match="no provenance report"):
+        package_production_unit(
+            config_path, tmp_path, qa_path, tmp_path / "unity-unit", tmp_path / "review"
+        )
+
+
+def test_protected_overpaint_is_hash_locked_in_manifest(tmp_path: Path) -> None:
+    config_path, qa_path = production_fixture(tmp_path)
+    config = json.loads(config_path.read_text(encoding="utf-8"))
+    config["depth_pass"] = True
+    config["equipment_objects"] = ["Sword*"]
+    config["overpaint"] = {
+        "enabled": True,
+        "control": "depth",
+        "anchor": True,
+        "protect_equipment": True,
+        "fail_closed": True,
+    }
+    write_json(config_path, config)
+    write_json(
+        tmp_path / "artifacts" / "asset-forge-work" / "unit" / "frames" / "unit-overpaint.json",
+        {
+            "schema_version": 3,
+            "unit": "unit",
+            "passed": True,
+            "depth_control": True,
+            "protected_equipment": True,
+            "transactional_promotion": True,
+            "checkpoint_sha256": "a" * 64,
+            "controlnet_sha256": "b" * 64,
+            "anchor_sha256": "c" * 64,
+            "protected_frames": len(ACTIONS) * len(DIRECTIONS) * 2,
+            "equipment_integrity_failures": [],
+        },
+    )
+    result = package_production_unit(
+        config_path, tmp_path, qa_path, tmp_path / "unity-unit", tmp_path / "review"
+    )
+    manifest = json.loads(Path(result["manifest"]).read_text(encoding="utf-8"))
+    assert manifest["production"]["identity_lock"] == "single_master_sha256+protected_equipment"
+    assert len(manifest["production"]["overpaint_report_sha256"]) == 64

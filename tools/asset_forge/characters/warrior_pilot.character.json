@@ -48,7 +48,10 @@
     "negative": "bare head, missing sword",
     "control": "depth",
     "control_strength": 0.65,
-    "anchor": true
+    "anchor": true,
+    "protect_equipment": true,
+    "protection_feather": 0.0,
+    "fail_closed": true
   },
   "animations": {
     "idle": {
@@ -149,6 +152,9 @@
   "output_path_pattern": "artifacts/asset-forge-pilot/warrior/warrior_{animation}_{direction}_sheet.png",
   "depth_pass": true,
   "equipment_objects": [
+    "Warrior_Sword"
+  ],
+  "protected_objects": [
     "Warrior_Sword"
   ]
 }

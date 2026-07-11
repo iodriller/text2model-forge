@@ -178,12 +178,50 @@ def build_parser() -> argparse.ArgumentParser:
     audit.add_argument("--report", type=Path, required=True)
     audit.add_argument("--blender")
 
+    morphology = sub.add_parser(
+        "validate-morphology",
+        help="validate a Creature DNA profile and its hash-bound Blender build report",
+    )
+    morphology.add_argument("--profile", type=Path, required=True)
+    morphology.add_argument("--build-report", type=Path, required=True)
+    morphology.add_argument("--master", type=Path, required=True)
+    morphology.add_argument("--repo-root", type=Path, default=Path.cwd())
+
+    morphology_proof = sub.add_parser(
+        "morphology-proof",
+        help="compose a geometry-first creature review board from smoke-rendered frames",
+    )
+    morphology_proof.add_argument("--config", type=Path, required=True)
+    morphology_proof.add_argument("--profile", type=Path, required=True)
+    morphology_proof.add_argument("--frames-root", type=Path, required=True)
+    morphology_proof.add_argument("--output", type=Path, required=True)
+
     overpaint = sub.add_parser("overpaint", help="repaint rendered frames with SDXL img2img; alpha stays 3D ground truth")
     overpaint.add_argument("--config", type=Path, required=True, help="character config with an 'overpaint' block")
     overpaint.add_argument("--frames-root", type=Path, required=True)
     overpaint.add_argument("--limit", type=int, help="process only the first N frames (tuning runs)")
     overpaint.add_argument("--comfy-url", default="http://127.0.0.1:8188")
     overpaint.add_argument("--timeout", type=float, default=300)
+
+    repair = sub.add_parser(
+        "repair-overpaint",
+        help="restore protected master pixels in historical/partial overpaint frames (review-only)",
+    )
+    repair.add_argument("--config", type=Path, required=True)
+    repair.add_argument("--frames-root", type=Path, required=True)
+
+    bake = sub.add_parser("bake-master", help="paint canonical views once and bake them into the master's textures")
+    bake.add_argument("--config", type=Path, required=True, help="character config with a 'texture_master' block")
+    bake.add_argument("--repo-root", type=Path, default=Path.cwd())
+    bake.add_argument("--blender", required=True)
+    bake.add_argument("--comfy-url", default="http://127.0.0.1:8188")
+    bake.add_argument("--timeout", type=float, default=600)
+    bake.add_argument("--force", action="store_true", help="rebake even when the run signature matches")
+
+    critic = sub.add_parser("critique", help="run the deterministic art-direction gates on packed production sheets")
+    critic.add_argument("--config", type=Path, required=True)
+    critic.add_argument("--repo-root", type=Path, default=Path.cwd())
+    critic.add_argument("--report", type=Path, required=True)
 
     qa = sub.add_parser("qa-sheets", help="run commercial sheet QA and create a review contact sheet")
     qa.add_argument("--config", type=Path, required=True)
@@ -345,9 +383,31 @@ def execute(args: argparse.Namespace) -> object:
         return {"mesh_seeds": [str(path.resolve()) for path in meshes]}
     if args.command == "audit-master":
         return audit_master(args.config, args.report, args.blender)
+    if args.command == "validate-morphology":
+        from .morphology import validate_morphology_build
+        return validate_morphology_build(
+            args.profile, args.build_report, args.master, args.repo_root,
+        )
+    if args.command == "morphology-proof":
+        from .morphology import create_morphology_proof
+        return create_morphology_proof(
+            args.config, args.profile, args.frames_root, args.output,
+        )
     if args.command == "overpaint":
         from .overpaint import overpaint_frames
         return overpaint_frames(args.config, args.frames_root, args.limit, args.comfy_url, args.timeout)
+    if args.command == "repair-overpaint":
+        from .overpaint import repair_protected_frames
+        return repair_protected_frames(args.config, args.frames_root)
+    if args.command == "bake-master":
+        from .bake import bake_texture_master
+        return bake_texture_master(args.config, args.repo_root, args.blender, args.comfy_url, args.timeout, args.force)
+    if args.command == "critique":
+        from .critic import critique_unit
+        report = critique_unit(args.config, args.repo_root.resolve(), args.report)
+        if not report["passed"]:
+            raise ForgeError("Art-direction critique failed; inspect " + str(args.report.resolve()))
+        return report
     if args.command == "qa-sheets":
         report = validate_sheets(args.config, args.repo_root.resolve(), args.report, args.contact_sheet)
         if not report["passed"]:

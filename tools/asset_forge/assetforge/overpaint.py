@@ -4,32 +4,31 @@ The Blender render supplies structure; SDXL repaints surfaces. Three mechanisms 
 result consistent and complete:
 
 1. Depth ControlNet — every frame's TRUE 3D depth (rendered by Blender) constrains
-   generation, so thin equipment (sword, club) cannot be painted away and forms cannot
-   drift off the geometry.
+   generation. This improves structure but is not treated as an equipment guarantee.
 2. Persistent style anchor — one painted reference cell per unit, created once and stored
    next to the character config, is embedded into EVERY grid of EVERY run. Diffusion
    copies materials/emblems from it, making frame N, frame N+1, and next month's rebuild
    agree.
-3. Equipment integrity gate — Blender also renders an equipment-only mask per frame; after
-   painting, QA verifies the equipment region still reads distinctly (color/contrast vs
-   its surroundings). Failing chunks retry once at lower denoise, and remaining failures
-   are reported in provenance.
+3. Protected equipment — Blender also renders an equipment-only mask per frame. After
+   painting, authored pixels are restored under that mask. Missing/empty masks or any
+   protected-pixel mismatch fail the job without promoting partial outputs.
 
 The ORIGINAL render alpha is re-applied to every painted frame, so silhouettes and
-baselines never drift. Downstream packing/QA/Unity are unchanged.
+baselines never drift. Chunks are resumable and promoted only as a complete passing set.
 """
 
 from __future__ import annotations
 
 import io
 import json
+import shutil
 from pathlib import Path
 from typing import Any
 
-from PIL import Image, ImageFilter, ImageStat
+from PIL import Image, ImageChops, ImageFilter, ImageStat
 
 from .comfy import ComfyClient
-from .core import ForgeError, sha256_json, utc_now, write_json
+from .core import ForgeError, sha256_file, sha256_json, utc_now, write_json
 
 WORK_SIZE = 768
 BACKGROUND = (40, 44, 52)
@@ -124,12 +123,19 @@ def _sibling(frame_path: Path, unit_frames: Path, suffix: str) -> Path:
     return unit_frames.parent / (unit_frames.name + suffix) / relative
 
 
+def _mask_channel(source: Image.Image, size: tuple[int, int]) -> Image.Image:
+    rgba = source.convert("RGBA").resize(size, Image.Resampling.NEAREST)
+    red, green, blue, alpha = rgba.split()
+    visible_color = ImageChops.lighter(ImageChops.lighter(red, green), blue)
+    return ImageChops.multiply(visible_color, alpha)
+
+
 def equipment_integrity(painted: Image.Image, alpha: Image.Image, equip_mask_path: Path) -> tuple[bool, float]:
     """True when the painted equipment region still reads against its surroundings."""
     if not equip_mask_path.is_file():
-        return True, -1.0
+        return False, -1.0
     with Image.open(equip_mask_path) as source:
-        mask = source.convert("RGBA").getchannel("A").resize(painted.size, Image.Resampling.NEAREST)
+        mask = _mask_channel(source, painted.size)
     mask = mask.point(lambda a: 255 if a >= 100 else 0)
     coverage = ImageStat.Stat(mask).sum[0] / 255
     if coverage < INTEGRITY_MIN_PIXELS:
@@ -145,6 +151,75 @@ def equipment_integrity(painted: Image.Image, alpha: Image.Image, equip_mask_pat
     around = ImageStat.Stat(painted.convert("RGB"), ring).mean
     distance = sum(abs(a - b) for a, b in zip(inside, around)) / 3.0
     return distance >= INTEGRITY_MIN_DISTANCE, distance
+
+
+def restore_protected_parts(
+    painted: Image.Image,
+    original: Image.Image,
+    equip_mask_path: Path,
+    feather_pixels: float = 0.0,
+) -> tuple[Image.Image, int, float]:
+    """Restore authored equipment pixels and report coverage and reconstruction error.
+
+    Diffusion is useful for surface treatment but cannot be trusted with a sword edge,
+    shield silhouette, or emblem.  The Blender equipment pass is therefore a protection
+    mask, not merely a warning hint.  Pixels under it come from the deterministic master.
+    """
+    if not equip_mask_path.is_file():
+        raise ForgeError(f"Required equipment mask is missing: {equip_mask_path}")
+    with Image.open(equip_mask_path) as source:
+        mask = _mask_channel(source, painted.size)
+    mask = mask.point(lambda value: 255 if value >= 100 else 0)
+    coverage = round(ImageStat.Stat(mask).sum[0] / 255)
+    if coverage < INTEGRITY_MIN_PIXELS:
+        raise ForgeError(f"Equipment mask is empty or too small ({coverage} pixels): {equip_mask_path}")
+    if feather_pixels > 0:
+        mask = mask.filter(ImageFilter.GaussianBlur(float(feather_pixels)))
+
+    authored = original.convert("RGB").resize(painted.size, Image.Resampling.LANCZOS)
+    restored = Image.composite(authored, painted.convert("RGB"), mask)
+    _, error = protected_part_metrics(restored, authored, equip_mask_path)
+    return restored, coverage, error
+
+
+def protected_part_metrics(
+    image: Image.Image,
+    original: Image.Image,
+    equip_mask_path: Path,
+) -> tuple[int, float]:
+    if not equip_mask_path.is_file():
+        raise ForgeError(f"Required equipment mask is missing: {equip_mask_path}")
+    with Image.open(equip_mask_path) as source:
+        mask = _mask_channel(source, image.size)
+    hard_mask = mask.point(lambda value: 255 if value >= 100 else 0)
+    coverage = round(ImageStat.Stat(hard_mask).sum[0] / 255)
+    authored = original.convert("RGB").resize(image.size, Image.Resampling.LANCZOS)
+    difference = ImageStat.Stat(ImageChops.difference(image.convert("RGB"), authored), hard_mask).mean
+    return coverage, sum(difference) / 3.0
+
+
+def masks_equivalent(first_path: Path, second_path: Path) -> bool:
+    if first_path.resolve() == second_path.resolve():
+        return True
+    if not first_path.is_file() or not second_path.is_file():
+        return False
+    with Image.open(first_path) as first_source, Image.open(second_path) as second_source:
+        first = _mask_channel(first_source, first_source.size)
+        second = _mask_channel(second_source, first.size)
+    return ImageChops.difference(first, second).getbbox() is None
+
+
+def _registered_model_hash(config_path: Path, checkpoint: str) -> str | None:
+    for parent in config_path.resolve().parents:
+        registry_path = parent / "asset_sources" / "ember-defense" / "models" / "model-registry.json"
+        if not registry_path.is_file():
+            continue
+        registry = json.loads(registry_path.read_text(encoding="utf-8"))
+        for model in registry.get("models", []):
+            if model.get("filename") == checkpoint:
+                value = model.get("installed_sha256")
+                return str(value) if value else None
+    return None
 
 
 def overpaint_frames(
@@ -164,6 +239,10 @@ def overpaint_frames(
     denoise = float(block.get("denoise", 0.42))
     control_strength = float(block.get("control_strength", 0.65))
     use_anchor = bool(block.get("anchor", True))
+    protect_equipment = bool(block.get("protect_equipment", True))
+    fail_closed = bool(block.get("fail_closed", True))
+    protection_feather = float(block.get("protection_feather", 0.0))
+    equipment_required = bool(config.get("equipment_objects"))
     positive = str(block.get("prompt", "")).strip()
     positive = f"{positive}. {STYLE_SUFFIX}" if positive else STYLE_SUFFIX
     negative = str(block.get("negative", "")).strip()
@@ -175,9 +254,26 @@ def overpaint_frames(
         raise ForgeError(f"No rendered frames found under {unit_frames}")
     if limit is not None:
         frames = frames[: int(limit)]
+    input_hashes = {
+        str(path.relative_to(unit_frames)).replace("\\", "/"): sha256_file(path)
+        for path in frames
+    }
+    input_manifest_sha256 = sha256_json(input_hashes)
 
     depth_available = (frames_root.resolve() / f"{unit_id}-depth").is_dir()
     use_depth = bool(block.get("control", "depth") == "depth" and depth_available)
+    structural_hashes: dict[str, str] = {}
+    required_passes = ["-depth"] if use_depth else []
+    if equipment_required:
+        required_passes.extend(["-equip", "-protect"])
+    for frame_path in frames:
+        relative = str(frame_path.relative_to(unit_frames)).replace("\\", "/")
+        for suffix in required_passes:
+            pass_path = _sibling(frame_path, unit_frames, suffix)
+            if not pass_path.is_file():
+                raise ForgeError(f"Required structural pass is missing: {pass_path}")
+            structural_hashes[f"{suffix}/{relative}"] = sha256_file(pass_path)
+    structural_manifest_sha256 = sha256_json(structural_hashes)
 
     client = ComfyClient(base_url)
     available = client.checkpoints()
@@ -247,9 +343,44 @@ def overpaint_frames(
             anchor_created = True
 
     raw_backup = frames_root.resolve() / f"{unit_id}-raw"
+    staging_root = frames_root.resolve() / f"{unit_id}-overpaint-staging"
+    state_path = staging_root / "state.json"
+    run_signature = sha256_json({
+        "unit": unit_id,
+        "checkpoint": checkpoint,
+        "checkpoint_sha256": _registered_model_hash(config_path, checkpoint),
+        "controlnet": DEPTH_CONTROLNET if use_depth else None,
+        "controlnet_sha256": _registered_model_hash(config_path, DEPTH_CONTROLNET) if use_depth else None,
+        "seed": seed,
+        "steps": steps,
+        "cfg": cfg,
+        "denoise": denoise,
+        "control_strength": control_strength,
+        "positive": positive,
+        "negative": negative,
+        "input_manifest_sha256": input_manifest_sha256,
+        "structural_manifest_sha256": structural_manifest_sha256,
+        "anchor_sha256": sha256_file(anchor_path) if anchor_path.is_file() else None,
+        "protect_equipment": protect_equipment,
+        "protection_feather": protection_feather,
+        "grid_cell": int(block.get("grid_cell", 512)),
+        "grid_columns": int(block.get("grid_columns", 3)),
+        "grid_rows": int(block.get("grid_rows", 2)),
+    })
+    state: dict[str, Any] = {"run_signature": run_signature, "completed_chunks": []}
+    if state_path.is_file():
+        saved_state = json.loads(state_path.read_text(encoding="utf-8"))
+        if saved_state.get("run_signature") == run_signature:
+            state = saved_state
+        else:
+            shutil.rmtree(staging_root)
+    staging_root.mkdir(parents=True, exist_ok=True)
+    completed_chunks = set(str(value) for value in state.get("completed_chunks", []))
 
     def backup(original: Image.Image, frame_path: Path) -> None:
         backup_path = raw_backup / frame_path.relative_to(unit_frames)
+        if backup_path.is_file():
+            return
         backup_path.parent.mkdir(parents=True, exist_ok=True)
         original.save(backup_path, "PNG")
 
@@ -265,9 +396,17 @@ def overpaint_frames(
 
     processed = 0
     integrity_failures: list[dict[str, Any]] = []
+    contrast_warnings: list[dict[str, Any]] = []
+    repaired_generation_failures: list[dict[str, Any]] = []
+    protection_records: list[dict[str, Any]] = []
     for group_index, (folder, members) in enumerate(sorted(groups.items())):
         for chunk_index in range(0, len(members), payload_slots):
             chunk = members[chunk_index : chunk_index + payload_slots]
+            chunk_key = f"{group_index:03d}:{chunk_index:03d}"
+            staged_paths = [staging_root / frame_path.relative_to(unit_frames) for frame_path in chunk]
+            if chunk_key in completed_chunks and all(path.is_file() for path in staged_paths):
+                processed += len(chunk)
+                continue
             originals = []
             for frame_path in chunk:
                 with Image.open(frame_path) as source:
@@ -300,7 +439,14 @@ def overpaint_frames(
                     slot = index + offset
                     x, y = (slot % columns) * cell, (slot // columns) * cell
                     piece = painted.crop((x, y, x + cell, y + cell)).resize(original.size, Image.Resampling.LANCZOS)
-                    ok, distance = equipment_integrity(piece, original.getchannel("A"), _sibling(frame_path, unit_frames, "-equip"))
+                    equipment_mask = _sibling(frame_path, unit_frames, "-equip")
+                    protection_mask = _sibling(frame_path, unit_frames, "-protect")
+                    fully_protected = masks_equivalent(protection_mask, equipment_mask)
+                    ok, distance = (
+                        (True, -1.0)
+                        if fully_protected
+                        else equipment_integrity(piece, original.getchannel("A"), equipment_mask)
+                    )
                     if not ok:
                         failures.append({"frame": str(frame_path), "distance": round(distance, 2), "denoise": run_denoise})
                     pieces.append(piece)
@@ -311,21 +457,100 @@ def overpaint_frames(
                 retry_pieces, retry_failures = attempt(max(0.3, denoise - 0.1))
                 if len(retry_failures) < len(failures):
                     pieces, failures = retry_pieces, retry_failures
-            integrity_failures.extend(failures)
+            repaired_generation_failures.extend(failures)
 
             for frame_path, original, piece in zip(chunk, originals, pieces):
-                backup(original, frame_path)
+                mask_path = _sibling(frame_path, unit_frames, "-equip")
+                protection_mask_path = _sibling(frame_path, unit_frames, "-protect")
+                if not protection_mask_path.is_file():
+                    protection_mask_path = mask_path
+                if equipment_required and protect_equipment:
+                    try:
+                        piece, coverage, reconstruction_error = restore_protected_parts(
+                            piece, original, protection_mask_path, protection_feather
+                        )
+                        protection_records.append({
+                            "frame": str(frame_path),
+                            "mask_pixels": coverage,
+                            "protected_pixel_mae": round(reconstruction_error, 6),
+                        })
+                    except ForgeError as error:
+                        integrity_failures.append({"frame": str(frame_path), "error": str(error)})
+                full_equipment_protected = masks_equivalent(protection_mask_path, mask_path)
+                ok, distance = (
+                    (True, -1.0)
+                    if full_equipment_protected
+                    else equipment_integrity(piece, original.getchannel("A"), mask_path)
+                )
+                if equipment_required and not full_equipment_protected and not ok:
+                    contrast_warnings.append({
+                        "frame": str(frame_path),
+                        "distance": round(distance, 2),
+                        "warning": "equipment palette is close to adjacent character pixels",
+                    })
                 result = piece.convert("RGBA")
                 result.putalpha(original.getchannel("A"))
-                result.save(frame_path, "PNG")
+                staged_path = staging_root / frame_path.relative_to(unit_frames)
+                staged_path.parent.mkdir(parents=True, exist_ok=True)
+                result.save(staged_path, "PNG")
                 processed += 1
+            completed_chunks.add(chunk_key)
+            state["completed_chunks"] = sorted(completed_chunks)
+            state["updated_utc"] = utc_now()
+            write_json(state_path, state)
+
+    passed = not integrity_failures
+    protection_records = []
+    if passed:
+        for frame_path in frames:
+            staged_path = staging_root / frame_path.relative_to(unit_frames)
+            if not staged_path.is_file():
+                integrity_failures.append({"frame": str(frame_path), "error": "staged output is missing"})
+                continue
+            if equipment_required and protect_equipment:
+                try:
+                    with Image.open(staged_path) as staged_source, Image.open(frame_path) as original_source:
+                        coverage, reconstruction_error = protected_part_metrics(
+                            staged_source.convert("RGB"),
+                            original_source.convert("RGBA"),
+                            (
+                                _sibling(frame_path, unit_frames, "-protect")
+                                if _sibling(frame_path, unit_frames, "-protect").is_file()
+                                else _sibling(frame_path, unit_frames, "-equip")
+                            ),
+                        )
+                    if coverage < INTEGRITY_MIN_PIXELS or reconstruction_error > 0.01:
+                        integrity_failures.append({
+                            "frame": str(frame_path),
+                            "error": "protected equipment differs from the authored master",
+                            "protected_pixel_mae": round(reconstruction_error, 6),
+                        })
+                    protection_records.append({
+                        "frame": str(frame_path),
+                        "mask_pixels": coverage,
+                        "protected_pixel_mae": round(reconstruction_error, 6),
+                    })
+                except ForgeError as error:
+                    integrity_failures.append({"frame": str(frame_path), "error": str(error)})
+        passed = not integrity_failures
 
     provenance = {
-        "schema_version": 2,
+        "schema_version": 3,
         "stage": "overpaint",
         "unit": unit_id,
+        "passed": passed,
+        "fail_closed": fail_closed,
+        "transactional_promotion": True,
+        "resumable_chunks": True,
+        "run_signature": run_signature,
         "batch": "grid",
+        "grid_cell": cell,
+        "grid_columns": columns,
+        "grid_rows": rows,
         "checkpoint": checkpoint,
+        "checkpoint_sha256": _registered_model_hash(config_path, checkpoint),
+        "controlnet": DEPTH_CONTROLNET if use_depth else None,
+        "controlnet_sha256": _registered_model_hash(config_path, DEPTH_CONTROLNET) if use_depth else None,
         "seed": seed,
         "steps": steps,
         "cfg": cfg,
@@ -333,10 +558,18 @@ def overpaint_frames(
         "depth_control": use_depth,
         "control_strength": control_strength if use_depth else None,
         "anchor": str(anchor_path) if anchor_image is not None else None,
+        "anchor_sha256": sha256_file(anchor_path) if anchor_path.is_file() else None,
         "anchor_created": anchor_created,
         "positive_prompt": positive,
         "negative_prompt": negative,
         "frames_processed": processed,
+        "input_manifest_sha256": input_manifest_sha256,
+        "structural_manifest_sha256": structural_manifest_sha256,
+        "protected_equipment": equipment_required and protect_equipment,
+        "protected_frames": len(protection_records),
+        "protection_records": protection_records,
+        "generation_equipment_warnings_repaired": repaired_generation_failures,
+        "equipment_contrast_warnings": contrast_warnings,
         "equipment_integrity_failures": integrity_failures,
         "alpha_source": "blender-render",
         "workflow_sha256": sha256_json(
@@ -346,5 +579,92 @@ def overpaint_frames(
     }
     write_json(frames_root.resolve() / f"{unit_id}-overpaint.json", provenance)
     if integrity_failures:
+        message = f"Overpaint rejected {len(integrity_failures)} equipment-integrity failure(s)"
+        if fail_closed:
+            raise ForgeError(message + "; original Blender frames were left unchanged")
         print(f"OVERPAINT_INTEGRITY_WARNINGS={len(integrity_failures)}")
+        return provenance
+
+    for frame_path in frames:
+        with Image.open(frame_path) as source:
+            backup(source.convert("RGBA"), frame_path)
+        staged_path = staging_root / frame_path.relative_to(unit_frames)
+        staged_path.replace(frame_path)
+    shutil.rmtree(staging_root)
     return provenance
+
+
+def repair_protected_frames(config_path: Path, frames_root: Path) -> dict[str, Any]:
+    """Salvage an older/partial overpaint by restoring protected master pixels.
+
+    The result remains review-only until a complete schema-3 overpaint run succeeds, but
+    this makes interrupted and historical work useful for visual comparison without
+    spending more GPU time.
+    """
+    config = json.loads(config_path.read_text(encoding="utf-8"))
+    unit_id = str(config["id"])
+    unit_frames = frames_root.resolve() / unit_id
+    raw_root = frames_root.resolve() / f"{unit_id}-raw"
+    staging_root = frames_root.resolve() / f"{unit_id}-repair-staging"
+    frames = sorted(unit_frames.glob("*/*/[0-9][0-9].png"))
+    if not frames:
+        raise ForgeError(f"No painted frames found under {unit_frames}")
+    if not raw_root.is_dir():
+        raise ForgeError(f"No deterministic raw backup found under {raw_root}")
+    if staging_root.exists():
+        shutil.rmtree(staging_root)
+
+    failures: list[dict[str, Any]] = []
+    records: list[dict[str, Any]] = []
+    for frame_path in frames:
+        relative = frame_path.relative_to(unit_frames)
+        raw_path = raw_root / relative
+        protection_mask = _sibling(frame_path, unit_frames, "-protect")
+        if not protection_mask.is_file():
+            protection_mask = _sibling(frame_path, unit_frames, "-equip")
+        try:
+            with Image.open(frame_path) as painted_source, Image.open(raw_path) as raw_source:
+                raw = raw_source.convert("RGBA")
+                restored, coverage, error = restore_protected_parts(
+                    painted_source.convert("RGB"), raw, protection_mask
+                )
+                equipment_mask = _sibling(frame_path, unit_frames, "-equip")
+                full_equipment_protected = masks_equivalent(protection_mask, equipment_mask)
+                ok, distance = (
+                    (True, -1.0)
+                    if full_equipment_protected
+                    else equipment_integrity(restored, raw.getchannel("A"), equipment_mask)
+                )
+                result = restored.convert("RGBA")
+                result.putalpha(raw.getchannel("A"))
+            if not full_equipment_protected and not ok:
+                failures.append({"frame": str(frame_path), "error": "equipment remains unreadable", "distance": distance})
+            target = staging_root / relative
+            target.parent.mkdir(parents=True, exist_ok=True)
+            result.save(target, "PNG")
+            records.append({"frame": str(frame_path), "mask_pixels": coverage, "protected_pixel_mae": error})
+        except (ForgeError, OSError) as error:
+            failures.append({"frame": str(frame_path), "error": str(error)})
+
+    report = {
+        "schema_version": 1,
+        "stage": "protected-part-repair",
+        "unit": unit_id,
+        "passed": not failures,
+        "production_eligible": False,
+        "production_blocker": "complete_schema_3_overpaint_run_required",
+        "frames_processed": len(records),
+        "failures": failures,
+        "records": records,
+        "completed_utc": utc_now(),
+    }
+    report_path = frames_root.resolve() / f"{unit_id}-repair.json"
+    write_json(report_path, report)
+    if failures:
+        raise ForgeError(
+            f"Protected-part repair rejected {len(failures)} frame(s); existing painted frames were unchanged"
+        )
+    for frame_path in frames:
+        (staging_root / frame_path.relative_to(unit_frames)).replace(frame_path)
+    shutil.rmtree(staging_root)
+    return report

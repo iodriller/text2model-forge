@@ -1,0 +1,174 @@
+{
+  "schema_version": 1,
+  "id": "ash_goblin_v2",
+  "species": "goblin",
+  "family": "biped_humanoid_v1",
+  "family_contract": "tools/asset_forge/creatures/families/biped_humanoid.family.json",
+  "implementation": "tools/asset_forge/blender/build_creature_master.py",
+  "scale": 0.82,
+  "animation_actions": [
+    "Idle_Weapon",
+    "Walk",
+    "Sword_Attack",
+    "Sword_AttackFast",
+    "Roll",
+    "RecieveHit",
+    "Idle_Attacking",
+    "Death"
+  ],
+  "remove_objects": [
+    "Face",
+    "Warrior_Body",
+    "Warrior_Sword",
+    "ShoulderPad.L",
+    "ShoulderPad.R"
+  ],
+  "posture": {
+    "space": "bone_local_pose",
+    "apply_to_every_action": true,
+    "bones_degrees_xyz": {
+      "Abdomen": [5.0, 0.0, 0.0],
+      "Torso": [7.0, 0.0, 0.0],
+      "Neck": [6.0, 0.0, 0.0],
+      "Head": [-14.0, 0.0, 0.0]
+    }
+  },
+  "head": {
+    "bone": "Head",
+    "remove_donor_face": true,
+    "modules": {
+      "cranium": {
+        "scale": [0.205, 0.205, 0.235],
+        "forward": -0.01,
+        "up": 0.02,
+        "material": "skin"
+      },
+      "eyes": {
+        "spacing": 0.082,
+        "forward": 0.19,
+        "up": 0.035,
+        "radius": 0.031,
+        "material": "eye"
+      },
+      "brow": {
+        "width": 0.145,
+        "depth": 0.065,
+        "height": 0.055,
+        "forward": 0.19,
+        "up": 0.105,
+        "scowl_degrees": 24.0,
+        "material": "skin"
+      },
+      "snout": {
+        "scale": [0.105, 0.09, 0.145],
+        "forward": 0.24,
+        "up": -0.045,
+        "upturn_degrees": 12.0,
+        "material": "skin"
+      },
+      "nostrils": {
+        "spacing": 0.043,
+        "forward": 0.35,
+        "up": -0.005,
+        "radius": 0.018,
+        "material": "mouth"
+      },
+      "jaw": {
+        "scale": [0.16, 0.095, 0.095],
+        "forward": 0.205,
+        "up": -0.18,
+        "material": "skin"
+      },
+      "mouth": {
+        "scale": [0.12, 0.019, 0.03],
+        "forward": 0.29,
+        "up": -0.13,
+        "material": "mouth"
+      },
+      "tusks": {
+        "spacing": 0.09,
+        "forward": 0.29,
+        "up": -0.15,
+        "length": 0.085,
+        "radius": 0.018,
+        "material": "tusk"
+      },
+      "pointed_ears": {
+        "root_spacing": 0.15,
+        "forward": -0.015,
+        "up": 0.075,
+        "length": 0.34,
+        "root_height": 0.14,
+        "thickness": 0.045,
+        "back_sweep": 0.10,
+        "down_angle_degrees": 18.0,
+        "material": "skin"
+      },
+      "skullcap": {
+        "enabled": false,
+        "material": "hood"
+      }
+    }
+  },
+  "body": {
+    "construction": "bone_parented_organic_modules",
+    "segments": [
+      {"name": "Body.Pelvis", "bone": "Hips", "radius_right": 0.23, "radius_depth": 0.16, "length_scale": 0.82, "material": "cloth"},
+      {"name": "Body.Abdomen", "bone": "Abdomen", "radius_right": 0.22, "radius_depth": 0.15, "length_scale": 0.90, "material": "skin"},
+      {"name": "Body.Vest", "bone": "Torso", "radius_right": 0.285, "radius_depth": 0.185, "length_scale": 0.94, "material": "leather"},
+      {"name": "Body.UpperArm.L", "bone": "UpperArm.L", "radius_right": 0.095, "radius_depth": 0.095, "length_scale": 0.92, "material": "skin"},
+      {"name": "Body.UpperArm.R", "bone": "UpperArm.R", "radius_right": 0.095, "radius_depth": 0.095, "length_scale": 0.92, "material": "skin"},
+      {"name": "Body.LowerArm.L", "bone": "LowerArm.L", "radius_right": 0.082, "radius_depth": 0.082, "length_scale": 0.92, "material": "skin"},
+      {"name": "Body.LowerArm.R", "bone": "LowerArm.R", "radius_right": 0.082, "radius_depth": 0.082, "length_scale": 0.92, "material": "skin"},
+      {"name": "Body.Hand.L", "bone": "Fist.L", "radius_right": 0.09, "radius_depth": 0.08, "length_scale": 1.25, "material": "skin"},
+      {"name": "Body.Hand.R", "bone": "Fist.R", "radius_right": 0.09, "radius_depth": 0.08, "length_scale": 1.25, "material": "skin"},
+      {"name": "Body.UpperLeg.L", "bone": "UpperLeg.L", "radius_right": 0.12, "radius_depth": 0.13, "length_scale": 0.90, "material": "cloth"},
+      {"name": "Body.UpperLeg.R", "bone": "UpperLeg.R", "radius_right": 0.12, "radius_depth": 0.13, "length_scale": 0.90, "material": "cloth"},
+      {"name": "Body.LowerLeg.L", "bone": "LowerLeg.L", "radius_right": 0.10, "radius_depth": 0.11, "length_scale": 0.92, "material": "leather"},
+      {"name": "Body.LowerLeg.R", "bone": "LowerLeg.R", "radius_right": 0.10, "radius_depth": 0.11, "length_scale": 0.92, "material": "leather"}
+    ],
+    "attachments": [
+      {"name": "Body.Belt", "bone": "Hips", "scale": [0.255, 0.18, 0.07], "offset": [0.0, 0.02, 0.0], "material": "iron"},
+      {"name": "Body.Loincloth.Front", "bone": "Hips", "scale": [0.19, 0.055, 0.25], "offset": [0.0, -0.18, 0.14], "material": "cloth"},
+      {"name": "Body.Foot.L", "bone": "LowerLeg.L", "at_tail": true, "scale": [0.105, 0.16, 0.085], "offset": [0.0, -0.02, 0.09], "material": "leather"},
+      {"name": "Body.Foot.R", "bone": "LowerLeg.R", "at_tail": true, "scale": [0.105, 0.16, 0.085], "offset": [0.0, -0.02, 0.09], "material": "leather"}
+    ]
+  },
+  "equipment": {
+    "weapon": {
+      "kind": "spiked_club",
+      "source_grip_object": "Warrior_Sword",
+      "bone": "Weapon.R"
+    }
+  },
+  "materials": {
+    "skin": {"color": [0.23, 0.29, 0.13], "roughness": 0.82},
+    "eye": {"color": [0.85, 0.46, 0.06], "roughness": 0.32, "emission": 0.08},
+    "mouth": {"color": [0.045, 0.018, 0.014], "roughness": 0.9},
+    "tusk": {"color": [0.68, 0.62, 0.45], "roughness": 0.62},
+    "hood": {"color": [0.10, 0.065, 0.035], "roughness": 0.9},
+    "cloth": {"color": [0.14, 0.075, 0.045], "roughness": 0.94},
+    "leather": {"color": [0.095, 0.055, 0.032], "roughness": 0.88},
+    "iron": {"color": [0.075, 0.085, 0.085], "roughness": 0.58, "metallic": 0.22}
+  },
+  "silhouette_contract": {
+    "required_landmarks": [
+      "Morph.Cranium",
+      "Morph.Eye.L",
+      "Morph.Eye.R",
+      "Morph.Brow.L",
+      "Morph.Brow.R",
+      "Morph.Snout",
+      "Morph.Jaw",
+      "Morph.Ear.L",
+      "Morph.Ear.R",
+      "Morph.Tusk.L",
+      "Morph.Tusk.R"
+    ],
+    "minimum_ear_span_to_head_width": 1.65,
+    "minimum_snout_projection_to_head_depth": 0.45,
+    "minimum_spine_hunch_degrees": 16.0,
+    "proof_actions": ["Idle_Weapon", "Sword_Attack"],
+    "proof_views": ["south", "east"]
+  }
+}

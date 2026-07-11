@@ -1,0 +1,37 @@
+{
+  "schema_version": 1,
+  "id": "biped_humanoid_v1",
+  "display_name": "Biped Humanoid",
+  "implementation_status": "production",
+  "rig_backend": "existing_deformation_rig",
+  "required_bones": [
+    "Hips",
+    "Abdomen",
+    "Torso",
+    "Neck",
+    "Head",
+    "Shoulder.L",
+    "Shoulder.R",
+    "UpperArm.L",
+    "UpperArm.R",
+    "UpperLeg.L",
+    "UpperLeg.R"
+  ],
+  "supported_anatomy_modules": [
+    "cranium",
+    "eyes",
+    "brow",
+    "snout",
+    "jaw",
+    "mouth",
+    "nostrils",
+    "tusks",
+    "pointed_ears",
+    "skullcap"
+  ],
+  "required_proof_views": [
+    "south",
+    "east"
+  ],
+  "notes": "Ogres, goblins, trolls, humans, and other two-legged humanoids share this contract. Species identity must come from authored geometry and posture, never from per-frame diffusion."
+}

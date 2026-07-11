@@ -3,11 +3,10 @@
   "id": "footman",
   "display_name": "Gate Footman",
   "source_kind": "owned_blender_master",
-  "master_license": "project-original",
-  "factory_spec": "tools/asset_forge/characters/footman.factory.json",
-  "source": "asset_sources/ember-defense/assets/footman/master/footman.blend",
+  "master_license": "project-original adaptation of CC0-1.0 Quaternius RPG Characters",
+  "source": "tools/asset_forge/sources/footman_knight.blend",
   "max_polygons": 45000,
-  "animation_object": "Armature",
+  "animation_object": "CharacterArmature",
   "cell_size": [
     256,
     256
@@ -19,8 +18,8 @@
   "packing_mode": "fixed_camera",
   "outline": true,
   "outline_thickness": 0.72,
-  "orthographic_scale": 5.2,
-  "camera_target_height": 1.16,
+  "orthographic_scale": 6.6,
+  "camera_target_height": 1.3,
   "camera_distance": 10.0,
   "camera_height": 6.6,
   "directions": [
@@ -36,7 +35,7 @@
   "pixels_per_unit": 256,
   "pivot_x": 0.5,
   "pivot_y": 0.07,
-  "prefab_scale": 1.45,
+  "prefab_scale": 1.62,
   "health_bar_y": 0.82,
   "overpaint": {
     "enabled": true,
@@ -45,19 +44,56 @@
     "steps": 8,
     "cfg": 3.0,
     "denoise": 0.42,
-    "prompt": "grizzled human footman of a dark fantasy kingdom, full body, battle-worn blackened steel plate armor with dull brass trim, deep cobalt tabard, dented round-top helmet with nose guard, scarred heater shield with faintly glowing ember sigil, notched arming sword",
-    "negative": "bare head, missing shield, missing sword",
+    "prompt": "grizzled human footman of a dark fantasy kingdom, full body, battle-worn blackened steel plate armor with dull brass trim, deep cobalt tabard, dark gunmetal round-top helmet with nose guard, weathered tan face beneath the helm, scarred heater shield with faintly glowing ember sigil, notched arming sword",
+    "negative": "bare head, missing shield, missing sword, white helmet, pale blue face, blue skin",
     "control": "depth",
     "control_strength": 0.65,
-    "anchor": true
+    "anchor": true,
+    "protect_equipment": true,
+    "protection_feather": 0.0,
+    "fail_closed": true
+  },
+  "texture_master": {
+    "enabled": true,
+    "baked_source": "tools/asset_forge/sources/footman_knight_baked.blend",
+    "pose_action": "Idle_Weapon",
+    "pose_frame": 1,
+    "views": 6,
+    "view_size": 768,
+    "view_scale": 4.4,
+    "view_elevation": 18.0,
+    "view_target_height": 1.4,
+    "bake_resolution": 2048,
+    "denoise": 0.5
+  },
+  "critic": {
+    "min_hue_coherence": 0.72,
+    "min_identity": 0.6,
+    "min_edge": 14.0
   },
   "animations": {
     "idle": {
       "actions": [
-        "idle"
+        "Idle_Weapon"
       ],
       "frames": 6,
       "fps": 8,
+      "loop": true,
+      "sample_frames": [
+        1,
+        13,
+        25,
+        38,
+        50,
+        63
+      ]
+    },
+    "walk": {
+      "actions": [
+        "Walk"
+      ],
+      "frames": 8,
+      "fps": 12,
       "loop": true,
       "sample_frames": [
         1,
@@ -65,16 +101,100 @@
         9,
         13,
         17,
-        21
+        21,
+        25,
+        29
       ]
     },
-    "walk": {
+    "attack": {
       "actions": [
-        "walk"
+        "Sword_Attack"
+      ],
+      "frames": 10,
+      "fps": 16,
+      "loop": false,
+      "baseline_tolerance": 24,
+      "sample_frames": [
+        1,
+        3,
+        5,
+        7,
+        9,
+        11,
+        13,
+        15,
+        17,
+        20
+      ],
+      "phases": {
+        "anticipation_frame": 3,
+        "contact_frame": 6,
+        "recovery_frame": 9
+      }
+    },
+    "heavy_attack": {
+      "actions": [
+        "Sword_AttackFast"
+      ],
+      "frames": 10,
+      "fps": 16,
+      "loop": false,
+      "baseline_tolerance": 24,
+      "sample_frames": [
+        1,
+        3,
+        5,
+        7,
+        9,
+        11,
+        13,
+        15,
+        17,
+        20
+      ],
+      "phases": {
+        "anticipation_frame": 2,
+        "contact_frame": 5,
+        "recovery_frame": 8
+      }
+    },
+    "defend": {
+      "actions": [
+        "Idle_Attacking"
+      ],
+      "frames": 6,
+      "fps": 10,
+      "loop": false,
+      "sample_frames": [
+        1,
+        8,
+        16,
+        24,
+        32,
+        40
+      ]
+    },
+    "hit": {
+      "actions": [
+        "RecieveHit"
+      ],
+      "frames": 4,
+      "fps": 14,
+      "loop": false,
+      "sample_frames": [
+        1,
+        6,
+        11,
+        15
+      ]
+    },
+    "victory": {
+      "actions": [
+        "Sword_AttackFast"
       ],
       "frames": 8,
       "fps": 12,
-      "loop": true,
+      "loop": false,
       "sample_frames": [
         1,
         4,
@@ -82,133 +202,40 @@
         10,
         13,
         16,
-        19,
-        22
-      ]
-    },
-    "attack": {
-      "actions": [
-        "attack"
-      ],
-      "frames": 10,
-      "fps": 16,
-      "loop": false,
-      "baseline_tolerance": 22,
-      "sample_frames": [
-        1,
-        4,
-        6,
-        8,
-        9,
-        11,
-        12,
-        13,
-        17,
-        24
-      ],
-      "phases": {
-        "anticipation_frame": 3,
-        "contact_frame": 5,
-        "recovery_frame": 8
-      }
-    },
-    "heavy_attack": {
-      "actions": [
-        "heavy_attack"
-      ],
-      "frames": 10,
-      "fps": 14,
-      "loop": false,
-      "sample_frames": [
-        1,
-        4,
-        8,
-        11,
-        14,
-        15,
         18,
-        22,
-        26,
-        30
-      ],
-      "phases": {
-        "anticipation_frame": 2,
-        "contact_frame": 5,
-        "recovery_frame": 7
-      }
-    },
-    "defend": {
-      "actions": [
-        "defend"
-      ],
-      "frames": 6,
-      "fps": 12,
-      "loop": false,
-      "sample_frames": [
-        1,
-        4,
-        6,
-        10,
-        14,
-        22
-      ]
-    },
-    "hit": {
-      "actions": [
-        "hit"
-      ],
-      "frames": 4,
-      "fps": 14,
-      "loop": false,
-      "sample_frames": [
-        1,
-        4,
-        8,
-        12
-      ]
-    },
-    "victory": {
-      "actions": [
-        "victory"
-      ],
-      "frames": 8,
-      "fps": 10,
-      "loop": false,
-      "sample_frames": [
-        1,
-        4,
-        8,
-        12,
-        16,
-        19,
-        22,
-        24
+        20
       ]
     },
     "death": {
       "actions": [
-        "death"
+        "Death"
       ],
       "frames": 8,
       "fps": 10,
       "loop": false,
-      "baseline_tolerance": 80,
+      "baseline_tolerance": 90,
       "sample_frames": [
         1,
         5,
-        8,
-        12,
-        16,
-        20,
-        24,
-        32
+        9,
+        13,
+        17,
+        21,
+        25,
+        28
       ]
     }
   },
   "output_path_pattern": "asset_sources/ember-defense/assets/footman/sheets-production/footman_{animation}_{direction}_sheet.png",
   "depth_pass": true,
   "equipment_objects": [
-    "Sword*",
+    "Warrior_Sword",
     "Shield*"
-  ]
+  ],
+  "protected_objects": [
+    "Warrior_Sword",
+    "Shield*"
+  ],
+  "master_builder": "tools/asset_forge/blender/adapt_warrior_footman.py",
+  "master_base": "tools/asset_forge/runtime/quaternius_rpg/Blends/Warrior.blend"
 }
