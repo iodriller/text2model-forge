@@ -2,6 +2,15 @@
   "schema_version": 1,
   "workspace_root": "C:/AssetForgeDarknessRuns",
   "workers": {
+    "autoremesher": {
+      "command_prefix": [
+        "C:/path/to/python.exe",
+        "C:/path/to/EmberDefense/tools/asset_forge_darkness/adapters/autoremesher_worker.py"
+      ],
+      "environment": {
+        "DARKNESS_AUTOREMESHER_EXE": "C:/path/to/autoremesher-1.0.0/autoremesher.exe"
+      }
+    },
     "blender": {
       "command_prefix": [
         "C:/path/to/blender.exe",

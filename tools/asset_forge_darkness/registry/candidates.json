@@ -90,6 +90,26 @@
     },
     {
       "schema_version": 1,
+      "candidate_id": "autoremesher-1.0.0",
+      "display_name": "AutoRemesher 1.0.0",
+      "capability": "automatic_quad_retopology",
+      "source_url": "https://github.com/huxingyi/autoremesher",
+      "license_id": "MIT",
+      "license_url": "https://github.com/huxingyi/autoremesher/blob/1.0.0/LICENSE",
+      "priority": "open_source_first",
+      "research_allowed": true,
+      "release_eligibility": "permitted",
+      "notes": [
+        "Pinned to the 1.0.0 release commit 04c6a39f39d04087dda67ee9e2f4d952c21afc50 and the official Windows archive digest cfeab5ca09381bef5d50ed196aa80c15790e84f78080948ba68a8482460d3bbf.",
+        "The official CLI accepts OBJ; Darkness uses a separate Blender empty-scene normalization/export step for GLB sources.",
+        "The worker treats a zero-exit run with no output as failure because the official CLI silently did that for direct GLB input.",
+        "Contrary to the plan's initial assumption, identical live 1.0.0 Windows CLI runs produced different output hashes and topology counts; no CLI seed is exposed, so the worker is explicitly marked non-deterministic.",
+        "The first real TripoSG candidate preserves the broad silhouette but contains boundary and non-quad faces, so it is retained as rejected research evidence rather than promoted.",
+        "D2b output is only a topology target for canonical fitting and always requires human visual approval."
+      ]
+    },
+    {
+      "schema_version": 1,
       "candidate_id": "trellis2-4b",
       "display_name": "TRELLIS.2-4B",
       "capability": "image_to_3d_pbr",
