@@ -133,6 +133,22 @@ def test_blender_retopology_repair_qualification_records_staged_gate_pass() -> N
     assert record.observed["source_overwritten"] is False
 
 
+def test_blender_triposg_rig_probe_records_staged_deformation_evidence() -> None:
+    path = ROOT / "qualifications" / "blender-4.5.11_triposg_rig_probe_windows.json"
+    record = WorkerRuntimeQualification.model_validate_json(path.read_text(encoding="utf-8"))
+    assert record.status == "passed"
+    assert record.observed["landmarks"] == 26
+    assert record.observed["bones"] == 21
+    assert record.observed["maximum_influences"] == 4
+    assert record.observed["unweighted_vertices"] == 0
+    assert record.observed["vertex_coordinates_unchanged"] is True
+    assert record.observed["topology_unchanged"] is True
+    assert record.observed["stress_collapsed_faces"] == 0
+    assert record.observed["automatic_rig_probe_gate_passed"] is True
+    assert record.observed["human_approved"] is False
+    assert record.observed["source_overwritten"] is False
+
+
 def test_canonical_qualification_records_passing_skin_stress_and_missing_fit() -> None:
     path = ROOT / "qualifications" / "canonical-short-biped-v1.json"
     record = WorkerRuntimeQualification.model_validate_json(path.read_text(encoding="utf-8"))
