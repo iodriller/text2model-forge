@@ -110,6 +110,25 @@
     },
     {
       "schema_version": 1,
+      "candidate_id": "instant-meshes-7b316086",
+      "display_name": "Instant Meshes 7b316086",
+      "capability": "deterministic_field_aligned_quad_retopology",
+      "source_url": "https://github.com/wjakob/instant-meshes",
+      "license_id": "BSD-3-Clause",
+      "license_url": "https://github.com/wjakob/instant-meshes/blob/7b3160864a2e1025af498c84cfed91cbfb613698/LICENSE.txt",
+      "priority": "open_source_first",
+      "research_allowed": true,
+      "release_eligibility": "permitted",
+      "notes": [
+        "Pinned to source revision 7b3160864a2e1025af498c84cfed91cbfb613698 and observed rolling Windows archive digest c9f6217e83ea90f98a8cd54cf82dac88420df20cf197e7a4ef2bef81c5ae068d.",
+        "Darkness forces --deterministic, --threads 1, RoSy 4, PoSy 4, and pure-quad output.",
+        "Two identical real TripoSG jobs produced the same SHA-256.",
+        "The calibrated ~49k-face result is pure quad but has 30 components and 454 boundary edges, so it fails structural promotion gates.",
+        "The official project publishes rolling precompiled binaries rather than versioned GitHub releases; every observed binary must be digest-pinned."
+      ]
+    },
+    {
+      "schema_version": 1,
       "candidate_id": "trellis2-4b",
       "display_name": "TRELLIS.2-4B",
       "capability": "image_to_3d_pbr",

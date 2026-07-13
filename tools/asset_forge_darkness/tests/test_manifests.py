@@ -16,6 +16,9 @@ def test_worker_manifests_are_strict_unique_and_keep_rdmesh_blocked() -> None:
     assert manifests["autoremesher"].capability.candidate_id == "autoremesher-1.0.0"
     assert manifests["autoremesher"].capability.supports_cancel is False
     assert manifests["autoremesher"].capability.deterministic is False
+    assert manifests["instant_meshes.retopology"].lifecycle == "research_ready"
+    assert manifests["instant_meshes.retopology"].capability.deterministic is True
+    assert manifests["instant_meshes.retopology"].capability.supports_cancel is False
     assert manifests["optimizer.qwen3.6-27b"].capability.candidate_id == "qwen3.6-27b"
     assert manifests["triposg.1.5b"].license_gate == "permitted"
     assert manifests["hunyuan3d.2.1"].license_gate == "review_required"

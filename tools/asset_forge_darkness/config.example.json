@@ -2,6 +2,15 @@
   "schema_version": 1,
   "workspace_root": "C:/AssetForgeDarknessRuns",
   "workers": {
+    "instant_meshes.retopology": {
+      "command_prefix": [
+        "C:/path/to/python.exe",
+        "C:/path/to/EmberDefense/tools/asset_forge_darkness/adapters/instant_meshes_retopology_worker.py"
+      ],
+      "environment": {
+        "DARKNESS_INSTANT_MESHES_EXE": "C:/path/to/Instant Meshes.exe"
+      }
+    },
     "autoremesher": {
       "command_prefix": [
         "C:/path/to/python.exe",
