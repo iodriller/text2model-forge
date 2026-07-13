@@ -159,6 +159,7 @@ class OperationDefinition(StrictModel):
     input_count_max: int = Field(default=1, ge=0)
     output_media_type: str = Field(min_length=1)
     deterministic: bool = False
+    parameter_schema: dict[str, Any] = Field(default_factory=dict)
 
 
 class CandidateRecord(StrictModel):
@@ -245,6 +246,12 @@ class RootCauseHypothesis(StrictModel):
     probability: float = Field(ge=0, le=1)
 
 
+class OptimizerComparison(StrictModel):
+    preferred: Literal["previous", "current", "tie", "uncertain"]
+    visual_delta: float = Field(ge=-1, le=1)
+    reason: str = Field(min_length=1)
+
+
 class OptimizerDecision(StrictModel):
     schema_version: Literal[1] = 1
     goal_satisfied: bool
@@ -256,6 +263,7 @@ class OptimizerDecision(StrictModel):
     preserve: list[str] = Field(default_factory=list)
     confidence: float = Field(ge=0, le=1)
     request_human_review: bool = False
+    comparison: OptimizerComparison | None = None
 
 
 class MetricResult(StrictModel):
