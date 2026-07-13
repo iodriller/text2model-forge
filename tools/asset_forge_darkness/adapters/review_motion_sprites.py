@@ -47,7 +47,11 @@ def main(argv: list[str] | None = None) -> int:
             "empty-handed Sword_Attack failed human semantic review",
             "club iteration 1 passed its socket gate but looked too small and round",
             "club iteration 2 improved the taper but exposed a pre-deformation body-height mismatch",
-            "current iteration 3 uses the final validated vertex height and targets 52% body-relative reach",
+            "club iteration 3 exposed mirrored source/target side suffixes and an open, non-grasping hand",
+            "club iteration 4 fixed the physical side but its radial squeeze failed human grip review",
+            "club iteration 5 curled two detected goblin claw branches separately but retained an oversized 2.2%-of-body handle",
+            "club iteration 6 kept the distinct claw curl and reduced the handle radius to 1.8% of body height",
+            "current iteration 7 keeps that geometry and exposes the correct anatomical hand_right socket over the legacy negative-X hand_l bone",
         ]
     sheet = package / manifest["review_sheet"]
     reviewer = LocalDeploySpriteReviewer(model=args.model)

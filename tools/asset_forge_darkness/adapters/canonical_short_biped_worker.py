@@ -412,8 +412,10 @@ def main():
                         for name, parent, position in joint_specs
                     ],
                     "sockets": {
-                        "hand_right": {"joint": "hand_r", "local_position": [0, 0, 0]},
-                        "hand_left": {"joint": "hand_l", "local_position": [0, 0, 0]},
+                        # Legacy bone suffixes describe X side rather than anatomy.
+                        # Keep public sockets anatomical: negative X is character right.
+                        "hand_right": {"joint": "hand_l", "local_position": [0, 0, 0]},
+                        "hand_left": {"joint": "hand_r", "local_position": [0, 0, 0]},
                         "projectile_origin": {"joint": "chest", "local_position": [0, 0.08, 0.18]},
                     },
                     "contacts": {"foot_left": "foot_l", "foot_right": "foot_r"},

@@ -64,6 +64,10 @@ def test_standalone_unity_bundle_builds_and_ingests_hash_bound_result(tmp_path: 
     assert built["bundle_kind"] == "darkness_standalone_unity_smoke"
     assert built["directional_actions"] == 16
     assert built["expected_decoded_sprites"] == 16
+    assert built["unity_version_family"] == "6000.5"
+    assert built["unity_runtime_mutable_files"] == [
+        "UnitySmokeProject/ProjectSettings/ProjectVersion.txt"
+    ]
     assert (bundle / "run_unity_smoke.ps1").is_file()
     assert (bundle / "open_unity_review.ps1").is_file()
     assert (bundle / "review.html").is_file()
@@ -89,7 +93,7 @@ def test_standalone_unity_bundle_builds_and_ingests_hash_bound_result(tmp_path: 
         "passed": True,
         "asset_id": built["asset_id"],
         "project_kind": "darkness_standalone_unity_smoke",
-        "unity_version": built["unity_version"],
+        "unity_version": "6000.5.3f1",
         "candidate_manifest_sha256": built["candidate_manifest_sha256"],
         "bundle_manifest_sha256": _sha256(bundle_manifest),
         "directional_actions": 16,
@@ -102,6 +106,12 @@ def test_standalone_unity_bundle_builds_and_ingests_hash_bound_result(tmp_path: 
         "human_approved": False,
     }
     (result / "unity_candidate_validation.json").write_text(json.dumps(report), encoding="utf-8")
+    # Unity may rewrite its own editor-version metadata while importing the
+    # generated smoke project. Candidate assets and validator sources remain
+    # hash-bound; this one declared file is runtime metadata, not asset input.
+    (bundle / "UnitySmokeProject/ProjectSettings/ProjectVersion.txt").write_text(
+        "m_EditorVersion: runtime-rewritten\n", encoding="utf-8"
+    )
     ingested = INGEST(bundle, result, tmp_path / "ingested")
     assert ingested["passed"] is True
     assert ingested["live_game_assets_modified"] is False
