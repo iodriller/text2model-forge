@@ -16,9 +16,11 @@ def test_blender_worker_script_compiles_without_importing_bpy() -> None:
     compile(source, "blender_worker.py", "exec")
     assert '"blender.repair"' in source
     assert '"blender.repair_retopology"' in source
+    assert '"blender.propose_short_biped_rig"' in source
     assert "human_approval_required" in source
     assert "source_overwritten" in source
     assert "vertex_coordinates_unchanged" in source
+    assert "automatic_rig_probe_gate_passed" in source
 
 
 def test_blender_request_builder_emits_strict_geometry_contract(tmp_path: Path) -> None:
@@ -81,3 +83,25 @@ def test_blender_request_builder_emits_bounded_retopology_repair(tmp_path: Path)
     assert request.parameters["minimum_quad_fraction"] == 0.99
     assert request.parameters["maximum_removed_faces"] == 16
     assert request.parameters["maximum_created_faces"] == 16
+
+
+def test_blender_request_builder_emits_short_biped_rig_probe(tmp_path: Path) -> None:
+    request_path = tmp_path / "request.json"
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(ROOT / "adapters" / "build_blender_request.py"),
+            "--input", str(FIXTURES / "defective_tetrahedron.obj"),
+            "--output-directory", str(tmp_path / "output"),
+            "--out", str(request_path),
+            "--job-id", "blender.rig.contract.v1",
+            "--operation-id", "blender.propose_short_biped_rig",
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    request = ExternalWorkerRequest.model_validate_json(request_path.read_text(encoding="utf-8"))
+    assert request.operation_id == "blender.propose_short_biped_rig"
+    assert request.parameters["maximum_material_change_fraction"] == 0.02

@@ -13,13 +13,14 @@ from pathlib import Path
 
 import bmesh
 import bpy
-from mathutils import Vector
+from mathutils import Quaternion, Vector
 
 
 SUPPORTED_OPERATIONS = {
     "blender.analyze",
     "blender.repair",
     "blender.repair_retopology",
+    "blender.propose_short_biped_rig",
     "blender.render_diagnostics",
     "blender.export",
 }
@@ -394,6 +395,483 @@ def repair_quad_dominant_manifold(
         bm.free()
 
 
+SHORT_BIPED_BONES = (
+    ("hips", None, "hips", "spine"),
+    ("spine", "hips", "spine", "chest"),
+    ("chest", "spine", "chest", "neck"),
+    ("neck", "chest", "neck", "head"),
+    ("head", "neck", "head", "head_end"),
+    ("shoulder_l", "chest", "shoulder_l", "elbow_l"),
+    ("elbow_l", "shoulder_l", "elbow_l", "wrist_l"),
+    ("wrist_l", "elbow_l", "wrist_l", "hand_l"),
+    ("hand_l", "wrist_l", "hand_l", "hand_end_l"),
+    ("shoulder_r", "chest", "shoulder_r", "elbow_r"),
+    ("elbow_r", "shoulder_r", "elbow_r", "wrist_r"),
+    ("wrist_r", "elbow_r", "wrist_r", "hand_r"),
+    ("hand_r", "wrist_r", "hand_r", "hand_end_r"),
+    ("hip_l", "hips", "hip_l", "knee_l"),
+    ("knee_l", "hip_l", "knee_l", "ankle_l"),
+    ("ankle_l", "knee_l", "ankle_l", "foot_l"),
+    ("foot_l", "ankle_l", "foot_l", "toe_l"),
+    ("hip_r", "hips", "hip_r", "knee_r"),
+    ("knee_r", "hip_r", "knee_r", "ankle_r"),
+    ("ankle_r", "knee_r", "ankle_r", "foot_r"),
+    ("foot_r", "ankle_r", "foot_r", "toe_r"),
+)
+
+
+def _nearest_vertex(points: list[Vector], target: Vector) -> tuple[int, Vector, float]:
+    index = min(range(len(points)), key=lambda item: (points[item] - target).length_squared)
+    point = points[index]
+    return index, point, (point - target).length
+
+
+def infer_short_biped_landmarks() -> dict[str, object]:
+    objects = _mesh_objects()
+    if len(objects) != 1:
+        raise ValueError("short-biped landmark inference requires exactly one mesh object")
+    obj = objects[0]
+    points = [obj.matrix_world @ vertex.co for vertex in obj.data.vertices]
+    minimum = Vector(tuple(min(point[axis] for point in points) for axis in range(3)))
+    maximum = Vector(tuple(max(point[axis] for point in points) for axis in range(3)))
+    extents = maximum - minimum
+    upright_gate_passed = extents.z > extents.x * 1.2 and extents.z > extents.y * 2.0
+    if not upright_gate_passed:
+        raise RuntimeError("short-biped landmark proposal requires an upright Blender Z-up body")
+    center = (minimum + maximum) * 0.5
+
+    def point(x: float, depth: float, height: float) -> Vector:
+        return Vector((center.x + x * extents.x, center.y + depth * extents.y, minimum.z + height * extents.z))
+
+    landmarks = {
+        "hips": point(0.0, 0.00, 0.40),
+        "spine": point(0.0, 0.00, 0.50),
+        "chest": point(0.0, 0.00, 0.63),
+        "neck": point(0.0, 0.00, 0.76),
+        "head": point(0.0, -0.03, 0.87),
+        "head_end": point(0.0, -0.03, 0.97),
+        "shoulder_l": point(-0.20, 0.00, 0.70),
+        "elbow_l": point(-0.36, 0.00, 0.57),
+        "wrist_l": point(-0.44, -0.01, 0.40),
+        "hand_l": point(-0.47, -0.03, 0.32),
+        "hand_end_l": point(-0.49, -0.05, 0.28),
+        "shoulder_r": point(0.20, 0.00, 0.70),
+        "elbow_r": point(0.36, 0.00, 0.57),
+        "wrist_r": point(0.44, -0.01, 0.40),
+        "hand_r": point(0.47, -0.03, 0.32),
+        "hand_end_r": point(0.49, -0.05, 0.28),
+        "hip_l": point(-0.13, 0.00, 0.39),
+        "knee_l": point(-0.14, 0.00, 0.22),
+        "ankle_l": point(-0.15, 0.00, 0.075),
+        "foot_l": point(-0.15, -0.04, 0.055),
+        "toe_l": point(-0.15, -0.43, 0.035),
+        "hip_r": point(0.13, 0.00, 0.39),
+        "knee_r": point(0.14, 0.00, 0.22),
+        "ankle_r": point(0.15, 0.00, 0.075),
+        "foot_r": point(0.15, -0.04, 0.055),
+        "toe_r": point(0.15, -0.43, 0.035),
+    }
+    surface_targets = {
+        "crown": point(0.0, -0.02, 1.0),
+        "palm_l": point(-0.50, -0.20, 0.31),
+        "palm_r": point(0.50, -0.20, 0.31),
+        "sole_l": point(-0.15, 0.0, 0.0),
+        "sole_r": point(0.15, 0.0, 0.0),
+        "toe_surface_l": point(-0.15, -0.50, 0.04),
+        "toe_surface_r": point(0.15, -0.50, 0.04),
+    }
+    surface_landmarks: dict[str, object] = {}
+    for name, target in surface_targets.items():
+        index, found, distance = _nearest_vertex(points, target)
+        surface_landmarks[name] = {
+            "vertex_index": index,
+            "world_position": list(found),
+            "proposal_distance": distance,
+        }
+    symmetry_errors = []
+    for left_name, right_name in (
+        ("shoulder_l", "shoulder_r"),
+        ("elbow_l", "elbow_r"),
+        ("wrist_l", "wrist_r"),
+        ("hand_l", "hand_r"),
+        ("hip_l", "hip_r"),
+        ("knee_l", "knee_r"),
+        ("ankle_l", "ankle_r"),
+        ("foot_l", "foot_r"),
+    ):
+        left = landmarks[left_name]
+        right = landmarks[right_name]
+        symmetry_errors.append(abs((left.x - center.x) + (right.x - center.x)))
+        symmetry_errors.append(abs(left.y - right.y))
+        symmetry_errors.append(abs(left.z - right.z))
+    maximum_symmetry_error = max(symmetry_errors, default=0.0)
+    landmark_gate_passed = upright_gate_passed and maximum_symmetry_error <= max(extents) * 1e-6
+    return {
+        "schema_version": 1,
+        "method": "bounded_short_biped_proportions_v1",
+        "coordinate_system": "Blender Z-up; X left/right; -Y semantic front",
+        "bounds": {"minimum": list(minimum), "maximum": list(maximum), "extents": list(extents)},
+        "landmarks": {name: list(value) for name, value in landmarks.items()},
+        "surface_landmarks": surface_landmarks,
+        "confidence": {
+            "anatomy_family": 0.8,
+            "bilateral_symmetry": 1.0,
+            "internal_joint_centers": 0.55,
+            "functional_contacts": 0.6,
+        },
+        "upright_gate_passed": upright_gate_passed,
+        "maximum_bilateral_symmetry_error": maximum_symmetry_error,
+        "landmark_gate_passed": landmark_gate_passed,
+        "human_approval_required": True,
+        "human_approved": False,
+    }
+
+
+def _mesh_coordinate_digest(obj: bpy.types.Object) -> str:
+    digest = hashlib.sha256()
+    for vertex in obj.data.vertices:
+        digest.update(f"{vertex.co.x:.17g},{vertex.co.y:.17g},{vertex.co.z:.17g}\n".encode("ascii"))
+    return digest.hexdigest()
+
+
+def _mesh_topology_digest(obj: bpy.types.Object) -> str:
+    digest = hashlib.sha256()
+    for polygon in obj.data.polygons:
+        digest.update((",".join(str(index) for index in polygon.vertices) + "\n").encode("ascii"))
+    return digest.hexdigest()
+
+
+def _create_short_biped_armature(landmark_report: dict[str, object]) -> bpy.types.Object:
+    landmarks = {name: Vector(value) for name, value in dict(landmark_report["landmarks"]).items()}
+    armature_data = bpy.data.armatures.new("DarknessShortBipedRig")
+    armature = bpy.data.objects.new("DarknessShortBipedRig", armature_data)
+    bpy.context.scene.collection.objects.link(armature)
+    bpy.context.view_layer.objects.active = armature
+    armature.select_set(True)
+    bpy.ops.object.mode_set(mode="EDIT")
+    bones: dict[str, bpy.types.EditBone] = {}
+    for name, parent_name, head_name, tail_name in SHORT_BIPED_BONES:
+        bone = armature_data.edit_bones.new(name)
+        bone.head = landmarks[head_name]
+        bone.tail = landmarks[tail_name]
+        bone.use_deform = True
+        if parent_name is not None:
+            bone.parent = bones[parent_name]
+            bone.use_connect = (bone.head - bone.parent.tail).length <= 1e-6
+        bones[name] = bone
+    bpy.ops.object.mode_set(mode="OBJECT")
+    armature.select_set(False)
+    return armature
+
+
+def _bind_short_biped_weights_bone_heat(
+    obj: bpy.types.Object,
+    armature: bpy.types.Object,
+) -> dict[str, object]:
+    for group in list(obj.vertex_groups):
+        obj.vertex_groups.remove(group)
+    for modifier in list(obj.modifiers):
+        if modifier.type == "ARMATURE":
+            obj.modifiers.remove(modifier)
+    obj.parent = None
+    bpy.ops.object.select_all(action="DESELECT")
+    obj.select_set(True)
+    armature.select_set(True)
+    bpy.context.view_layer.objects.active = armature
+    result = bpy.ops.object.parent_set(type="ARMATURE_AUTO")
+    if "FINISHED" not in result:
+        raise RuntimeError("Blender bone-heat weighting did not finish")
+    bpy.ops.object.select_all(action="DESELECT")
+    obj.select_set(True)
+    bpy.context.view_layer.objects.active = obj
+    bpy.ops.object.vertex_group_clean(group_select_mode="ALL", limit=1e-6, keep_single=True)
+    bpy.ops.object.vertex_group_limit_total(group_select_mode="ALL", limit=4)
+    bpy.ops.object.vertex_group_normalize_all(group_select_mode="ALL", lock_active=False)
+    bpy.context.view_layer.update()
+
+    counts = [len(vertex.groups) for vertex in obj.data.vertices]
+    sums = [sum(element.weight for element in vertex.groups) for vertex in obj.data.vertices]
+    weights = [element.weight for vertex in obj.data.vertices for element in vertex.groups]
+    hard_failures: list[str] = []
+    if not counts or min(counts) == 0:
+        hard_failures.append("unweighted_vertices")
+    if counts and max(counts) > 4:
+        hard_failures.append("too_many_influences")
+    maximum_sum_error = max((abs(value - 1.0) for value in sums), default=1.0)
+    if maximum_sum_error > 1e-5:
+        hard_failures.append("weights_not_normalized")
+    deform_bone_names = {bone.name for bone in armature.data.bones if bone.use_deform}
+    missing_groups = sorted(deform_bone_names - {group.name for group in obj.vertex_groups})
+    if missing_groups:
+        hard_failures.append("missing_deform_bone_groups")
+    return {
+        "schema_version": 1,
+        "method": "blender_bone_heat_pruned_to_four_v1",
+        "vertices": len(obj.data.vertices),
+        "bones": len(deform_bone_names),
+        "minimum_influences": min(counts, default=0),
+        "maximum_influences": max(counts, default=0),
+        "maximum_weight_sum_error": maximum_sum_error,
+        "minimum_assigned_weight": min(weights, default=0.0),
+        "missing_deform_bone_groups": missing_groups,
+        "hard_failures": hard_failures,
+        "gate_passed": not hard_failures,
+    }
+
+
+def _clear_pose(armature: bpy.types.Object) -> None:
+    for bone in armature.pose.bones:
+        bone.rotation_mode = "QUATERNION"
+        bone.rotation_quaternion = Quaternion((1.0, 0.0, 0.0, 0.0))
+        bone.location = Vector((0.0, 0.0, 0.0))
+        bone.scale = Vector((1.0, 1.0, 1.0))
+    bpy.context.view_layer.update()
+
+
+def _rotate_bone_world_axis(armature: bpy.types.Object, name: str, axis: Vector, degrees: float) -> None:
+    pose_bone = armature.pose.bones[name]
+    local_axis = pose_bone.bone.matrix_local.to_3x3().inverted() @ axis.normalized()
+    pose_bone.rotation_mode = "QUATERNION"
+    pose_bone.rotation_quaternion = Quaternion(local_axis.normalized(), math.radians(degrees))
+
+
+def _evaluated_pose_report(
+    obj: bpy.types.Object,
+    *,
+    pose_name: str,
+    rest_positions: list[Vector],
+    rest_areas: list[float],
+) -> dict[str, object]:
+    depsgraph = bpy.context.evaluated_depsgraph_get()
+    evaluated_object = obj.evaluated_get(depsgraph)
+    evaluated_mesh = evaluated_object.to_mesh()
+    try:
+        matrix = evaluated_object.matrix_world
+        positions = [matrix @ vertex.co for vertex in evaluated_mesh.vertices]
+        finite = all(math.isfinite(value) for point in positions for value in point)
+        areas = [polygon.area for polygon in evaluated_mesh.polygons]
+        collapsed_faces = sum(
+            area <= 1e-12 or area <= rest_area * 1e-4
+            for area, rest_area in zip(areas, rest_areas)
+        )
+        severely_compressed_faces = sum(
+            area <= rest_area * 0.05
+            for area, rest_area in zip(areas, rest_areas)
+            if rest_area > 1e-12
+        )
+        maximum_displacement = max(
+            ((position - rest).length for position, rest in zip(positions, rest_positions)),
+            default=0.0,
+        )
+        minimum = Vector(tuple(min(point[axis] for point in positions) for axis in range(3)))
+        maximum = Vector(tuple(max(point[axis] for point in positions) for axis in range(3)))
+        extents = maximum - minimum
+        hard_failures: list[str] = []
+        if len(positions) != len(rest_positions) or len(areas) != len(rest_areas):
+            hard_failures.append("topology_changed")
+        if not finite:
+            hard_failures.append("non_finite_coordinates")
+        if collapsed_faces:
+            hard_failures.append("collapsed_faces")
+        return {
+            "pose": pose_name,
+            "vertices": len(positions),
+            "faces": len(areas),
+            "finite_coordinates": finite,
+            "collapsed_faces": collapsed_faces,
+            "severely_compressed_faces": severely_compressed_faces,
+            "maximum_vertex_displacement": maximum_displacement,
+            "bounds_extents": list(extents),
+            "hard_failures": hard_failures,
+            "gate_passed": not hard_failures,
+        }
+    finally:
+        evaluated_object.to_mesh_clear()
+
+
+def _run_short_biped_rig_probe(
+    output_root: Path,
+    source_renders: list[Path],
+    *,
+    render_size: int,
+    maximum_material_change_fraction: float,
+) -> tuple[list[dict[str, object]], dict[str, object], list[str]]:
+    obj = _mesh_objects()[0]
+    coordinate_digest_before = _mesh_coordinate_digest(obj)
+    topology_digest_before = _mesh_topology_digest(obj)
+    landmark_report = infer_short_biped_landmarks()
+    if not bool(landmark_report["landmark_gate_passed"]):
+        raise RuntimeError("short-biped landmark proposal failed its automatic gate")
+    armature = _create_short_biped_armature(landmark_report)
+    skinning_report = _bind_short_biped_weights_bone_heat(obj, armature)
+    coordinate_digest_after = _mesh_coordinate_digest(obj)
+    topology_digest_after = _mesh_topology_digest(obj)
+    skinning_report["vertex_coordinates_unchanged"] = coordinate_digest_before == coordinate_digest_after
+    skinning_report["topology_unchanged"] = topology_digest_before == topology_digest_after
+    if not skinning_report["vertex_coordinates_unchanged"]:
+        skinning_report["hard_failures"].append("rest_vertex_coordinates_changed")
+    if not skinning_report["topology_unchanged"]:
+        skinning_report["hard_failures"].append("rest_topology_changed")
+    skinning_report["gate_passed"] = not skinning_report["hard_failures"]
+    if not bool(skinning_report["gate_passed"]):
+        raise RuntimeError("short-biped skinning proposal failed its automatic gate")
+
+    _clear_pose(armature)
+    neutral_renders = render_diagnostics(output_root, "rig_neutral", size=render_size)
+    neutral_comparison = compare_renders(
+        source_renders,
+        neutral_renders,
+        maximum_material_change_fraction=maximum_material_change_fraction,
+    )
+    if not bool(neutral_comparison["automatic_visual_gate_passed"]):
+        raise RuntimeError("neutral rig changed the locked rest-pose appearance")
+
+    rest_positions = [obj.matrix_world @ vertex.co for vertex in obj.data.vertices]
+    rest_areas = [polygon.area for polygon in obj.data.polygons]
+    poses: list[dict[str, object]] = []
+
+    _clear_pose(armature)
+    _rotate_bone_world_axis(armature, "shoulder_l", Vector((0, 1, 0)), 50.0)
+    _rotate_bone_world_axis(armature, "shoulder_r", Vector((0, 1, 0)), -50.0)
+    _rotate_bone_world_axis(armature, "elbow_l", Vector((1, 0, 0)), -55.0)
+    _rotate_bone_world_axis(armature, "elbow_r", Vector((1, 0, 0)), -55.0)
+    bpy.context.view_layer.update()
+    poses.append(_evaluated_pose_report(obj, pose_name="shoulder_elbow_stress", rest_positions=rest_positions, rest_areas=rest_areas))
+    shoulder_renders = render_diagnostics(output_root, "rig_shoulder_stress", size=render_size)
+
+    _clear_pose(armature)
+    _rotate_bone_world_axis(armature, "hip_l", Vector((1, 0, 0)), -22.0)
+    _rotate_bone_world_axis(armature, "hip_r", Vector((1, 0, 0)), 22.0)
+    _rotate_bone_world_axis(armature, "knee_l", Vector((1, 0, 0)), 58.0)
+    bpy.context.view_layer.update()
+    poses.append(_evaluated_pose_report(obj, pose_name="hip_knee_stress", rest_positions=rest_positions, rest_areas=rest_areas))
+    leg_renders = render_diagnostics(output_root, "rig_leg_stress", size=render_size)
+    _clear_pose(armature)
+    _remove_diagnostic_objects()
+
+    deformation_report = {
+        "schema_version": 1,
+        "poses": poses,
+        "hard_failures": [failure for pose in poses for failure in pose["hard_failures"]],
+        "gate_passed": all(bool(pose["gate_passed"]) for pose in poses),
+        "human_approval_required": True,
+        "human_approved": False,
+    }
+    rig_contract = {
+        "schema_version": 1,
+        "anatomy_family": "short_biped_v1",
+        "proposal_method": "bounded_geometric_landmarks_and_blender_bone_heat_v1",
+        "joints": [
+            {
+                "name": name,
+                "parent": parent,
+                "head_landmark": head,
+                "tail_landmark": tail,
+            }
+            for name, parent, head, tail in SHORT_BIPED_BONES
+        ],
+        "contacts": {"foot_left": "toe_l", "foot_right": "toe_r"},
+        "sockets": {"hand_left": "hand_l", "hand_right": "hand_r", "projectile_origin": "chest"},
+        "human_approval_required": True,
+        "human_approved": False,
+    }
+    landmark_path = output_root / "landmarks_contract.json"
+    rig_path = output_root / "rig_contract.json"
+    skinning_path = output_root / "skinning_report.json"
+    deformation_path = output_root / "deformation_report.json"
+    comparison_path = output_root / "neutral_comparison_report.json"
+    _write_json(landmark_path, landmark_report)
+    _write_json(rig_path, rig_contract)
+    _write_json(skinning_path, skinning_report)
+    _write_json(deformation_path, deformation_report)
+    _write_json(comparison_path, neutral_comparison)
+
+    rigged_blend = output_root / "rigged_candidate.blend"
+    bpy.ops.wm.save_as_mainfile(filepath=str(rigged_blend))
+    _triangulate_scene_for_export()
+    rigged_glb = output_root / "rigged_candidate.glb"
+    bpy.ops.export_scene.gltf(
+        filepath=str(rigged_glb),
+        export_format="GLB",
+        export_materials="NONE",
+        export_normals=False,
+        export_tangents=False,
+        export_skins=True,
+        export_animations=False,
+        export_shared_accessors=True,
+    )
+    _import_asset(rigged_glb)
+    export_scene_analysis = analyze_scene()
+    export_primary = max(_mesh_objects(), key=lambda item: len(item.data.vertices))
+    export_primary_analysis, _ = _object_analysis(export_primary)
+    export_armatures = sum(item.type == "ARMATURE" for item in bpy.context.scene.objects)
+    export_skin_modifiers = sum(
+        modifier.type == "ARMATURE"
+        for mesh in _mesh_objects()
+        for modifier in mesh.modifiers
+    )
+    export_gate_passed = (
+        export_armatures == 1
+        and export_skin_modifiers == 1
+        and bool(export_primary_analysis["finite_coordinates"])
+        and int(export_primary_analysis["components"]) == 1
+        and int(export_primary_analysis["boundary_edges"]) == 0
+        and int(export_primary_analysis["non_manifold_edges"]) == 0
+    )
+    export_report = {
+        "schema_version": 1,
+        "analysis": export_primary_analysis,
+        "scene_mesh_objects": int(export_scene_analysis["mesh_objects"]),
+        "auxiliary_mesh_objects": [item.name for item in _mesh_objects() if item != export_primary],
+        "armatures": export_armatures,
+        "skin_modifiers": export_skin_modifiers,
+        "gate_passed": export_gate_passed,
+    }
+    export_path = output_root / "rigged_export_validation.json"
+    _write_json(export_path, export_report)
+    automatic_gate_passed = (
+        bool(landmark_report["landmark_gate_passed"])
+        and bool(skinning_report["gate_passed"])
+        and bool(deformation_report["gate_passed"])
+        and bool(neutral_comparison["automatic_visual_gate_passed"])
+        and export_gate_passed
+    )
+    if not automatic_gate_passed:
+        raise RuntimeError("short-biped rig/deformation probe failed an automatic gate")
+
+    outputs = [
+        _output(landmark_path, "application/json", "landmarks_contract"),
+        _output(rig_path, "application/json", "rig_contract"),
+        _output(skinning_path, "application/json", "skinning_report"),
+        _output(deformation_path, "application/json", "deformation_report"),
+        _output(comparison_path, "application/json", "neutral_comparison_report"),
+        _output(export_path, "application/json", "rigged_export_validation"),
+        _output(rigged_blend, "application/x-blender", "rigged_candidate_checkpoint"),
+        _output(rigged_glb, "model/gltf-binary", "rigged_candidate"),
+    ]
+    for prefix, paths in (
+        ("rig_neutral", neutral_renders),
+        ("rig_shoulder_stress", shoulder_renders),
+        ("rig_leg_stress", leg_renders),
+    ):
+        outputs.extend(
+            _output(path, "image/png", f"{prefix}_{path.stem.rsplit('_', 1)[-1]}")
+            for path in paths
+        )
+    diagnostics = {
+        "landmarks": len(landmark_report["landmarks"]),
+        "bones": len(SHORT_BIPED_BONES),
+        "automatic_rig_probe_gate_passed": automatic_gate_passed,
+        "human_approved": False,
+    }
+    warnings = [
+        "This is a staged deformation probe on generated topology, not an approved canonical production mesh.",
+        "Proportional joint centers and pruned Blender bone-heat weights require visual review and corrective refinement.",
+        "Self-collision, twist distribution, facial deformation, clothing rigidity, and motion contacts are not yet gated.",
+    ]
+    return outputs, diagnostics, warnings
+
+
 def _scene_bounds() -> tuple[Vector, Vector]:
     points = [obj.matrix_world @ Vector(corner) for obj in _mesh_objects() for corner in obj.bound_box]
     minimum = Vector(tuple(min(point[axis] for point in points) for axis in range(3)))
@@ -486,6 +964,11 @@ def _triangulate_scene_for_export() -> None:
     for obj in _mesh_objects():
         source_mesh = obj.data
         vertices = [tuple(vertex.co) for vertex in source_mesh.vertices]
+        vertex_weights = [
+            [(element.group, element.weight) for element in vertex.groups]
+            for vertex in source_mesh.vertices
+        ]
+        group_names = {group.index: group.name for group in obj.vertex_groups}
         triangles: list[tuple[int, int, int]] = []
         for polygon in source_mesh.polygons:
             indices = list(polygon.vertices)
@@ -495,6 +978,17 @@ def _triangulate_scene_for_export() -> None:
             center = sum((Vector(vertices[index]) for index in indices), Vector()) / len(indices)
             center_index = len(vertices)
             vertices.append(tuple(center))
+            accumulated: dict[int, float] = {}
+            for index in indices:
+                for group_index, weight in vertex_weights[index]:
+                    accumulated[group_index] = accumulated.get(group_index, 0.0) + weight / len(indices)
+            selected = sorted(accumulated.items(), key=lambda item: (-item[1], item[0]))[:4]
+            weight_total = sum(weight for _, weight in selected)
+            vertex_weights.append(
+                [(group_index, weight / weight_total) for group_index, weight in selected]
+                if weight_total > 0
+                else []
+            )
             triangles.extend(
                 (index, indices[(offset + 1) % len(indices)], center_index)
                 for offset, index in enumerate(indices)
@@ -503,6 +997,13 @@ def _triangulate_scene_for_export() -> None:
         export_mesh.from_pydata(vertices, [], triangles)
         export_mesh.update()
         obj.data = export_mesh
+        recreated_groups = {
+            old_index: obj.vertex_groups.new(name=name)
+            for old_index, name in sorted(group_names.items())
+        }
+        for vertex_index, assignments in enumerate(vertex_weights):
+            for group_index, weight in assignments:
+                recreated_groups[group_index].add([vertex_index], weight, "REPLACE")
         if source_mesh.users == 0:
             bpy.data.meshes.remove(source_mesh)
 
@@ -600,7 +1101,19 @@ def execute(request: dict[str, object]) -> tuple[list[dict[str, object]], dict[s
     outputs.extend(_output(path, "image/png", f"source_{path.stem.rsplit('_', 1)[-1]}") for path in source_renders)
     warnings = ["Fixed camera labels describe Blender world axes; human confirmation of semantic front/back is required."]
 
-    if operation_id in {"blender.repair", "blender.repair_retopology", "blender.export"}:
+    if operation_id == "blender.propose_short_biped_rig":
+        comparison_threshold = float(parameters.get("maximum_material_change_fraction", 0.02))
+        if not 0 <= comparison_threshold <= 1:
+            raise ValueError("maximum_material_change_fraction must be between zero and one")
+        probe_outputs, probe_diagnostics, probe_warnings = _run_short_biped_rig_probe(
+            output_root,
+            source_renders,
+            render_size=render_size,
+            maximum_material_change_fraction=comparison_threshold,
+        )
+        outputs.extend(probe_outputs)
+        warnings.extend(probe_warnings)
+    elif operation_id in {"blender.repair", "blender.repair_retopology", "blender.export"}:
         component_policy = str(parameters.get("component_policy", "none"))
         weld_distance = float(parameters.get("weld_distance", 0.0))
         if not 0 <= weld_distance <= 0.01:
@@ -711,6 +1224,8 @@ def execute(request: dict[str, object]) -> tuple[list[dict[str, object]], dict[s
         "source_components": int(source_analysis["connected_components"]),
         "source_finite": bool(source_analysis["finite_coordinates"]),
     }
+    if operation_id == "blender.propose_short_biped_rig":
+        diagnostics.update(probe_diagnostics)
     return outputs, diagnostics, warnings
 
 

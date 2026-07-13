@@ -109,7 +109,14 @@ Instant Meshes is the independent second opinion. With deterministic mode and on
 bit-identical and pure quad, but the calibrated ~49k-face result had 30 components and 454 boundary edges. It is also
 rejected. AutoRemesher's branch was the stronger bounded-repair starting point. Blender's bounded pass now stages a
 one-component, closed, 99.37%-quad checkpoint with unchanged source vertex coordinates and a structurally valid GLB.
-Automatic gates pass, but human identity and deformation approval are still required before rigging.
+Automatic topology gates pass, but human identity and canonical-fit approval are still required before production
+rigging or promotion.
+
+The staged `blender.propose_short_biped_rig` operation now continues that same editable checkpoint into a research
+deformation probe: 26 proportional landmarks, a 21-bone semantic rig, Blender bone-heat weights pruned to four
+influences, neutral identity comparison, shoulder/elbow and hip/knee stress renders, and skinned GLB re-import. Its
+automatic gates pass, but visible shoulder/armpit compression, canonical fitting, corrective weights, and human
+approval remain open; this operation does not promote the generated topology.
 
 Machine-specific worker commands belong in ignored `config.local.json`; use `config.example.json` as the template.
 
