@@ -106,6 +106,19 @@ def test_autoremesher_qualification_records_rejected_real_candidate() -> None:
     assert record.observed["source_overwritten"] is False
 
 
+def test_instant_meshes_qualification_records_deterministic_rejected_candidate() -> None:
+    path = ROOT / "qualifications" / "instant-meshes-7b316086_windows.json"
+    record = WorkerRuntimeQualification.model_validate_json(path.read_text(encoding="utf-8"))
+    assert record.status == "partial"
+    assert record.observed["candidate_quad_fraction"] == 1.0
+    assert record.observed["all_quad_gate_passed"] is True
+    assert record.observed["structural_gate_passed"] is False
+    assert record.observed["automatic_promotion_gate_passed"] is False
+    assert record.observed["repeat_outputs_identical"] is True
+    assert record.observed["candidate_components"] == 30
+    assert record.observed["source_overwritten"] is False
+
+
 def test_canonical_qualification_records_passing_skin_stress_and_missing_fit() -> None:
     path = ROOT / "qualifications" / "canonical-short-biped-v1.json"
     record = WorkerRuntimeQualification.model_validate_json(path.read_text(encoding="utf-8"))

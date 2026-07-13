@@ -18,6 +18,8 @@ The implemented foundation provides:
   source-preserving checkpoints, fixed-view visual comparison, and fail-closed GLB export re-import validation;
 - an AutoRemesher 1.0.0 D2b research worker with immutable-source hashing, bounded CLI parameters, polygon-aware OBJ
   analysis, and separate structural/all-quad promotion gates; the first real TripoSG result is correctly rejected;
+- a deterministic Instant Meshes D2b second-opinion worker pinned by source/binary digest; its pure-quad TripoSG result
+  is also correctly rejected because it is open and fragmented;
 - a MIT TripoSG 1.5B image-to-3D adapter (code only right now — see below) that requires caller-owned RGBA masking
   and excludes BRIA RMBG, kept as the native-Windows offline fallback (demoted 2026-07-12: real corpus output had
   17 disconnected surface components — not a topology quality bar to build on);
@@ -77,6 +79,10 @@ python tools/asset_forge_darkness/adapters/build_retopology_request.py `
   --input C:/path/normalized-source.obj --output-directory C:/path/retopology-evidence `
   --out C:/path/retopology-request.json --job-id autoremesher.example.v1 --target-quads 50000
 python -m darkness run-worker --worker-id autoremesher --request C:/path/retopology-request.json
+python tools/asset_forge_darkness/adapters/build_instant_meshes_request.py `
+  --input C:/path/normalized-source.obj --output-directory C:/path/instant-meshes-evidence `
+  --out C:/path/instant-meshes-request.json --job-id instant.meshes.example.v1 --field-faces 12500
+python -m darkness run-worker --worker-id instant_meshes.retopology --request C:/path/instant-meshes-request.json
 python -m darkness package --package-id goblin.v1 --candidate-id darkness-canonical-short-biped-v1 `
   --source C:/path/validated-output --output C:/path/package `
   --qualification tools/asset_forge_darkness/qualifications/canonical-short-biped-v1.json --mode research
@@ -91,6 +97,10 @@ package is negative technical evidence, not the visual master to continue.
 AutoRemesher 1.0.0 accepts normalized OBJ input, not the source GLB directly. Its first real candidate preserved the
 broad goblin silhouette and reached 99.15% quads, but failed closed on 12 non-manifold edges and 346 non-quad faces.
 Repeated identical jobs also differed, so this worker is not claimed deterministic. No D2b candidate is approved yet.
+
+Instant Meshes is the independent second opinion. With deterministic mode and one thread, repeated outputs were
+bit-identical and pure quad, but the calibrated ~49k-face result had 30 components and 454 boundary edges. It is also
+rejected. AutoRemesher's one-component, closed, 99.15%-quad branch is the stronger bounded-repair starting point.
 
 Machine-specific worker commands belong in ignored `config.local.json`; use `config.example.json` as the template.
 
