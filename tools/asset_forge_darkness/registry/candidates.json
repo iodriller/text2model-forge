@@ -71,6 +71,25 @@
     },
     {
       "schema_version": 1,
+      "candidate_id": "blender-4.5-lts",
+      "display_name": "Blender 4.5 LTS Darkness Kernel",
+      "capability": "deterministic_mesh_analysis_repair_render_export",
+      "source_url": "https://www.blender.org/",
+      "license_id": "GPL-2.0-or-later",
+      "license_url": "https://www.blender.org/about/license/",
+      "priority": "open_source_first",
+      "research_allowed": true,
+      "release_eligibility": "permitted",
+      "notes": [
+        "Blender's GPL applies to the application, not artwork created with it; Darkness records Blender as a tool ancestor without applying GPL to generated game assets.",
+        "Live Blender 4.5.11 LTS qualification passed through the Microsoft Store launcher on 2026-07-12.",
+        "The first bounded repair retains only the largest connected surface and always requires human identity approval.",
+        "GLB export omits normals to preserve shared topology; downstream import must calculate/author approved normals before release.",
+        "Microsoft Store launcher process-tree cancellation is not qualified, so supports_cancel remains false."
+      ]
+    },
+    {
+      "schema_version": 1,
       "candidate_id": "trellis2-4b",
       "display_name": "TRELLIS.2-4B",
       "capability": "image_to_3d_pbr",

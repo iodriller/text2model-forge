@@ -1,0 +1,54 @@
+from __future__ import annotations
+
+import subprocess
+import sys
+from pathlib import Path
+
+from darkness.schemas import AssetStage, ExternalWorkerRequest
+
+
+ROOT = Path(__file__).resolve().parents[1]
+FIXTURES = ROOT / "fixtures" / "mesh"
+
+
+def test_blender_worker_script_compiles_without_importing_bpy() -> None:
+    source = (ROOT / "adapters" / "blender_worker.py").read_text(encoding="utf-8")
+    compile(source, "blender_worker.py", "exec")
+    assert '"blender.repair"' in source
+    assert "human_approval_required" in source
+    assert "source_overwritten" in source
+
+
+def test_blender_request_builder_emits_strict_geometry_contract(tmp_path: Path) -> None:
+    request_path = tmp_path / "request.json"
+    output = tmp_path / "output"
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(ROOT / "adapters" / "build_blender_request.py"),
+            "--input",
+            str(FIXTURES / "defective_tetrahedron.obj"),
+            "--output-directory",
+            str(output),
+            "--out",
+            str(request_path),
+            "--job-id",
+            "blender.contract.v1",
+            "--operation-id",
+            "blender.repair",
+            "--component-policy",
+            "keep_largest",
+            "--render-size",
+            "256",
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    request = ExternalWorkerRequest.model_validate_json(request_path.read_text(encoding="utf-8"))
+    assert request.stage is AssetStage.geometry
+    assert request.operation_id == "blender.repair"
+    assert request.parameters["component_policy"] == "keep_largest"
+    assert request.parameters["render_size"] == 256

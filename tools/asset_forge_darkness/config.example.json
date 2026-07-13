@@ -2,6 +2,18 @@
   "schema_version": 1,
   "workspace_root": "C:/AssetForgeDarknessRuns",
   "workers": {
+    "blender": {
+      "command_prefix": [
+        "C:/path/to/blender.exe",
+        "--background",
+        "--factory-startup",
+        "--offline-mode",
+        "--python-exit-code", "23",
+        "--python", "C:/path/to/EmberDefense/tools/asset_forge_darkness/adapters/blender_worker.py",
+        "--"
+      ],
+      "environment": {}
+    },
     "triposg.1.5b": {
       "command_prefix": [
         "C:/path/to/TripoSG/.venv/Scripts/python.exe",

@@ -1,0 +1,56 @@
+{
+  "schema_version": 1,
+  "candidate_id": "blender-4.5-lts",
+  "worker_id": "blender",
+  "source_revision": "BlenderFoundation.Blender4.5LTS_4.5.11.0_x64__ppwjx1n5r4v9t",
+  "weights_revision": null,
+  "code_license": "GPL-2.0-or-later",
+  "weights_license": "not_applicable",
+  "tested_at": "2026-07-12T22:01:24.1989005-06:00",
+  "host_gpu": "NVIDIA GeForce RTX 5090 (EEVEE diagnostic rendering; repair is deterministic CPU geometry work)",
+  "environment": {
+    "blender": "4.5.11 LTS",
+    "distribution": "Microsoft Store",
+    "package": "BlenderFoundation.Blender4.5LTS_4.5.11.0_x64__ppwjx1n5r4v9t",
+    "launcher": "%LOCALAPPDATA%/Microsoft/WindowsApps/blender-launcher.exe",
+    "worker_sha256": "4a5bfb222ded9bb41534e103a63b1b2847fe05e016d0604de6659f1ab9d9a710"
+  },
+  "weight_sha256": {},
+  "status": "passed",
+  "observed": {
+    "job_id": "blender.triposg.goblin.v5",
+    "operation": "keep_largest_component",
+    "source_sha256": "d95e921e72b47575d3a7f091b5b986154a7e47dada559526c2a2e4ea3905414a",
+    "source_vertices": 31011,
+    "source_faces": 62006,
+    "source_components": 17,
+    "candidate_glb_sha256": "7d3c178b88ea61f35f8414adab0755a4b61349e85e36959ee2fd722a673b405b",
+    "candidate_blend_sha256": "92e7a7cea634b984bb804f00922f6ec12292850ba298e6e73c5119acf073f81b",
+    "source_blend_sha256": "5590183fbf8b5b179a78b9ea44af8c861aec025689bdb88069ed4e42d4e3e161",
+    "repair_report_sha256": "6c821acb0ac74ee3a6a88a9c1c2a2e2bae413ae9e8aa786846ecca18cc8281a0",
+    "comparison_report_sha256": "d507b5430d438ff035f9601e670a13e780b5e00e75eefe6727358cd9a6e881c4",
+    "export_validation_sha256": "24560583fb83cfebf89e442029e5e876593b122413093a2c1b5f99006d92e4b3",
+    "candidate_vertices": 30723,
+    "candidate_faces": 61494,
+    "candidate_components": 1,
+    "candidate_watertight": true,
+    "candidate_finite": true,
+    "candidate_winding_consistent": true,
+    "maximum_material_change_fraction": 0.003810882568359375,
+    "maximum_material_change_fraction_threshold": 0.02,
+    "automatic_visual_gate_passed": true,
+    "human_approved": false,
+    "elapsed_seconds": 3.485
+  },
+  "excluded_dependencies": [
+    "AutoRemesher: not installed or invoked; this qualification is cleanup/import/export, not retopology.",
+    "Instant Meshes: not installed or invoked by the Blender kernel."
+  ],
+  "known_risks": [
+    "Keeping only the largest component can remove legitimate detached equipment or surface details; human identity approval is mandatory.",
+    "The qualified GLB omits normals to prevent flat-shading vertex duplication; production normals/tangents remain a D4/D8 concern.",
+    "Microsoft Store launcher process-tree cancellation is not qualified.",
+    "Fixed camera labels are Blender-axis labels; semantic north/south mapping still requires human confirmation.",
+    "This is a cleanup kernel qualification, not deformation-ready retopology, rigging, skinning, or animation proof."
+  ]
+}

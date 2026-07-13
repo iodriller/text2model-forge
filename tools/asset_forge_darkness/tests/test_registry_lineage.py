@@ -79,6 +79,19 @@ def test_triposg_qualification_records_permissive_lineage_and_exclusions() -> No
     assert any("RMBG-1.4" in item for item in record.excluded_dependencies)
 
 
+def test_blender_qualification_records_real_source_preserving_cleanup() -> None:
+    path = ROOT / "qualifications" / "blender-4.5.11_windows.json"
+    record = WorkerRuntimeQualification.model_validate_json(path.read_text(encoding="utf-8"))
+    assert record.status == "passed"
+    assert record.environment["worker_sha256"] == "4a5bfb222ded9bb41534e103a63b1b2847fe05e016d0604de6659f1ab9d9a710"
+    assert record.observed["source_sha256"] == "d95e921e72b47575d3a7f091b5b986154a7e47dada559526c2a2e4ea3905414a"
+    assert record.observed["source_components"] == 17
+    assert record.observed["candidate_components"] == 1
+    assert record.observed["candidate_watertight"] is True
+    assert record.observed["automatic_visual_gate_passed"] is True
+    assert record.observed["human_approved"] is False
+
+
 def test_canonical_qualification_records_passing_skin_stress_and_missing_fit() -> None:
     path = ROOT / "qualifications" / "canonical-short-biped-v1.json"
     record = WorkerRuntimeQualification.model_validate_json(path.read_text(encoding="utf-8"))
