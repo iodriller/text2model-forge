@@ -19,5 +19,5 @@
   "environment_kind": "windows",
   "executable_candidates": ["%DARKNESS_TRIPOSG_PYTHON%"],
   "license_gate": "permitted",
-  "blockers": ["Cross-section envelope fitting does not transfer fine detail, UVs, or target component semantics.", "Unity/Blender deformation validation is unavailable until an editor executable is installed."]
+  "blockers": ["Cross-section envelope fitting does not transfer fine detail, UVs, or target component semantics.", "Blender import and diagnostic cleanup are qualified, but canonical pose/deformation validation and Unity import/playmode validation remain incomplete."]
 }

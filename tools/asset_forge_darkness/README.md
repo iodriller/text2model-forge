@@ -14,6 +14,8 @@ The implemented foundation provides:
 - isolated subprocess workers with allowlisted paths, logs, GPU leasing, timeout, and cancellation;
 - an operation allowlist, candidate branching, deterministic regression guards, immutable artifacts, and a
   hash-chained resumable event log;
+- a qualified Blender 4.5.11 LTS background worker with strict analyze/repair/render/export operations,
+  source-preserving checkpoints, fixed-view visual comparison, and fail-closed GLB export re-import validation;
 - a MIT TripoSG 1.5B image-to-3D adapter (code only right now — see below) that requires caller-owned RGBA masking
   and excludes BRIA RMBG, kept as the native-Windows offline fallback (demoted 2026-07-12: real corpus output had
   17 disconnected surface components — not a topology quality bar to build on);
@@ -51,9 +53,10 @@ mesh dependencies (`numpy`, `trimesh`, `scikit-image`) were reinstalled directly
 TripoSG's venv to run.
 
 The current vertical slice is deliberately marked `partial`: TripoSG produced a coherent candidate on the RTX 5090,
-coarse target-envelope fitting reduced mean relative extent error from 24.7% to 5.6%, and all fitted canonical LOD skin
-stress gates pass. Fine-detail/semantic fitting, UV/PBR work, Blender validation, and Unity import/playmode validation
-are not implemented or could not run on this host. A research package can be built; a release package fails closed.
+coarse target-envelope fitting reduced mean relative extent error from 24.7% to 5.6%, all fitted canonical LOD skin
+stress gates pass, and Blender validates a source-preserving 17-to-1 component cleanup of the original TripoSG goblin.
+Fine-detail/semantic retopology, UV/PBR work, pose/deformation validation, and Unity import/playmode validation are not
+implemented. A research package can be built; a release package fails closed.
 
 Useful commands (from the EmberDefense root):
 
@@ -64,15 +67,20 @@ python -m darkness demo --workspace C:/AssetForgeDarknessRuns/demo
 python -m darkness run-worker --worker-id canonical.short_biped --request C:/path/request.json
 python -m darkness mesh-check --input C:/path/triangular.obj --output C:/path/new-evidence-directory
 python -m darkness glb-component-audit --input C:/path/candidate.glb --output C:/path/new-audit-directory
+python tools/asset_forge_darkness/adapters/build_blender_request.py `
+  --input C:/path/candidate.glb --output-directory C:/path/blender-evidence `
+  --out C:/path/blender-request.json --job-id blender.example.v1 --operation-id blender.repair
+python -m darkness run-worker --worker-id blender --request C:/path/blender-request.json
 python -m darkness package --package-id goblin.v1 --candidate-id darkness-canonical-short-biped-v1 `
   --source C:/path/validated-output --output C:/path/package `
   --qualification tools/asset_forge_darkness/qualifications/canonical-short-biped-v1.json --mode research
 ```
 
-`mesh-check` and `glb-component-audit` never overwrite their source or an existing evidence directory. The GLB audit
-emits review branches and turntables but does not approve or promote a cleanup candidate. For the current TripoSG
-goblin, the original generated geometry is the locked visual source; the generic procedural fitted-v2 package is
-negative technical evidence, not the visual master to continue.
+`mesh-check`, `glb-component-audit`, and the Blender worker never overwrite their source or an existing evidence
+directory. The Blender worker emits source/candidate checkpoints, fixed-view comparisons, a separate GLB, and a
+re-import validation report, but it does not grant the required human approval or promote the candidate. For the
+current TripoSG goblin, the original generated geometry is the locked visual source; the generic procedural fitted-v2
+package is negative technical evidence, not the visual master to continue.
 
 Machine-specific worker commands belong in ignored `config.local.json`; use `config.example.json` as the template.
 
