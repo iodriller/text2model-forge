@@ -1,0 +1,55 @@
+{
+  "schema_version": 1,
+  "workspace_root": "C:/AssetForgeDarknessRuns",
+  "workers": {
+    "triposg.1.5b": {
+      "command_prefix": [
+        "C:/path/to/TripoSG/.venv/Scripts/python.exe",
+        "C:/path/to/EmberDefense/tools/asset_forge_darkness/adapters/triposg_worker.py"
+      ],
+      "environment": {
+        "DARKNESS_TRIPOSG_SOURCE": "C:/path/to/TripoSG",
+        "DARKNESS_TRIPOSG_WEIGHTS": "C:/path/to/TripoSG/pretrained_weights/TripoSG",
+        "DARKNESS_TRIPOSG_COMPAT": "C:/path/to/EmberDefense/tools/asset_forge_darkness/compat/diso"
+      }
+    },
+    "canonical.short_biped": {
+      "command_prefix": [
+        "C:/path/to/python.exe",
+        "C:/path/to/EmberDefense/tools/asset_forge_darkness/adapters/canonical_short_biped_worker.py"
+      ],
+      "environment": {}
+    },
+    "trellis2.4b": {
+      "command_prefix": [
+        "C:/path/to/python.exe",
+        "C:/path/to/EmberDefense/tools/asset_forge_darkness/adapters/wsl_launch.py",
+        "--distro", "Ubuntu-24.04",
+        "--wsl-python", "/home/<user>/miniconda3/envs/trellis2/bin/python",
+        "--wsl-script", "/mnt/c/path/to/EmberDefense/tools/asset_forge_darkness/adapters/trellis2_worker.py",
+        "--env", "DARKNESS_TRELLIS2_WEIGHTS=microsoft/TRELLIS.2-4B",
+        "--env", "DARKNESS_TRELLIS2_SOURCE=/home/<user>/AssetForgeDarknessWorkers/TRELLIS.2",
+        "--env", "DARKNESS_TRELLIS2_SOURCE_REVISION=<git-rev-parse-HEAD-of-cloned-TRELLIS.2>",
+        "--env", "PATH=/usr/local/cuda-12.4/bin:/usr/bin:/bin",
+        "--env", "LD_LIBRARY_PATH=/usr/lib/wsl/lib:/usr/local/cuda-12.4/lib64",
+        "--env", "LIBRARY_PATH=/usr/lib/wsl/lib"
+      ],
+      "environment": {}
+    },
+    "instantmesh.large": {
+      "command_prefix": [
+        "C:/path/to/python.exe",
+        "C:/path/to/EmberDefense/tools/asset_forge_darkness/adapters/wsl_launch.py",
+        "--distro", "Ubuntu-24.04",
+        "--wsl-python", "/home/<user>/miniconda3/envs/instantmesh/bin/python",
+        "--wsl-script", "/mnt/c/path/to/EmberDefense/tools/asset_forge_darkness/adapters/instantmesh_worker.py",
+        "--env", "DARKNESS_INSTANTMESH_SOURCE=/home/<user>/AssetForgeDarknessWorkers/InstantMesh",
+        "--env", "DARKNESS_INSTANTMESH_SOURCE_REVISION=<git-rev-parse-HEAD-of-cloned-InstantMesh>",
+        "--env", "PATH=/usr/local/cuda-12.4/bin:/usr/bin:/bin",
+        "--env", "LD_LIBRARY_PATH=/usr/lib/wsl/lib:/usr/local/cuda-12.4/lib64",
+        "--env", "LIBRARY_PATH=/usr/lib/wsl/lib"
+      ],
+      "environment": {}
+    }
+  }
+}

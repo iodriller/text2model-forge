@@ -1,0 +1,54 @@
+{
+  "schema_version": 1,
+  "candidate_id": "triposg-1.5b",
+  "worker_id": "triposg.1.5b",
+  "source_revision": "fc5c40990181e2a756c4e0b1c2f4d6b5202faf8c",
+  "weights_revision": "2c1c516d22d58db486a058d98d31bb6177344e06",
+  "code_license": "MIT",
+  "weights_license": "MIT",
+  "tested_at": "2026-07-12T14:12:09-06:00",
+  "host_gpu": "NVIDIA GeForce RTX 5090",
+  "environment": {
+    "python": "3.10.11",
+    "torch": "2.7.1+cu128",
+    "torchvision": "0.22.1+cu128",
+    "diffusers": "0.30.3",
+    "transformers": "4.46.3",
+    "numpy": "1.26.4",
+    "scikit-image": "0.24.0",
+    "trimesh": "4.4.7"
+  },
+  "weight_sha256": {
+    "image_encoder_dinov2/model.safetensors": "399fba97a95f22c36834418bc69373364a99af3a1153da1c0fb31db567c92e23",
+    "transformer/diffusion_pytorch_model.safetensors": "9192b5923f7b605b394192809aa2ceb73bf0f4009674d8e3b999b45bb97d4bf2",
+    "vae/diffusion_pytorch_model.safetensors": "a2e667c24927a5a35e5f19fcb4c75890e9399aa966b6db8131d7df733a750c8b"
+  },
+  "status": "partial",
+  "observed": {
+    "input_contract": "RGBA PNG with meaningful alpha; no automatic background-removal model",
+    "background_removal_model": "none",
+    "extractor": "TripoSG official use_flash_decoder=false scikit-image path",
+    "num_inference_steps": 10,
+    "dense_octree_depth": 6,
+    "hierarchical_octree_depth": 7,
+    "worker_elapsed_seconds": 12.047,
+    "total_elapsed_seconds": 17.094,
+    "peak_vram_bytes": 5137067008,
+    "vertices": 31011,
+    "faces": 62006,
+    "watertight": true,
+    "connected_surface_components": 17,
+    "glb_sha256": "d95e921e72b47575d3a7f091b5b986154a7e47dada559526c2a2e4ea3905414a",
+    "diagnostic_sha256": "e39df86e8a00761e9d00fd6d440cfdc8d4c6b664a7a81d3d978b512a7b9db51c"
+  },
+  "excluded_dependencies": [
+    "briaai/RMBG-1.4: non-commercial weights; not downloaded and not used",
+    "diso: compiled extension unavailable; fail-closed shim prevents accidental flash-decoder use"
+  ],
+  "known_risks": [
+    "This is a low-step smoke qualification, not the blinded multi-generator quality benchmark.",
+    "The generated mesh has 17 disconnected surface components and is not deformation-ready.",
+    "The output is geometry-only and needs a separately licensed surface/material path.",
+    "Generated character bodies remain topology/detail targets until canonical fitting and deformation tests pass."
+  ]
+}

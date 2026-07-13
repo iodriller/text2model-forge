@@ -1,0 +1,15 @@
+# Direct pins observed in the qualified Windows RTX 5090 worker.
+# Install PyTorch from https://download.pytorch.org/whl/cu128 first.
+torch==2.7.1+cu128
+torchvision==0.22.1+cu128
+accelerate==1.14.0
+diffusers==0.30.3
+huggingface-hub==0.30.2
+numpy==1.26.4
+opencv-python==4.10.0.84
+peft==0.13.2
+pillow==12.2.0
+pymeshlab==2025.7.post1
+scikit-image==0.24.0
+transformers==4.46.3
+trimesh==4.4.7

@@ -95,6 +95,72 @@ class WorkerCapability(StrictModel):
     output_media_types: list[str] = Field(default_factory=list)
 
 
+class WorkerManifest(StrictModel):
+    schema_version: Literal[1] = 1
+    capability: WorkerCapability
+    adapter: Literal["builtin", "localdeploy", "http", "subprocess"]
+    lifecycle: Literal["available", "research_ready", "discovered", "blocked"]
+    source_url: str | None = None
+    pinned_revision: str | None = None
+    environment_kind: Literal["builtin", "windows", "wsl2", "container", "remote"]
+    executable_candidates: list[str] = Field(default_factory=list)
+    health_url: str | None = None
+    license_gate: ReleaseEligibility
+    blockers: list[str] = Field(default_factory=list)
+
+
+class WorkerBinding(StrictModel):
+    command_prefix: list[str] = Field(min_length=1)
+    environment: dict[str, str] = Field(default_factory=dict)
+
+
+class DarknessLocalConfig(StrictModel):
+    schema_version: Literal[1] = 1
+    workspace_root: str = Field(min_length=1)
+    workers: dict[str, WorkerBinding] = Field(default_factory=dict)
+
+
+class ExternalWorkerRequest(StrictModel):
+    schema_version: Literal[1] = 1
+    job_id: str = Field(pattern=r"^[a-z0-9][a-z0-9_.-]*$")
+    run_id: str = Field(pattern=r"^[a-z0-9][a-z0-9_.-]*$")
+    operation_id: str = Field(pattern=r"^[a-z0-9][a-z0-9_.-]*$")
+    stage: AssetStage
+    inputs: list[ArtifactRecord] = Field(default_factory=list)
+    input_paths: dict[str, str] = Field(default_factory=dict)
+    parameters: dict[str, Any] = Field(default_factory=dict)
+    output_directory: str = Field(min_length=1)
+
+
+class ExternalWorkerOutput(StrictModel):
+    path: str = Field(min_length=1)
+    media_type: str = Field(min_length=1)
+    role: str = Field(min_length=1)
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class ExternalWorkerResponse(StrictModel):
+    schema_version: Literal[1] = 1
+    job_id: str
+    status: Literal["succeeded", "failed", "cancelled"]
+    outputs: list[ExternalWorkerOutput] = Field(default_factory=list)
+    diagnostics: dict[str, float | int | bool | str | None] = Field(default_factory=dict)
+    warnings: list[str] = Field(default_factory=list)
+    error: str | None = None
+
+
+class OperationDefinition(StrictModel):
+    schema_version: Literal[1] = 1
+    operation_id: str = Field(pattern=r"^[a-z0-9][a-z0-9_.-]*$")
+    worker_id: str = Field(pattern=r"^[a-z0-9][a-z0-9_.-]*$")
+    stages: list[AssetStage] = Field(min_length=1)
+    description: str = Field(min_length=1)
+    input_count_min: int = Field(default=1, ge=0)
+    input_count_max: int = Field(default=1, ge=0)
+    output_media_type: str = Field(min_length=1)
+    deterministic: bool = False
+
+
 class CandidateRecord(StrictModel):
     schema_version: Literal[1] = 1
     candidate_id: str = Field(min_length=1)
@@ -166,6 +232,30 @@ class OperationProposal(StrictModel):
     expected_changes: dict[str, float | int | bool | str] = Field(default_factory=dict)
     preserve: list[str] = Field(default_factory=list)
     rationale: str = Field(min_length=1)
+
+
+class OptimizerObservation(StrictModel):
+    region: str = Field(min_length=1)
+    issue: str = Field(min_length=1)
+    severity: float = Field(ge=0, le=1)
+
+
+class RootCauseHypothesis(StrictModel):
+    cause: str = Field(min_length=1)
+    probability: float = Field(ge=0, le=1)
+
+
+class OptimizerDecision(StrictModel):
+    schema_version: Literal[1] = 1
+    goal_satisfied: bool
+    visual_score: float | None = Field(default=None, ge=0, le=1)
+    technical_score: float = Field(ge=0, le=1)
+    observations: list[OptimizerObservation] = Field(default_factory=list)
+    root_causes: list[RootCauseHypothesis] = Field(default_factory=list)
+    proposals: list[OperationProposal] = Field(default_factory=list, max_length=3)
+    preserve: list[str] = Field(default_factory=list)
+    confidence: float = Field(ge=0, le=1)
+    request_human_review: bool = False
 
 
 class MetricResult(StrictModel):
@@ -252,6 +342,34 @@ class RunState(StrictModel):
     failure: str | None = None
 
 
+class WorkerJob(StrictModel):
+    schema_version: Literal[1] = 1
+    job_id: str = Field(pattern=r"^[a-z0-9][a-z0-9_.-]*$")
+    run_id: str = Field(pattern=r"^[a-z0-9][a-z0-9_.-]*$")
+    worker_id: str = Field(pattern=r"^[a-z0-9][a-z0-9_.-]*$")
+    command: list[str] = Field(min_length=1)
+    cwd: str
+    timeout_seconds: float = Field(default=300, gt=0)
+    exclusive_gpu: bool = False
+    environment: dict[str, str] = Field(default_factory=dict)
+
+
+class WorkerResult(StrictModel):
+    schema_version: Literal[1] = 1
+    job_id: str
+    worker_id: str
+    return_code: int | None
+    timed_out: bool = False
+    cancelled: bool = False
+    started_at: datetime
+    finished_at: datetime
+    elapsed_seconds: float = Field(ge=0)
+    stdout_path: str
+    stderr_path: str
+    gpu_before: dict[str, Any] | None = None
+    gpu_after: dict[str, Any] | None = None
+
+
 class PolicyDecision(StrictModel):
     allowed: bool
     reasons: list[str] = Field(default_factory=list)
@@ -306,3 +424,44 @@ class ModelRuntimeQualification(StrictModel):
     probes: list[RuntimeProbe] = Field(min_length=1)
     known_risks: list[str] = Field(default_factory=list)
     metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class WorkerRuntimeQualification(StrictModel):
+    schema_version: Literal[1] = 1
+    candidate_id: str = Field(min_length=1)
+    worker_id: str = Field(min_length=1)
+    source_revision: str = Field(min_length=1)
+    weights_revision: str | None = None
+    code_license: str = Field(min_length=1)
+    weights_license: str = Field(min_length=1)
+    tested_at: datetime
+    host_gpu: str
+    environment: dict[str, str] = Field(default_factory=dict)
+    weight_sha256: dict[str, str] = Field(default_factory=dict)
+    status: Literal["passed", "partial", "failed"]
+    observed: dict[str, Any] = Field(default_factory=dict)
+    excluded_dependencies: list[str] = Field(default_factory=list)
+    known_risks: list[str] = Field(default_factory=list)
+
+
+class PackageFile(StrictModel):
+    relative_path: str = Field(min_length=1)
+    sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    size_bytes: int = Field(ge=1)
+
+
+class DeliveryPackageManifest(StrictModel):
+    """Portable, digest-pinned engine-neutral delivery bundle."""
+
+    schema_version: Literal[1] = 1
+    package_id: str = Field(pattern=r"^[a-z0-9][a-z0-9_.-]*$")
+    candidate_id: str = Field(min_length=1)
+    mode: Literal["research", "release"]
+    eligibility: Literal["research_only", "release_ready", "blocked"]
+    code_license: str = Field(min_length=1)
+    weights_license: str = Field(min_length=1)
+    source_revision: str = Field(min_length=1)
+    weights_revision: str | None = None
+    qualification_status: Literal["passed", "partial", "failed"]
+    files: list[PackageFile] = Field(min_length=1)
+    blockers: list[str] = Field(default_factory=list)
