@@ -92,6 +92,20 @@ def test_blender_qualification_records_real_source_preserving_cleanup() -> None:
     assert record.observed["human_approved"] is False
 
 
+def test_autoremesher_qualification_records_rejected_real_candidate() -> None:
+    path = ROOT / "qualifications" / "autoremesher-1.0.0_windows.json"
+    record = WorkerRuntimeQualification.model_validate_json(path.read_text(encoding="utf-8"))
+    assert record.status == "partial"
+    assert record.observed["source_components"] == 1
+    assert record.observed["candidate_components"] == 1
+    assert record.observed["candidate_quad_fraction"] > 0.99
+    assert record.observed["structural_gate_passed"] is False
+    assert record.observed["all_quad_gate_passed"] is False
+    assert record.observed["automatic_promotion_gate_passed"] is False
+    assert record.observed["repeat_outputs_identical"] is False
+    assert record.observed["source_overwritten"] is False
+
+
 def test_canonical_qualification_records_passing_skin_stress_and_missing_fit() -> None:
     path = ROOT / "qualifications" / "canonical-short-biped-v1.json"
     record = WorkerRuntimeQualification.model_validate_json(path.read_text(encoding="utf-8"))

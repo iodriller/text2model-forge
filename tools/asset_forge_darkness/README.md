@@ -16,6 +16,8 @@ The implemented foundation provides:
   hash-chained resumable event log;
 - a qualified Blender 4.5.11 LTS background worker with strict analyze/repair/render/export operations,
   source-preserving checkpoints, fixed-view visual comparison, and fail-closed GLB export re-import validation;
+- an AutoRemesher 1.0.0 D2b research worker with immutable-source hashing, bounded CLI parameters, polygon-aware OBJ
+  analysis, and separate structural/all-quad promotion gates; the first real TripoSG result is correctly rejected;
 - a MIT TripoSG 1.5B image-to-3D adapter (code only right now — see below) that requires caller-owned RGBA masking
   and excludes BRIA RMBG, kept as the native-Windows offline fallback (demoted 2026-07-12: real corpus output had
   17 disconnected surface components — not a topology quality bar to build on);
@@ -42,7 +44,7 @@ Hunyuan3D and HY-Motion are parked as lineage-gated research candidates: still r
 community license excludes the EU/UK/South Korea from output use, so they cannot clear a global release export.
 They are not production dependencies. R-DMesh remains blocked. The open-source-first geometry order, reevaluated
 2026-07-12 (`DESIGN/asset_forge_darkness_master_plan.md` Section 17), is: stand up the WSL2 boundary, qualify
-TRELLIS.2-4B as primary and Direct3D-S2 for high-resolution detail, add a deterministic AutoRemesher/Instant Meshes
+TRELLIS.2-4B as primary and Direct3D-S2 for high-resolution detail, add an automatic AutoRemesher/Instant Meshes
 retopology sub-stage (D2b) to fix the blobby/disconnected marching-cubes output generically, and keep TripoSG only
 as the no-WSL2 fallback. Host GPU confirmed via `nvidia-smi` on 2026-07-12: one RTX 5090, 32,607 MiB, driver 610.74.
 
@@ -71,6 +73,10 @@ python tools/asset_forge_darkness/adapters/build_blender_request.py `
   --input C:/path/candidate.glb --output-directory C:/path/blender-evidence `
   --out C:/path/blender-request.json --job-id blender.example.v1 --operation-id blender.repair
 python -m darkness run-worker --worker-id blender --request C:/path/blender-request.json
+python tools/asset_forge_darkness/adapters/build_retopology_request.py `
+  --input C:/path/normalized-source.obj --output-directory C:/path/retopology-evidence `
+  --out C:/path/retopology-request.json --job-id autoremesher.example.v1 --target-quads 50000
+python -m darkness run-worker --worker-id autoremesher --request C:/path/retopology-request.json
 python -m darkness package --package-id goblin.v1 --candidate-id darkness-canonical-short-biped-v1 `
   --source C:/path/validated-output --output C:/path/package `
   --qualification tools/asset_forge_darkness/qualifications/canonical-short-biped-v1.json --mode research
@@ -81,6 +87,10 @@ directory. The Blender worker emits source/candidate checkpoints, fixed-view com
 re-import validation report, but it does not grant the required human approval or promote the candidate. For the
 current TripoSG goblin, the original generated geometry is the locked visual source; the generic procedural fitted-v2
 package is negative technical evidence, not the visual master to continue.
+
+AutoRemesher 1.0.0 accepts normalized OBJ input, not the source GLB directly. Its first real candidate preserved the
+broad goblin silhouette and reached 99.15% quads, but failed closed on 12 non-manifold edges and 346 non-quad faces.
+Repeated identical jobs also differed, so this worker is not claimed deterministic. No D2b candidate is approved yet.
 
 Machine-specific worker commands belong in ignored `config.local.json`; use `config.example.json` as the template.
 
