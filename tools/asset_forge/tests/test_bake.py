@@ -36,6 +36,11 @@ class BakeScriptTests(unittest.TestCase):
     def test_blender_bake_script_exists(self):
         self.assertTrue(BAKE_SCRIPT.is_file(), BAKE_SCRIPT)
 
+    def test_bake_driver_allows_run_scoped_work_and_icons(self):
+        source = BAKE_SCRIPT.parent.parent.joinpath("assetforge", "bake.py").read_text(encoding="utf-8")
+        self.assertIn('block.get("work_root")', source)
+        self.assertIn('block.get("icons_output")', source)
+
 
 if __name__ == "__main__":
     unittest.main()

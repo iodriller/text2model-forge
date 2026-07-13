@@ -177,9 +177,10 @@ class ComfyClient:
             if prompt_id in history:
                 entry = history[prompt_id]
                 status = entry.get("status", {})
-                if status.get("status_str") == "error" or status.get("completed") is False:
+                if status.get("status_str") == "error":
                     raise ForgeError(f"ComfyUI job failed: {json.dumps(status, indent=2)}")
-                return entry
+                if status.get("completed") is True:
+                    return entry
             time.sleep(poll_seconds)
         raise ForgeError(f"Timed out waiting {timeout_seconds}s for ComfyUI job {prompt_id}")
 

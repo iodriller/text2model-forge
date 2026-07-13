@@ -79,9 +79,46 @@ def _run_blender(blender: str, blend_path: Path, mode: str, config_path: Path, w
     ]
     if output is not None:
         command.extend(["--output", str(output)])
-    result = subprocess.run(command, capture_output=True, text=True, check=False)
+    persisted_error = work / f"blender-{mode}-error.txt"
+    if persisted_error.is_file():
+        persisted_error.unlink()
+    if Path(blender).name.lower() == "blender-launcher.exe":
+        # Microsoft Store app-execution aliases return code 1 when launched directly
+        # through Python, but PowerShell Start-Process resolves the packaged app and
+        # -Wait follows it to completion. Keep Blender's logs in the run-scoped work
+        # directory so failures remain diagnosable and resumable.
+        work.mkdir(parents=True, exist_ok=True)
+        stdout_path = work / f"blender-{mode}.stdout.log"
+        stderr_path = work / f"blender-{mode}.stderr.log"
+
+        def literal(value: str) -> str:
+            return "'" + value.replace("'", "''") + "'"
+
+        script = (
+            f"$p=Start-Process -FilePath {literal(blender)} "
+            f"-ArgumentList {literal(subprocess.list2cmdline(command[1:]))} "
+            f"-RedirectStandardOutput {literal(str(stdout_path))} "
+            f"-RedirectStandardError {literal(str(stderr_path))} "
+            "-WindowStyle Hidden -Wait -PassThru; exit $p.ExitCode"
+        )
+        result = subprocess.run(
+            ["powershell.exe", "-NoProfile", "-NonInteractive", "-Command", script],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        stdout = stdout_path.read_text(encoding="utf-8", errors="replace") if stdout_path.is_file() else result.stdout
+        stderr = stderr_path.read_text(encoding="utf-8", errors="replace") if stderr_path.is_file() else result.stderr
+    else:
+        result = subprocess.run(command, capture_output=True, text=True, check=False)
+        stdout, stderr = result.stdout, result.stderr
     if result.returncode != 0:
-        tail = (result.stdout or "")[-3000:] + "\n" + (result.stderr or "")[-2000:]
+        persisted = (
+            persisted_error.read_text(encoding="utf-8", errors="replace")
+            if persisted_error.is_file()
+            else ""
+        )
+        tail = (stdout or "")[-3000:] + "\n" + (stderr or "")[-2000:] + "\n" + persisted[-4000:]
         raise ForgeError(f"Blender bake step '{mode}' failed:\n{tail}")
 
 
@@ -108,7 +145,12 @@ def bake_texture_master(
         raise ForgeError("texture_master.baked_source must name the baked .blend path")
     baked = repo_root / baked_value
 
-    work = repo_root / "artifacts" / "asset-forge-work" / unit / "bake"
+    work_value = str(block.get("work_root") or "").strip()
+    work = (
+        Path(work_value).resolve()
+        if work_value
+        else repo_root / "artifacts" / "asset-forge-work" / unit / "bake"
+    )
     views_folder = work / "views"
     provenance_path = work / "bake-provenance.json"
 
@@ -128,6 +170,12 @@ def bake_texture_master(
     anchor_path = anchors_folder / f"{unit}.anchor.png"
     anchor_depth_path = anchors_folder / f"{unit}.anchor.depth.png"
 
+    def model_hash(filename: str) -> str | None:
+        return _registered_model_hash(config_path, filename) or _registered_model_hash(
+            repo_root / "tools" / "asset_forge" / "characters" / "model-registry-probe.json",
+            filename,
+        )
+
     signature = sha256_json({
         "unit": unit,
         "master_sha256": sha256_file(master),
@@ -139,9 +187,9 @@ def bake_texture_master(
         "view_elevation": float(block.get("view_elevation", 18.0)),
         "bake_resolution": int(block.get("bake_resolution", 2048)),
         "checkpoint": checkpoint,
-        "checkpoint_sha256": _registered_model_hash(config_path, checkpoint),
+        "checkpoint_sha256": model_hash(checkpoint),
         "controlnet": DEPTH_CONTROLNET,
-        "controlnet_sha256": _registered_model_hash(config_path, DEPTH_CONTROLNET),
+        "controlnet_sha256": model_hash(DEPTH_CONTROLNET),
         "seed": seed,
         "steps": steps,
         "cfg": cfg,
@@ -255,7 +303,12 @@ def bake_texture_master(
     if not baked.is_file():
         raise ForgeError(f"Projection bake reported success but no baked master exists: {baked}")
 
-    icons_folder = repo_root / "asset_sources" / "ember-defense" / "assets" / unit / "icons"
+    icons_value = str(block.get("icons_output") or "").strip()
+    icons_folder = (
+        Path(icons_value).resolve()
+        if icons_value
+        else repo_root / "asset_sources" / "ember-defense" / "assets" / unit / "icons"
+    )
     _run_blender(blender, baked, "icons", config_path, work, repo_root, output=icons_folder)
 
     manifest = json.loads((work / "bake-manifest.json").read_text(encoding="utf-8"))
@@ -270,9 +323,9 @@ def bake_texture_master(
         "baked_sha256": sha256_file(baked),
         "views": view_count,
         "checkpoint": checkpoint,
-        "checkpoint_sha256": _registered_model_hash(config_path, checkpoint),
+        "checkpoint_sha256": model_hash(checkpoint),
         "controlnet": DEPTH_CONTROLNET,
-        "controlnet_sha256": _registered_model_hash(config_path, DEPTH_CONTROLNET),
+        "controlnet_sha256": model_hash(DEPTH_CONTROLNET),
         "seed": seed,
         "steps": steps,
         "cfg": cfg,

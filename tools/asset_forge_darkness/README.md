@@ -1,8 +1,9 @@
 # Asset Forge Darkness
 
-This is the independent implementation described by
-`DESIGN/asset_forge_darkness_master_plan.md`. It does not import or depend on the legacy
-`tools/asset_forge` package.
+This is the Darkness implementation described by `DESIGN/asset_forge_darkness_master_plan.md`. Its orchestration,
+contracts, optimizer, workers, and QA remain independent. The qualified D8 adapter deliberately reuses the small,
+tested `tools/asset_forge` ComfyUI multiview client and Blender view baker; Darkness wraps those components with its
+own provenance, selected-master re-render, black-atlas rejection, Qwen/referee, and downstream hash gates.
 
 The implemented foundation provides:
 
@@ -58,11 +59,11 @@ venv/weights it was pinned to, since TripoSG is the demoted fallback candidate, 
 mesh dependencies (`numpy`, `trimesh`, `scikit-image`) were reinstalled directly under 3.12 so it no longer needs
 TripoSG's venv to run.
 
-The current vertical slice is deliberately marked `partial`: TripoSG produced a coherent candidate on the RTX 5090,
-coarse target-envelope fitting reduced mean relative extent error from 24.7% to 5.6%, all fitted canonical LOD skin
-stress gates pass, and Blender validates a source-preserving 17-to-1 component cleanup of the original TripoSG goblin.
-Fine-detail/semantic retopology, UV/PBR work, pose/deformation validation, and Unity import/playmode validation are not
-implemented. A research package can be built; a release package fails closed.
+The current vertical slice is deliberately marked `partial`: the qualified D7–D10 sprite-target chain now retargets
+four CC0 motions, builds one ComfyUI-assisted stable-UV painted master, renders/packages 16 directional sheets, and
+validates 144 sprites/16 clips in a standalone Unity project. It is still a human-review candidate, not a release:
+canonical landmark approval, corrective shoulder deformation, D0–D6 orchestration, and owner sign-off remain open.
+The optional live-3D PBR/FBX prefab adapter is also not implemented.
 
 Useful commands (from the EmberDefense root):
 
@@ -93,6 +94,10 @@ python -m darkness run-worker --worker-id instant_meshes.retopology --request C:
 python -m darkness package --package-id goblin.v1 --candidate-id darkness-canonical-short-biped-v1 `
   --source C:/path/validated-output --output C:/path/package `
   --qualification tools/asset_forge_darkness/qualifications/canonical-short-biped-v1.json --mode research
+python tools/asset_forge_darkness/adapters/run_motion_candidate_pipeline.py `
+  --target C:/path/approved-rig.blend --motion-source C:/path/UAL1_Standard.glb `
+  --output-root C:/AssetForgeDarknessRuns/goblin-painted-review `
+  --blender C:/path/blender.exe --unity C:/path/Unity.exe
 ```
 
 `mesh-check`, `glb-component-audit`, and the Blender worker never overwrite their source or an existing evidence

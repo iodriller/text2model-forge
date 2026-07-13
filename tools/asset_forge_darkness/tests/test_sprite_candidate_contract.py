@@ -1,4 +1,8 @@
 from pathlib import Path
+import runpy
+
+import pytest
+from PIL import Image
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -70,3 +74,29 @@ def test_qwen_retarget_review_requires_dedicated_grip_closeups() -> None:
     assert "previous iteration grip close-up" in adapter
     assert "fingers visibly close around the handle" in reviewer
     assert "rest-X" in reviewer
+
+
+def test_sprite_packager_rejects_visible_but_effectively_black_frames(tmp_path: Path) -> None:
+    namespace = runpy.run_path(str(ROOT / "adapters/package_motion_sprites.py"))
+    frames = tmp_path / "frames" / "darkness_short_biped_candidate"
+    for action, (count, _loop) in namespace["ACTIONS"].items():
+        for direction in namespace["DIRECTIONS"]:
+            folder = frames / action / direction
+            folder.mkdir(parents=True)
+            for index in range(count):
+                image = Image.new("RGBA", (64, 64), (0, 0, 0, 0))
+                image.paste((8, 10, 12, 255), (16, 12, 48, 56))
+                image.save(folder / f"{index:02d}.png")
+    master = tmp_path / "surface.blend"
+    master.write_bytes(b"fixture")
+    with pytest.raises(RuntimeError, match="visible_surface_too_dark"):
+        namespace["main"](
+            [
+                "--frames-root",
+                str(tmp_path / "frames"),
+                "--output-directory",
+                str(tmp_path / "package"),
+                "--master",
+                str(master),
+            ]
+        )

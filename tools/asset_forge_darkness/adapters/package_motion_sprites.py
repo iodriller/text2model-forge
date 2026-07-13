@@ -6,7 +6,7 @@ import hashlib
 import json
 from pathlib import Path
 
-from PIL import Image, ImageDraw
+from PIL import Image, ImageDraw, ImageStat
 
 
 ACTIONS = {"idle": (8, True), "walk": (8, True), "attack": (10, False), "death": (10, False)}
@@ -84,6 +84,7 @@ def main(argv: list[str] | None = None) -> int:
                 cell = first.size
             sheet = Image.new("RGBA", (cell[0] * len(paths), cell[1]), (0, 0, 0, 0))
             visible_bounds: list[tuple[int, int, int, int]] = []
+            visible_luminance: list[float] = []
             for index, path in enumerate(paths):
                 with Image.open(path).convert("RGBA") as frame:
                     if frame.size != cell:
@@ -94,6 +95,8 @@ def main(argv: list[str] | None = None) -> int:
                         failures.append(f"{action}/{direction}:{path.name}:empty_alpha")
                     else:
                         visible_bounds.append(bounds)
+                        channel_means = ImageStat.Stat(frame.convert("RGB"), frame.getchannel("A")).mean
+                        visible_luminance.append(sum(channel_means) / len(channel_means))
                         if (
                             bounds[0] <= 1
                             or bounds[1] <= 1
@@ -113,6 +116,11 @@ def main(argv: list[str] | None = None) -> int:
             ]
             if visible_bounds and min(height_fractions) < 0.08:
                 failures.append(f"{action}/{direction}:silhouette_too_small")
+            if visible_luminance and min(visible_luminance) < 28.0:
+                failures.append(
+                    f"{action}/{direction}:visible_surface_too_dark:"
+                    f"{min(visible_luminance):.2f}_lt_28.00"
+                )
             records.append(
                 {
                     "name": action,
@@ -126,11 +134,18 @@ def main(argv: list[str] | None = None) -> int:
                     "minimum_visible_height_fraction": min(height_fractions, default=0.0),
                     "maximum_visible_width_fraction": max(width_fractions, default=0.0),
                     "maximum_visible_height_fraction": max(height_fractions, default=0.0),
+                    "minimum_visible_luminance_8bit": min(visible_luminance, default=0.0),
+                    "mean_visible_luminance_8bit": (
+                        sum(visible_luminance) / len(visible_luminance)
+                        if visible_luminance
+                        else 0.0
+                    ),
                 }
             )
     review_sheet = _review_sheet(output)
     manifest = {
         "schema_version": 1,
+        "quality_gate_version": 2,
         "asset_id": "darkness_triposg_goblin_motion_candidate",
         "display_name": "Darkness TripoSG Goblin Motion Candidate",
         "status": "human_review_candidate",
