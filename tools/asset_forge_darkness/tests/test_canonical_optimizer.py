@@ -32,11 +32,11 @@ def test_landmark_pair_adjustment_enforces_step_and_cumulative_limits() -> None:
         AdjustLandmarkPairParameters(
             landmark_pair=LandmarkPair.shoulders,
             axis=LandmarkAxis.height,
-            delta_fraction=0.04,
+            delta_fraction=0.11,
         )
     with pytest.raises(ValueError, match="cumulative"):
         apply_landmark_pair_adjustment(
-            {"shoulder_l": [0.0, 0.0, 0.075], "shoulder_r": [0.0, 0.0, 0.075]},
+            {"shoulder_l": [0.0, 0.0, 0.195], "shoulder_r": [0.0, 0.0, 0.195]},
             AdjustLandmarkPairParameters(
                 landmark_pair=LandmarkPair.shoulders,
                 axis=LandmarkAxis.height,
@@ -50,15 +50,15 @@ def test_optimizer_operations_publish_the_same_typed_bounds_the_executor_uses() 
     operation = next(item for item in operations if item.operation_id == "rig.adjust_landmark_pair")
     assert operation.parameter_schema == models[operation.operation_id].model_json_schema()
     delta = operation.parameter_schema["properties"]["delta_fraction"]
-    assert delta["minimum"] == -0.025
-    assert delta["maximum"] == 0.025
+    assert delta["minimum"] == -0.10
+    assert delta["maximum"] == 0.10
     weight_operation = next(
         item for item in operations if item.operation_id == "skin.redistribute_joint_pair_weights"
     )
     assert weight_operation.parameter_schema == RedistributeJointPairWeightsParameters.model_json_schema()
     transfer = weight_operation.parameter_schema["properties"]["transfer_fraction"]
     assert transfer["minimum"] == 0.025
-    assert transfer["maximum"] == 0.15
+    assert transfer["maximum"] == 0.50
 
 
 def test_rig_decision_schema_rejects_unregistered_or_out_of_bounds_nested_parameters() -> None:
@@ -66,7 +66,8 @@ def test_rig_decision_schema_rejects_unregistered_or_out_of_bounds_nested_parame
         "schema_version": 1,
         "goal_satisfied": False,
         "technical_score": 0.5,
-        "confidence": 0.7,
+        "strategy_analysis": "Try a broader weight strategy.",
+        "confidence": "high",
         "proposals": [
             {
                 "schema_version": 1,

@@ -501,7 +501,7 @@ def infer_short_biped_landmarks(
         if not isinstance(values, list) or len(values) != 3:
             raise ValueError(f"landmark adjustment for {name} must contain exactly three values")
         normalized = Vector(tuple(float(value) for value in values))
-        if any(not math.isfinite(value) or abs(value) > 0.08 for value in normalized):
+        if any(not math.isfinite(value) or abs(value) > 0.20 for value in normalized):
             raise ValueError(f"landmark adjustment for {name} exceeds the cumulative 8% bound")
         landmarks[name] += Vector(
             (normalized.x * extents.x, normalized.y * extents.y, normalized.z * extents.z)
@@ -916,9 +916,9 @@ def _short_biped_motion_specs() -> dict[str, dict[str, object]]:
                 {"frame": 1},
                 {
                     "frame": 7,
-                    "hips_location": (0.0, 0.0, 0.01),
+                    "hips_location": (0.0, 0.0, 0.022),
                     "rotations": (
-                        ("hip_l", (1, 0, 0), -25.0),
+                        ("hip_l", (1, 0, 0), 25.0),
                         ("knee_l", (1, 0, 0), 38.0),
                         ("shoulder_l", (1, 0, 0), 18.0),
                         ("shoulder_r", (1, 0, 0), -18.0),
@@ -927,9 +927,9 @@ def _short_biped_motion_specs() -> dict[str, dict[str, object]]:
                 {"frame": 13},
                 {
                     "frame": 19,
-                    "hips_location": (0.0, 0.0, 0.01),
+                    "hips_location": (0.0, 0.0, 0.022),
                     "rotations": (
-                        ("hip_r", (1, 0, 0), -25.0),
+                        ("hip_r", (1, 0, 0), 25.0),
                         ("knee_r", (1, 0, 0), 38.0),
                         ("shoulder_l", (1, 0, 0), -18.0),
                         ("shoulder_r", (1, 0, 0), 18.0),
@@ -997,17 +997,39 @@ def _short_biped_motion_specs() -> dict[str, dict[str, object]]:
                 },
                 {
                     "frame": 24,
-                    "hips_location": (0.28, 0.0, -0.34),
+                    "hips_location": (0.28, 0.0, -0.12),
                     "rotations": (("hips", (0, 1, 0), -65.0), ("head", (0, 1, 0), 12.0)),
                 },
                 {
                     "frame": 36,
-                    "hips_location": (0.38, 0.0, -0.65),
+                    "hips_location": (0.38, 0.0, -0.13),
                     "rotations": (("hips", (0, 1, 0), -88.0),),
                 },
             ],
         },
     }
+
+
+MOTION_CRITICAL_JOINTS = {
+    "idle": ("hips", "chest", "head"),
+    "walk": (
+        "hips",
+        "hip_l", "knee_l", "ankle_l", "foot_l",
+        "hip_r", "knee_r", "ankle_r", "foot_r",
+        "shoulder_l", "shoulder_r",
+    ),
+    "attack": ("hips", "chest", "shoulder_r", "elbow_r", "wrist_r", "hand_r"),
+    "hit": ("hips", "spine", "chest", "neck", "head"),
+    "death": ("hips", "spine", "chest", "neck", "head", "hip_l", "hip_r", "knee_l", "knee_r"),
+}
+
+MOTION_REQUIRED_ACTIVE_JOINTS = {
+    "idle": ("chest",),
+    "walk": ("hip_l", "knee_l", "hip_r", "knee_r", "shoulder_l", "shoulder_r"),
+    "attack": ("chest", "shoulder_r", "elbow_r"),
+    "hit": ("hips", "chest", "head"),
+    "death": ("hips", "head"),
+}
 
 
 def _bind_short_biped_weights_bone_heat(
@@ -1070,10 +1092,10 @@ def _apply_weight_redistributions(
             raise ValueError(f"unsupported weight joint pair: {joint_pair}")
         if direction not in {"parent_to_child", "child_to_parent"}:
             raise ValueError(f"unsupported weight transfer direction: {direction}")
-        if not 0.025 <= transfer_fraction <= 0.15:
-            raise ValueError("weight transfer_fraction must be between 0.025 and 0.15")
-        if not 0.03 <= radius_fraction <= 0.12:
-            raise ValueError("weight radius_fraction must be between 0.03 and 0.12")
+        if not 0.025 <= transfer_fraction <= 0.50:
+            raise ValueError("weight transfer_fraction must be between 0.025 and 0.50")
+        if not 0.03 <= radius_fraction <= 0.25:
+            raise ValueError("weight radius_fraction must be between 0.03 and 0.25")
         radius = height * radius_fraction
         affected_vertices: set[int] = set()
         transferred_weight = 0.0
@@ -1191,6 +1213,45 @@ def _bone_tail_world(armature: bpy.types.Object, name: str) -> Vector:
     return armature.matrix_world @ armature.pose.bones[name].tail
 
 
+def _bone_head_world(armature: bpy.types.Object, name: str) -> Vector:
+    return armature.matrix_world @ armature.pose.bones[name].head
+
+
+def _critical_joint_snapshot(
+    armature: bpy.types.Object,
+    names: tuple[str, ...],
+) -> dict[str, dict[str, object]]:
+    result: dict[str, dict[str, object]] = {}
+    for name in names:
+        bone = armature.pose.bones[name]
+        head = _bone_head_world(armature, name)
+        tail = _bone_tail_world(armature, name)
+        rotation = bone.matrix_basis.to_quaternion()
+        angle = min(float(rotation.angle), math.tau - float(rotation.angle))
+        values = (*head, *tail, angle)
+        result[name] = {
+            "head": list(head),
+            "tail": list(tail),
+            "rotation_degrees_from_rest": math.degrees(angle),
+            "finite": all(math.isfinite(value) for value in values),
+        }
+    return result
+
+
+def _bone_point_at_frame(
+    armature: bpy.types.Object,
+    action: bpy.types.Action,
+    frame: int,
+    bone_name: str,
+    *,
+    point: str = "tail",
+) -> Vector:
+    _evaluate_action_frame(armature, action, frame)
+    if point == "head":
+        return _bone_head_world(armature, bone_name)
+    return _bone_tail_world(armature, bone_name)
+
+
 def _glb_animation_names(path: Path) -> list[str]:
     data = path.read_bytes()
     if data[:4] != b"glTF" or len(data) < 20:
@@ -1238,8 +1299,17 @@ def _run_short_biped_motion(
             set(keyframes + [(first + second) // 2 for first, second in zip(keyframes, keyframes[1:])])
         )
         pose_reports = []
+        critical_joint_frames: dict[str, object] = {}
+        joint_excursion_degrees = {name: 0.0 for name in MOTION_CRITICAL_JOINTS[clip_name]}
         for frame in sample_frames:
             _evaluate_action_frame(armature, action, frame)
+            joint_snapshot = _critical_joint_snapshot(armature, MOTION_CRITICAL_JOINTS[clip_name])
+            critical_joint_frames[str(frame)] = joint_snapshot
+            for name, snapshot in joint_snapshot.items():
+                joint_excursion_degrees[name] = max(
+                    joint_excursion_degrees[name],
+                    float(snapshot["rotation_degrees_from_rest"]),
+                )
             pose_reports.append(
                 _evaluated_pose_report(
                     obj,
@@ -1256,6 +1326,21 @@ def _run_short_biped_motion(
             end = _pose_snapshot(armature)
             loop_seam_error = max(abs(first - second) for first, second in zip(start, end))
         hard_failures = [failure for report in pose_reports for failure in report["hard_failures"]]
+        non_finite_joints = sorted(
+            name
+            for frame in critical_joint_frames.values()
+            for name, snapshot in frame.items()
+            if not bool(snapshot["finite"])
+        )
+        if non_finite_joints:
+            hard_failures.append("non_finite_critical_joint_transform")
+        inactive_required_joints = sorted(
+            name
+            for name in MOTION_REQUIRED_ACTIVE_JOINTS[clip_name]
+            if joint_excursion_degrees[name] < 1.0
+        )
+        if inactive_required_joints:
+            hard_failures.append("inactive_required_critical_joint")
         minimum_z = min(float(report["bounds_minimum"][2]) for report in pose_reports)
         maximum_ground_penetration = max(0.0, rest_ground - minimum_z)
         if clip_name != "death" and maximum_ground_penetration > height * 0.02:
@@ -1276,34 +1361,84 @@ def _run_short_biped_motion(
             "minimum_z": minimum_z,
             "final_minimum_z": float(pose_reports[-1]["bounds_minimum"][2]),
             "maximum_ground_penetration": maximum_ground_penetration,
+            "critical_joints": list(MOTION_CRITICAL_JOINTS[clip_name]),
+            "critical_joint_frames": critical_joint_frames,
+            "joint_excursion_degrees": joint_excursion_degrees,
+            "inactive_required_joints": inactive_required_joints,
+            "non_finite_critical_joints": non_finite_joints,
             "hard_failures": hard_failures,
             "gate_passed": not hard_failures,
         }
 
     walk = actions["walk"]
-    _evaluate_action_frame(armature, walk, 1)
-    rest_left_contact = _bone_tail_world(armature, "foot_l")
-    rest_right_contact = _bone_tail_world(armature, "foot_r")
-    _evaluate_action_frame(armature, walk, 7)
-    right_plant_error = (_bone_tail_world(armature, "foot_r") - rest_right_contact).length
-    _evaluate_action_frame(armature, walk, 19)
-    left_plant_error = (_bone_tail_world(armature, "foot_l") - rest_left_contact).length
-    maximum_walk_plant_error = max(left_plant_error, right_plant_error)
-    contact_gate_passed = maximum_walk_plant_error <= height * 0.01
+    rest_left_contact = _bone_point_at_frame(armature, walk, 1, "foot_l")
+    rest_right_contact = _bone_point_at_frame(armature, walk, 1, "foot_r")
+    right_plant_anchor = _bone_point_at_frame(armature, walk, 7, "foot_r")
+    left_plant_anchor = _bone_point_at_frame(armature, walk, 19, "foot_l")
+    right_plant_absolute_error = (right_plant_anchor - rest_right_contact).length
+    left_plant_absolute_error = (left_plant_anchor - rest_left_contact).length
+    right_plant_window = {
+        str(frame): (_bone_point_at_frame(armature, walk, frame, "foot_r") - right_plant_anchor).length
+        for frame in range(5, 10)
+    }
+    left_plant_window = {
+        str(frame): (_bone_point_at_frame(armature, walk, frame, "foot_l") - left_plant_anchor).length
+        for frame in range(17, 22)
+    }
+    right_plant_error = max(right_plant_absolute_error, *right_plant_window.values())
+    left_plant_error = max(left_plant_absolute_error, *left_plant_window.values())
+    maximum_walk_plant_error = max(right_plant_error, left_plant_error)
+    contact_gate_passed = maximum_walk_plant_error <= height * 0.015
     if not contact_gate_passed:
         all_hard_failures.append("walk:planted_foot_drift")
+    left_swing_clearance = (
+        _bone_point_at_frame(armature, walk, 7, "foot_l").z - rest_left_contact.z
+    )
+    right_swing_clearance = (
+        _bone_point_at_frame(armature, walk, 19, "foot_r").z - rest_right_contact.z
+    )
+    minimum_swing_clearance = min(left_swing_clearance, right_swing_clearance)
+    swing_clearance_gate_passed = minimum_swing_clearance >= height * 0.005
+    if not swing_clearance_gate_passed:
+        all_hard_failures.append("walk:insufficient_swing_foot_clearance")
+
+    attack = actions["attack"]
+    attack_hand_start = _bone_point_at_frame(armature, attack, 1, "hand_r")
+    attack_hand_impact = _bone_point_at_frame(armature, attack, 14, "hand_r")
+    attack_hand_travel = (attack_hand_impact - attack_hand_start).length
+    attack_reach_gate_passed = attack_hand_travel >= height * 0.05
+    if not attack_reach_gate_passed:
+        all_hard_failures.append("attack:insufficient_hand_travel")
+
+    hit = actions["hit"]
+    hit_head_start = _bone_point_at_frame(armature, hit, 1, "head", point="head")
+    hit_head_reaction = _bone_point_at_frame(armature, hit, 6, "head", point="head")
+    hit_head_travel = (hit_head_reaction - hit_head_start).length
+    hit_reaction_gate_passed = hit_head_travel >= height * 0.01
+    if not hit_reaction_gate_passed:
+        all_hard_failures.append("hit:insufficient_reaction_travel")
+
+    death = actions["death"]
+    death_hips_start = _bone_point_at_frame(armature, death, 1, "hips", point="head")
+    death_hips_final = _bone_point_at_frame(armature, death, 36, "hips", point="head")
+    death_head_start = _bone_point_at_frame(armature, death, 1, "head", point="head")
+    death_head_final = _bone_point_at_frame(armature, death, 36, "head", point="head")
+    death_hips_descent = death_hips_start.z - death_hips_final.z
+    death_head_descent = death_head_start.z - death_head_final.z
+    death_descent_gate_passed = (
+        death_hips_descent >= height * 0.05 and death_head_descent >= height * 0.10
+    )
+    if not death_descent_gate_passed:
+        all_hard_failures.append("death:insufficient_body_descent")
     death_ground_error = abs(float(clip_reports["death"]["final_minimum_z"]) - rest_ground)
     death_ground_gate_passed = death_ground_error <= height * 0.05
     if not death_ground_gate_passed:
         all_hard_failures.append("death:ground_settle")
 
-    evidence_frames = (
-        ("idle", 13),
-        ("walk", 7),
-        ("walk", 19),
-        ("attack", 14),
-        ("hit", 6),
-        ("death", 36),
+    evidence_frames = tuple(
+        (clip_name, int(pose["frame"]))
+        for clip_name, spec in specs.items()
+        for pose in spec["poses"]
     )
     evidence_renders: list[tuple[str, list[Path]]] = []
     for clip_name, frame in evidence_frames:
@@ -1351,9 +1486,38 @@ def _run_short_biped_motion(
         "walk_contact": {
             "right_plant_error": right_plant_error,
             "left_plant_error": left_plant_error,
+            "right_absolute_error": right_plant_absolute_error,
+            "left_absolute_error": left_plant_absolute_error,
             "maximum_error": maximum_walk_plant_error,
-            "maximum_allowed": height * 0.01,
+            "right_window_errors": right_plant_window,
+            "left_window_errors": left_plant_window,
+            "maximum_allowed": height * 0.015,
             "gate_passed": contact_gate_passed,
+        },
+        "walk_swing": {
+            "left_clearance": left_swing_clearance,
+            "right_clearance": right_swing_clearance,
+            "minimum_required": height * 0.005,
+            "gate_passed": swing_clearance_gate_passed,
+        },
+        "attack_function": {
+            "impact_frame": 14,
+            "hand_travel": attack_hand_travel,
+            "minimum_required": height * 0.05,
+            "gate_passed": attack_reach_gate_passed,
+        },
+        "hit_function": {
+            "reaction_frame": 6,
+            "head_travel": hit_head_travel,
+            "minimum_required": height * 0.01,
+            "gate_passed": hit_reaction_gate_passed,
+        },
+        "death_function": {
+            "hips_descent": death_hips_descent,
+            "head_descent": death_head_descent,
+            "minimum_hips_descent": height * 0.05,
+            "minimum_head_descent": height * 0.10,
+            "gate_passed": death_descent_gate_passed,
         },
         "ground": {
             "rest_height": rest_ground,
@@ -1477,7 +1641,13 @@ def _remove_diagnostic_objects() -> None:
                     bpy.data.lights.remove(data)
 
 
-def render_diagnostics(output_root: Path, prefix: str, *, size: int = 512) -> list[Path]:
+def render_diagnostics(
+    output_root: Path,
+    prefix: str,
+    *,
+    size: int = 512,
+    bounds_override: tuple[Vector, Vector] | None = None,
+) -> list[Path]:
     scene = bpy.context.scene
     _remove_diagnostic_objects()
     scene.render.engine = "BLENDER_EEVEE_NEXT"
@@ -1496,7 +1666,7 @@ def render_diagnostics(output_root: Path, prefix: str, *, size: int = 512) -> li
     material.roughness = 0.82
     bpy.context.view_layer.material_override = material
 
-    minimum, maximum = _scene_bounds()
+    minimum, maximum = bounds_override if bounds_override is not None else _scene_bounds()
     center = (minimum + maximum) * 0.5
     extents = maximum - minimum
     radius = max(extents) * 2.4

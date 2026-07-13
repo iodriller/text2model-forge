@@ -23,6 +23,11 @@ def test_blender_worker_script_compiles_without_importing_bpy() -> None:
     assert "vertex_coordinates_unchanged" in source
     assert "automatic_rig_probe_gate_passed" in source
     assert "automatic_motion_gate_passed" in source
+    assert "MOTION_CRITICAL_JOINTS" in source
+    assert "walk_swing" in source
+    assert "attack_function" in source
+    assert "hit_function" in source
+    assert "death_function" in source
     assert "_apply_weight_redistributions" in source
     assert 'parameters.get("weight_adjustments", [])' in source
 
@@ -36,6 +41,14 @@ def test_rig_optimizer_script_compiles_without_running_blender_or_qwen() -> None
     assert "default=6" in source
     assert "PREVIOUS ACCEPTED STRESS" in source
     assert "human_review.md" in source
+
+
+def test_external_human_approval_script_compiles_and_binds_hash() -> None:
+    source = (ROOT / "adapters" / "record_human_approval.py").read_text(encoding="utf-8")
+    compile(source, "record_human_approval.py", "exec")
+    assert "ApprovalRecord" in source
+    assert "sha256_file" in source
+    assert "Darkness workspace" in source
 
 
 def test_blender_request_builder_emits_strict_geometry_contract(tmp_path: Path) -> None:

@@ -342,8 +342,11 @@ def main():
             animation_object.animation_data.action = action
         frame_count = int(animation_config["frames"])
         loop = bool(animation_config.get("loop", False))
+        view_config = dict(config)
+        view_config.update(animation_config.get("camera", {}))
+        camera.data.ortho_scale = float(view_config.get("orthographic_scale", 4.6))
         for direction in config["directions"]:
-            position_camera(camera, direction, config)
+            position_camera(camera, direction, view_config)
             output_folder = os.path.join(frames_root, config["id"], animation_name, direction)
             os.makedirs(output_folder, exist_ok=True)
             depth_folder = os.path.join(frames_root, config["id"] + "-depth", animation_name, direction)

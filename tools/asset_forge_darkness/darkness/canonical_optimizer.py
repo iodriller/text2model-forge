@@ -41,12 +41,12 @@ class LandmarkAxis(str, Enum):
 class AdjustLandmarkPairParameters(StrictParameters):
     landmark_pair: LandmarkPair
     axis: LandmarkAxis
-    delta_fraction: Annotated[float, Field(ge=-0.025, le=0.025)]
+    delta_fraction: Annotated[float, Field(ge=-0.10, le=0.10)]
 
     @model_validator(mode="after")
     def require_nonzero_delta(self) -> "AdjustLandmarkPairParameters":
         if abs(self.delta_fraction) < 0.0025:
-            raise ValueError("delta_fraction magnitude must be between 0.0025 and 0.025")
+            raise ValueError("delta_fraction magnitude must be between 0.0025 and 0.10")
         return self
 
 
@@ -92,21 +92,21 @@ class WeightTransferDirection(str, Enum):
 class RedistributeJointPairWeightsParameters(StrictParameters):
     joint_pair: WeightJointPair
     direction: WeightTransferDirection
-    transfer_fraction: Annotated[float, Field(ge=0.025, le=0.15)]
-    radius_fraction: Annotated[float, Field(ge=0.03, le=0.12)]
+    transfer_fraction: Annotated[float, Field(ge=0.025, le=0.50)]
+    radius_fraction: Annotated[float, Field(ge=0.03, le=0.25)]
 
 
 class RigQwenLandmarkParameters(StrictParameters):
     landmark_pair: LandmarkPair
     axis: LandmarkAxis
-    delta_fraction: Literal[-0.025, -0.015, -0.01, -0.005, 0.005, 0.01, 0.015, 0.025]
+    delta_fraction: Literal[-0.10, -0.05, -0.025, 0.025, 0.05, 0.10]
 
 
 class RigQwenWeightParameters(StrictParameters):
     joint_pair: WeightJointPair
     direction: WeightTransferDirection
-    transfer_fraction: Literal[0.05, 0.1, 0.15]
-    radius_fraction: Literal[0.05, 0.08, 0.12]
+    transfer_fraction: Literal[0.1, 0.25, 0.5]
+    radius_fraction: Literal[0.1, 0.2, 0.25]
 
 
 class RigAdjustLandmarkProposal(OperationProposal):
@@ -152,6 +152,8 @@ class CanonicalRigOptimizerDecision(StrictParameters):
         max_length=1,
     )
     preserve: list[str] = Field(default_factory=list)
+    strategy_analysis: str = Field(min_length=1)
+    requested_new_capability: str | None = None
     confidence: Literal["low", "medium", "high"]
     request_human_review: bool = False
 
@@ -223,7 +225,8 @@ def canonical_optimizer_operations() -> tuple[list[OperationDefinition], dict[st
             description=(
                 "Move one bilateral landmark pair in normalized body-bounds space. Positive lateral moves both "
                 "landmarks outward; positive depth moves both toward Blender +Y; positive height moves both up. "
-                "The deterministic worker preserves bilateral symmetry and limits each step to 2.5%."
+                "The deterministic worker preserves bilateral symmetry and permits exploratory steps up to 10%; "
+                "hard gates and the independent referee decide whether the checkpoint survives."
             ),
             output_media_type="application/json",
             deterministic=True,
@@ -268,7 +271,7 @@ def apply_landmark_pair_adjustment(
     current: dict[str, list[float]],
     parameters: AdjustLandmarkPairParameters,
     *,
-    cumulative_limit: float = 0.08,
+    cumulative_limit: float = 0.20,
 ) -> dict[str, list[float]]:
     """Return normalized landmark offsets after one symmetric, trust-region-bounded edit."""
     result = {name: [float(value) for value in values] for name, values in current.items()}
