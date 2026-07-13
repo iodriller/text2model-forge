@@ -17,6 +17,7 @@ STAGES = (
     "sprite_render",
     "sprite_package",
     "sprite_qwen_review",
+    "unity_smoke_bundle",
     "unity_candidate_validation",
 )
 
@@ -27,8 +28,17 @@ def _arguments(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--target", type=Path, required=True)
     parser.add_argument("--motion-source", type=Path, required=True)
     parser.add_argument("--output-root", type=Path, required=True)
-    parser.add_argument("--blender", type=Path, required=True)
+    parser.add_argument(
+        "--blender",
+        type=Path,
+        help="Blender executable; required only when a retarget or sprite-render stage must run.",
+    )
     parser.add_argument("--unity", type=Path)
+    parser.add_argument(
+        "--unity-result",
+        type=Path,
+        help="Result directory returned by the standalone Unity smoke computer.",
+    )
     parser.add_argument("--repo-root", type=Path, default=repo)
     parser.add_argument("--model", default="qwen3_6_27b")
     parser.add_argument("--timeout-seconds", type=int, default=900)
@@ -47,6 +57,12 @@ def _write_json(path: Path, value: object) -> None:
     temporary = path.with_suffix(path.suffix + ".tmp")
     temporary.write_text(json.dumps(value, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     temporary.replace(path)
+
+
+def _require_executable(path: Path | None, stage: str) -> Path:
+    if path is None or not path.is_file():
+        raise FileNotFoundError(f"{stage} requires its executable dependency: {path}")
+    return path
 
 
 def _run(command: list[str], *, cwd: Path, timeout: int, environment: dict[str, str] | None = None) -> None:
@@ -149,8 +165,10 @@ def _write_review_index(root: Path, *, unity_state: str) -> Path:
                     "- Unity candidate validation is complete: [capture](unity/unity_candidate_capture.png) and "
                     "[report](unity/unity_candidate_validation.json)."
                     if unity_state == "complete"
-                    else "- Waiting for Unity Editor. Install the project version, then resume the same command with "
-                    "`--unity <Unity.exe>`; completed stages will be reused."
+                    else "- Standalone Unity smoke bundle is ready: [instructions](unity_smoke_bundle/README.md), "
+                    "[transfer ZIP](unity_smoke_bundle.zip), and [ZIP hash](unity_smoke_bundle.zip.json). "
+                    "Run it on the licensed Unity computer, return its `result` folder, then resume with "
+                    "`--unity-result <result-folder>`. No EmberDefense project import is required."
                 ),
                 "",
                 "## Human decision",
@@ -169,9 +187,9 @@ def run(args: argparse.Namespace) -> dict[str, object]:
     repo = args.repo_root.resolve()
     target = args.target.resolve()
     motion_source = args.motion_source.resolve()
-    blender = args.blender.resolve()
+    blender = args.blender.resolve() if args.blender is not None else None
     root = args.output_root.resolve()
-    for path in (repo, target, motion_source, blender):
+    for path in (repo, target, motion_source):
         if not path.exists():
             raise FileNotFoundError(path)
     root.mkdir(parents=True, exist_ok=True)
@@ -195,6 +213,9 @@ def run(args: argparse.Namespace) -> dict[str, object]:
         ) != status["motion_source_sha256"]:
             raise RuntimeError("resume refused: target or motion-source hash changed")
         status = prior
+        stages = status.setdefault("stages", {})
+        for name in STAGES:
+            stages.setdefault(name, {"state": "pending", "detail": ""})
 
     adapters = repo / "tools/asset_forge_darkness/adapters"
     retarget = root / "retarget"
@@ -202,6 +223,7 @@ def run(args: argparse.Namespace) -> dict[str, object]:
     retarget_glb = retarget / "quaternius_retargeted_goblin.glb"
     retarget_error = retarget / "retarget_error.txt"
     if not retarget_glb.is_file():
+        blender = _require_executable(blender, "retarget")
         _archive_partial(retarget)
         _record(status, root, "retarget", "running", "Baking four Quaternius actions onto the Darkness rig.")
         _launch_and_wait(
@@ -279,6 +301,7 @@ def run(args: argparse.Namespace) -> dict[str, object]:
     frames = root / "sprites/frames"
     sprite_last = frames / "darkness_short_biped_candidate/death/west/09.png"
     if not sprite_last.is_file():
+        blender = _require_executable(blender, "sprite_render")
         _record(status, root, "sprite_render", "running", "Rendering four actions in four directions.")
         _launch_and_wait(
             [
@@ -347,29 +370,78 @@ def run(args: argparse.Namespace) -> dict[str, object]:
             timeout=args.timeout_seconds,
         )
     _record(status, root, "sprite_qwen_review", "complete", str(sprite_mediator))
-    status["human_review"] = str(_write_review_index(root, unity_state="waiting_for_dependency"))
-    _write_json(_status_path(root), status)
+    smoke_bundle = root / "unity_smoke_bundle"
+    smoke_manifest = smoke_bundle / "bundle_manifest.json"
+    if not smoke_manifest.is_file():
+        _archive_partial(smoke_bundle)
+        _record(status, root, "unity_smoke_bundle", "running", "Building portable standalone Unity smoke project.")
+        _run(
+            [
+                sys.executable,
+                str(adapters / "build_unity_smoke_bundle.py"),
+                "--package",
+                str(package),
+                "--output-directory",
+                str(smoke_bundle),
+            ],
+            cwd=repo,
+            timeout=180,
+        )
+    smoke_archive = root / "unity_smoke_bundle.zip"
+    smoke_archive_record = root / "unity_smoke_bundle.zip.json"
+    archive_current = False
+    if smoke_archive.is_file() and smoke_archive_record.is_file():
+        archive_record = json.loads(smoke_archive_record.read_text(encoding="utf-8"))
+        archive_current = (
+            archive_record.get("bundle_manifest_sha256") == _sha256(smoke_manifest)
+            and archive_record.get("archive_sha256") == _sha256(smoke_archive)
+        )
+    if not archive_current:
+        _run(
+            [
+                sys.executable,
+                str(adapters / "archive_unity_smoke_bundle.py"),
+                "--bundle",
+                str(smoke_bundle),
+                "--output",
+                str(smoke_archive),
+            ],
+            cwd=repo,
+            timeout=180,
+        )
+    status["unity_smoke_archive"] = str(smoke_archive)
+    status["unity_smoke_archive_sha256"] = _sha256(smoke_archive)
+    _record(status, root, "unity_smoke_bundle", "complete", str(smoke_archive_record))
 
     unity = args.unity.resolve() if args.unity is not None else None
-    unity_report = root / "unity/unity_candidate_validation.json"
-    if not unity_report.is_file():
-        if unity is None or not unity.is_file():
-            _record(
-                status,
-                root,
-                "unity_candidate_validation",
-                "waiting_for_dependency",
-                "Unity Editor is not installed; resume with --unity <Unity.exe>.",
-            )
-            status["outcome"] = "waiting_for_unity_editor"
-            status["human_review"] = str(_write_review_index(root, unity_state="waiting_for_dependency"))
-            _write_json(_status_path(root), status)
-            return status
-        unity_output = unity_report.parent
-        unity_output.mkdir(parents=True, exist_ok=True)
+    returned_result = args.unity_result.resolve() if args.unity_result is not None else smoke_bundle / "result"
+    returned_report = returned_result / "unity_candidate_validation.json"
+    unity_output = root / "unity"
+    unity_report = unity_output / "unity_candidate_validation.json"
+    if not unity_report.is_file() and returned_report.is_file():
+        _archive_partial(unity_output)
+        _record(status, root, "unity_candidate_validation", "ingesting", "Verifying returned standalone Unity proof.")
+        _run(
+            [
+                sys.executable,
+                str(adapters / "ingest_unity_smoke_result.py"),
+                "--bundle",
+                str(smoke_bundle),
+                "--result",
+                str(returned_result),
+                "--output-directory",
+                str(unity_output),
+            ],
+            cwd=repo,
+            timeout=120,
+        )
+    if not unity_report.is_file() and unity is not None and unity.is_file():
+        result_output = smoke_bundle / "result"
+        result_output.mkdir(parents=True, exist_ok=True)
         environment = dict(__import__("os").environ)
-        environment["DARKNESS_CANDIDATE_PACKAGE"] = str(package)
-        environment["DARKNESS_CANDIDATE_OUTPUT"] = str(unity_output)
+        environment["DARKNESS_CANDIDATE_PACKAGE"] = str(smoke_bundle / "candidate")
+        environment["DARKNESS_CANDIDATE_OUTPUT"] = str(result_output)
+        environment["DARKNESS_BUNDLE_MANIFEST"] = str(smoke_manifest)
         _record(status, root, "unity_candidate_validation", "running", "Running non-promoting Unity batch proof.")
         _run(
             [
@@ -377,16 +449,43 @@ def run(args: argparse.Namespace) -> dict[str, object]:
                 "-quit",
                 "-batchmode",
                 "-projectPath",
-                str(repo / "unity/EmberDefenseUnity"),
+                str(smoke_bundle / "UnitySmokeProject"),
                 "-executeMethod",
-                "EmberDefense.EditorTools.DarknessCandidateValidator.ValidateFromBatch",
+                "Darkness.EditorTools.DarknessCandidateValidator.ValidateFromBatch",
                 "-logFile",
-                str(unity_output / "unity.log"),
+                str(result_output / "unity.log"),
             ],
             cwd=repo,
             timeout=args.timeout_seconds,
             environment=environment,
         )
+        _archive_partial(unity_output)
+        _run(
+            [
+                sys.executable,
+                str(adapters / "ingest_unity_smoke_result.py"),
+                "--bundle",
+                str(smoke_bundle),
+                "--result",
+                str(result_output),
+                "--output-directory",
+                str(unity_output),
+            ],
+            cwd=repo,
+            timeout=120,
+        )
+    if not unity_report.is_file():
+        _record(
+            status,
+            root,
+            "unity_candidate_validation",
+            "ready_for_external_execution",
+            str(smoke_bundle / "README.md"),
+        )
+        status["outcome"] = "ready_for_external_unity_smoke"
+        status["human_review"] = str(_write_review_index(root, unity_state="ready"))
+        _write_json(_status_path(root), status)
+        return status
     _record(status, root, "unity_candidate_validation", "complete", str(unity_report))
     status["outcome"] = "waiting_for_human_approval"
     status["human_review"] = str(_write_review_index(root, unity_state="complete"))
