@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 from array import array
+import hashlib
 import json
 import math
 import sys
@@ -18,6 +19,7 @@ from mathutils import Vector
 SUPPORTED_OPERATIONS = {
     "blender.analyze",
     "blender.repair",
+    "blender.repair_retopology",
     "blender.render_diagnostics",
     "blender.export",
 }
@@ -206,6 +208,192 @@ def keep_largest_component(*, weld_distance: float = 0.0) -> dict[str, object]:
     }
 
 
+def _coordinate_digest(bm: bmesh.types.BMesh) -> str:
+    digest = hashlib.sha256()
+    for vertex in sorted(bm.verts, key=lambda item: item.index):
+        digest.update(f"{vertex.co.x:.17g},{vertex.co.y:.17g},{vertex.co.z:.17g}\n".encode("ascii"))
+    return digest.hexdigest()
+
+
+def _duplicate_faces(bm: bmesh.types.BMesh) -> list[bmesh.types.BMFace]:
+    seen: set[tuple[int, ...]] = set()
+    duplicates: list[bmesh.types.BMFace] = []
+    for face in bm.faces:
+        key = tuple(sorted(vertex.index for vertex in face.verts))
+        if key in seen:
+            duplicates.append(face)
+        else:
+            seen.add(key)
+    return duplicates
+
+
+def _fill_simple_boundary_loops(
+    bm: bmesh.types.BMesh,
+    *,
+    maximum_loop_sides: int,
+) -> list[bmesh.types.BMFace]:
+    boundary = {edge for edge in bm.edges if len(edge.link_faces) == 1}
+    if not boundary:
+        return []
+    neighbors: dict[bmesh.types.BMVert, list[bmesh.types.BMVert]] = {}
+    for edge in boundary:
+        first, second = edge.verts
+        neighbors.setdefault(first, []).append(second)
+        neighbors.setdefault(second, []).append(first)
+    if any(len(items) != 2 for items in neighbors.values()):
+        return []
+    created: list[bmesh.types.BMFace] = []
+    while boundary:
+        seed = min(boundary, key=lambda edge: tuple(sorted(vertex.index for vertex in edge.verts)))
+        first, second = seed.verts
+        loop = [first, second]
+        boundary.remove(seed)
+        previous, current = first, second
+        while current != first:
+            following = next(vertex for vertex in neighbors[current] if vertex != previous)
+            edge = bm.edges.get((current, following))
+            if edge is None:
+                raise RuntimeError("boundary-loop edge disappeared during topology repair")
+            boundary.discard(edge)
+            previous, current = current, following
+            if current != first:
+                loop.append(current)
+            if len(loop) > maximum_loop_sides:
+                raise RuntimeError("boundary loop exceeds the bounded repair side limit")
+        created.append(bm.faces.new(loop))
+    return created
+
+
+def repair_quad_dominant_manifold(
+    *,
+    minimum_quad_fraction: float,
+    maximum_removed_faces: int,
+    maximum_created_faces: int,
+    maximum_boundary_loop_sides: int,
+) -> dict[str, object]:
+    objects = _mesh_objects()
+    if len(objects) != 1:
+        raise ValueError("quad-dominant topology repair requires exactly one mesh object")
+    obj = objects[0]
+    bm = bmesh.new()
+    try:
+        bm.from_mesh(obj.data)
+        bm.verts.ensure_lookup_table()
+        bm.edges.ensure_lookup_table()
+        bm.faces.ensure_lookup_table()
+        coordinate_digest_before = _coordinate_digest(bm)
+        vertices_before = len(bm.verts)
+        faces_before = len(bm.faces)
+        nonquads = [face for face in bm.faces if len(face.verts) != 4]
+        bmesh.ops.triangulate(bm, faces=nonquads, quad_method="BEAUTY", ngon_method="BEAUTY")
+        bmesh.ops.join_triangles(
+            bm,
+            faces=[face for face in bm.faces if len(face.verts) == 3],
+            cmp_seam=False,
+            cmp_sharp=False,
+            cmp_uvs=False,
+            cmp_vcols=False,
+            cmp_materials=False,
+            angle_face_threshold=math.pi,
+            angle_shape_threshold=math.pi,
+        )
+
+        removed_faces = 0
+        created_faces = 0
+        iterations: list[dict[str, int]] = []
+        for iteration in range(8):
+            bm.faces.ensure_lookup_table()
+            rejected = set(_duplicate_faces(bm))
+            for edge in bm.edges:
+                survivors = [face for face in edge.link_faces if face not in rejected]
+                if len(survivors) > 2:
+                    rejected.update(
+                        sorted(survivors, key=lambda face: (face.calc_area(), face.index))[: len(survivors) - 2]
+                    )
+            if removed_faces + len(rejected) > maximum_removed_faces:
+                raise RuntimeError("topology repair exceeds the bounded removed-face limit")
+            if rejected:
+                bmesh.ops.delete(bm, geom=list(rejected), context="FACES_ONLY")
+                removed_faces += len(rejected)
+
+            boundary_before = [edge for edge in bm.edges if len(edge.link_faces) == 1]
+            filled = bmesh.ops.holes_fill(bm, edges=boundary_before, sides=0).get("faces", []) if boundary_before else []
+            created_faces += len(filled)
+            boundary_after_fill = [edge for edge in bm.edges if len(edge.link_faces) == 1]
+            manual = (
+                _fill_simple_boundary_loops(bm, maximum_loop_sides=maximum_boundary_loop_sides)
+                if boundary_after_fill
+                else []
+            )
+            created_faces += len(manual)
+            if created_faces > maximum_created_faces:
+                raise RuntimeError("topology repair exceeds the bounded created-face limit")
+            boundary_after = sum(len(edge.link_faces) == 1 for edge in bm.edges)
+            non_manifold_after = sum(len(edge.link_faces) > 2 for edge in bm.edges)
+            iterations.append(
+                {
+                    "iteration": iteration,
+                    "removed_faces": len(rejected),
+                    "boundary_before": len(boundary_before),
+                    "filled_faces": len(filled),
+                    "manual_loop_faces": len(manual),
+                    "boundary_after": boundary_after,
+                    "non_manifold_after": non_manifold_after,
+                }
+            )
+            if boundary_after == 0 and non_manifold_after == 0:
+                break
+            if not rejected and not filled and not manual:
+                break
+
+        bmesh.ops.recalc_face_normals(bm, faces=list(bm.faces))
+        bm.verts.ensure_lookup_table()
+        bm.faces.ensure_lookup_table()
+        coordinate_digest_after = _coordinate_digest(bm)
+        quad_faces = sum(len(face.verts) == 4 for face in bm.faces)
+        nonquad_faces = len(bm.faces) - quad_faces
+        quad_fraction = quad_faces / max(len(bm.faces), 1)
+        boundary_edges = sum(len(edge.link_faces) == 1 for edge in bm.edges)
+        non_manifold_edges = sum(len(edge.link_faces) > 2 for edge in bm.edges)
+        vertex_coordinates_unchanged = (
+            len(bm.verts) == vertices_before and coordinate_digest_after == coordinate_digest_before
+        )
+        topology_gate_passed = (
+            boundary_edges == 0
+            and non_manifold_edges == 0
+            and vertex_coordinates_unchanged
+            and quad_fraction >= minimum_quad_fraction
+        )
+        result = {
+            "operation": "quad_dominant_manifold_repair",
+            "minimum_quad_fraction": minimum_quad_fraction,
+            "maximum_removed_faces": maximum_removed_faces,
+            "maximum_created_faces": maximum_created_faces,
+            "maximum_boundary_loop_sides": maximum_boundary_loop_sides,
+            "vertices_before": vertices_before,
+            "faces_before": faces_before,
+            "vertices_after": len(bm.verts),
+            "faces_after": len(bm.faces),
+            "quad_faces": quad_faces,
+            "nonquad_faces": nonquad_faces,
+            "quad_fraction": quad_fraction,
+            "boundary_edges": boundary_edges,
+            "non_manifold_edges": non_manifold_edges,
+            "removed_faces": removed_faces,
+            "created_faces": created_faces,
+            "vertex_coordinate_sha256_before": coordinate_digest_before,
+            "vertex_coordinate_sha256_after": coordinate_digest_after,
+            "vertex_coordinates_unchanged": vertex_coordinates_unchanged,
+            "topology_gate_passed": topology_gate_passed,
+            "iterations": iterations,
+        }
+        bm.to_mesh(obj.data)
+        obj.data.update()
+        return result
+    finally:
+        bm.free()
+
+
 def _scene_bounds() -> tuple[Vector, Vector]:
     points = [obj.matrix_world @ Vector(corner) for obj in _mesh_objects() for corner in obj.bound_box]
     minimum = Vector(tuple(min(point[axis] for point in points) for axis in range(3)))
@@ -292,6 +480,31 @@ def render_diagnostics(output_root: Path, prefix: str, *, size: int = 512) -> li
 
 def _write_json(path: Path, value: object) -> None:
     path.write_text(json.dumps(value, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
+
+def _triangulate_scene_for_export() -> None:
+    for obj in _mesh_objects():
+        source_mesh = obj.data
+        vertices = [tuple(vertex.co) for vertex in source_mesh.vertices]
+        triangles: list[tuple[int, int, int]] = []
+        for polygon in source_mesh.polygons:
+            indices = list(polygon.vertices)
+            if len(indices) == 3:
+                triangles.append(tuple(indices))
+                continue
+            center = sum((Vector(vertices[index]) for index in indices), Vector()) / len(indices)
+            center_index = len(vertices)
+            vertices.append(tuple(center))
+            triangles.extend(
+                (index, indices[(offset + 1) % len(indices)], center_index)
+                for offset, index in enumerate(indices)
+            )
+        export_mesh = bpy.data.meshes.new(f"{source_mesh.name}_ExportTriangles")
+        export_mesh.from_pydata(vertices, [], triangles)
+        export_mesh.update()
+        obj.data = export_mesh
+        if source_mesh.users == 0:
+            bpy.data.meshes.remove(source_mesh)
 
 
 def _read_render_pixels(path: Path) -> tuple[tuple[int, int], array]:
@@ -387,12 +600,31 @@ def execute(request: dict[str, object]) -> tuple[list[dict[str, object]], dict[s
     outputs.extend(_output(path, "image/png", f"source_{path.stem.rsplit('_', 1)[-1]}") for path in source_renders)
     warnings = ["Fixed camera labels describe Blender world axes; human confirmation of semantic front/back is required."]
 
-    if operation_id in {"blender.repair", "blender.export"}:
+    if operation_id in {"blender.repair", "blender.repair_retopology", "blender.export"}:
         component_policy = str(parameters.get("component_policy", "none"))
         weld_distance = float(parameters.get("weld_distance", 0.0))
         if not 0 <= weld_distance <= 0.01:
             raise ValueError("weld_distance must be between zero and 0.01")
-        if component_policy == "keep_largest":
+        if operation_id == "blender.repair_retopology":
+            minimum_quad_fraction = float(parameters.get("minimum_quad_fraction", 0.99))
+            maximum_removed_faces = int(parameters.get("maximum_removed_faces", 16))
+            maximum_created_faces = int(parameters.get("maximum_created_faces", 16))
+            maximum_boundary_loop_sides = int(parameters.get("maximum_boundary_loop_sides", 64))
+            if not 0.95 <= minimum_quad_fraction <= 1.0:
+                raise ValueError("minimum_quad_fraction must be between 0.95 and 1.0")
+            if not 0 <= maximum_removed_faces <= 128:
+                raise ValueError("maximum_removed_faces must be between zero and 128")
+            if not 0 <= maximum_created_faces <= 128:
+                raise ValueError("maximum_created_faces must be between zero and 128")
+            if not 3 <= maximum_boundary_loop_sides <= 256:
+                raise ValueError("maximum_boundary_loop_sides must be between 3 and 256")
+            repair = repair_quad_dominant_manifold(
+                minimum_quad_fraction=minimum_quad_fraction,
+                maximum_removed_faces=maximum_removed_faces,
+                maximum_created_faces=maximum_created_faces,
+                maximum_boundary_loop_sides=maximum_boundary_loop_sides,
+            )
+        elif component_policy == "keep_largest":
             repair = keep_largest_component(weld_distance=weld_distance)
         elif component_policy == "none":
             repair = {"operation": "none", "before": source_analysis, "after": source_analysis}
@@ -404,10 +636,13 @@ def execute(request: dict[str, object]) -> tuple[list[dict[str, object]], dict[s
         candidate_checkpoint = output_root / "candidate.blend"
         _remove_diagnostic_objects()
         bpy.ops.wm.save_as_mainfile(filepath=str(candidate_checkpoint))
+        _triangulate_scene_for_export()
+        pre_export_analysis = analyze_scene()
         candidate_glb = output_root / "candidate.glb"
         bpy.ops.export_scene.gltf(
             filepath=str(candidate_glb),
             export_format="GLB",
+            export_materials="NONE",
             export_normals=False,
             export_tangents=False,
             export_shared_accessors=True,
@@ -436,16 +671,24 @@ def execute(request: dict[str, object]) -> tuple[list[dict[str, object]], dict[s
         export_validation = {
             "schema_version": 1,
             "hard_gate_passed": export_hard_gate_passed,
+            "pre_export_analysis": pre_export_analysis,
             "analysis": export_analysis,
         }
         export_validation_path = output_root / "export_validation.json"
         _write_json(export_validation_path, export_validation)
         repair["export_validation"] = export_validation
+        repair["automatic_promotion_gate_passed"] = (
+            export_hard_gate_passed
+            and bool(comparison["automatic_visual_gate_passed"])
+            and bool(repair.get("topology_gate_passed", True))
+        )
         _write_json(repair_path, repair)
         if not export_hard_gate_passed:
             raise RuntimeError("exported candidate failed Blender topology hard gates")
         if not bool(comparison["automatic_visual_gate_passed"]):
             raise RuntimeError("candidate exceeded the locked visual-change budget")
+        if not bool(repair.get("topology_gate_passed", True)):
+            raise RuntimeError("candidate failed the bounded quad-dominant topology gate")
         outputs.extend(
             [
                 _output(repair_path, "application/json", "repair_report"),

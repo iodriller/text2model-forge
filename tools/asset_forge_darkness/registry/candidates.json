@@ -84,6 +84,7 @@
         "Blender's GPL applies to the application, not artwork created with it; Darkness records Blender as a tool ancestor without applying GPL to generated game assets.",
         "Live Blender 4.5.11 LTS qualification passed through the Microsoft Store launcher on 2026-07-12.",
         "The first bounded repair retains only the largest connected surface and always requires human identity approval.",
+        "The bounded quad-dominant retopology repair removes at most the declared face budget, never moves source vertices, and requires at least 99% quads plus structural, visual, export, and human gates.",
         "GLB export omits normals to preserve shared topology; downstream import must calculate/author approved normals before release.",
         "Microsoft Store launcher process-tree cancellation is not qualified, so supports_cancel remains false."
       ]

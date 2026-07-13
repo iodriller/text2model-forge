@@ -16,6 +16,8 @@ The implemented foundation provides:
   hash-chained resumable event log;
 - a qualified Blender 4.5.11 LTS background worker with strict analyze/repair/render/export operations,
   source-preserving checkpoints, fixed-view visual comparison, and fail-closed GLB export re-import validation;
+- a bounded Blender quad-dominant repair that removes only a declared face budget, never moves source vertices, stages
+  a 99%+ quad editable checkpoint, and validates a separately triangulated GLB export copy;
 - an AutoRemesher 1.0.0 D2b research worker with immutable-source hashing, bounded CLI parameters, polygon-aware OBJ
   analysis, and separate structural/all-quad promotion gates; the first real TripoSG result is correctly rejected;
 - a deterministic Instant Meshes D2b second-opinion worker pinned by source/binary digest; its pure-quad TripoSG result
@@ -75,6 +77,11 @@ python tools/asset_forge_darkness/adapters/build_blender_request.py `
   --input C:/path/candidate.glb --output-directory C:/path/blender-evidence `
   --out C:/path/blender-request.json --job-id blender.example.v1 --operation-id blender.repair
 python -m darkness run-worker --worker-id blender --request C:/path/blender-request.json
+python tools/asset_forge_darkness/adapters/build_blender_request.py `
+  --input C:/path/autoremesher-candidate.obj --output-directory C:/path/repaired-evidence `
+  --out C:/path/repair-request.json --job-id blender.retopology.repair.v1 `
+  --operation-id blender.repair_retopology --minimum-quad-fraction 0.99
+python -m darkness run-worker --worker-id blender --request C:/path/repair-request.json
 python tools/asset_forge_darkness/adapters/build_retopology_request.py `
   --input C:/path/normalized-source.obj --output-directory C:/path/retopology-evidence `
   --out C:/path/retopology-request.json --job-id autoremesher.example.v1 --target-quads 50000
@@ -100,7 +107,9 @@ Repeated identical jobs also differed, so this worker is not claimed determinist
 
 Instant Meshes is the independent second opinion. With deterministic mode and one thread, repeated outputs were
 bit-identical and pure quad, but the calibrated ~49k-face result had 30 components and 454 boundary edges. It is also
-rejected. AutoRemesher's one-component, closed, 99.15%-quad branch is the stronger bounded-repair starting point.
+rejected. AutoRemesher's branch was the stronger bounded-repair starting point. Blender's bounded pass now stages a
+one-component, closed, 99.37%-quad checkpoint with unchanged source vertex coordinates and a structurally valid GLB.
+Automatic gates pass, but human identity and deformation approval are still required before rigging.
 
 Machine-specific worker commands belong in ignored `config.local.json`; use `config.example.json` as the template.
 

@@ -119,6 +119,20 @@ def test_instant_meshes_qualification_records_deterministic_rejected_candidate()
     assert record.observed["source_overwritten"] is False
 
 
+def test_blender_retopology_repair_qualification_records_staged_gate_pass() -> None:
+    path = ROOT / "qualifications" / "blender-4.5.11_retopology_repair_windows.json"
+    record = WorkerRuntimeQualification.model_validate_json(path.read_text(encoding="utf-8"))
+    assert record.status == "passed"
+    assert record.observed["quad_fraction"] > 0.99
+    assert record.observed["connected_components"] == 1
+    assert record.observed["boundary_edges"] == 0
+    assert record.observed["non_manifold_edges"] == 0
+    assert record.observed["vertex_coordinates_unchanged"] is True
+    assert record.observed["automatic_promotion_gate_passed"] is True
+    assert record.observed["human_approved"] is False
+    assert record.observed["source_overwritten"] is False
+
+
 def test_canonical_qualification_records_passing_skin_stress_and_missing_fit() -> None:
     path = ROOT / "qualifications" / "canonical-short-biped-v1.json"
     record = WorkerRuntimeQualification.model_validate_json(path.read_text(encoding="utf-8"))

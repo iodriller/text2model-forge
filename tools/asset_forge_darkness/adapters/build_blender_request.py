@@ -29,11 +29,15 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--job-id", required=True)
     parser.add_argument("--run-id", default="blender.smoke.run.v1")
     parser.add_argument("--artifact-id", default="geometry.blender.input.v1")
-    parser.add_argument("--operation-id", choices=("blender.analyze", "blender.repair", "blender.export"), default="blender.analyze")
+    parser.add_argument("--operation-id", choices=("blender.analyze", "blender.repair", "blender.repair_retopology", "blender.export"), default="blender.analyze")
     parser.add_argument("--component-policy", choices=("none", "keep_largest"), default="none")
     parser.add_argument("--weld-distance", type=float, default=0.0)
     parser.add_argument("--render-size", type=int, default=512)
     parser.add_argument("--maximum-material-change-fraction", type=float, default=0.02)
+    parser.add_argument("--minimum-quad-fraction", type=float, default=0.99)
+    parser.add_argument("--maximum-removed-faces", type=int, default=16)
+    parser.add_argument("--maximum-created-faces", type=int, default=16)
+    parser.add_argument("--maximum-boundary-loop-sides", type=int, default=64)
     args = parser.parse_args(argv)
 
     source = args.input.resolve()
@@ -72,6 +76,10 @@ def main(argv: list[str] | None = None) -> int:
             "weld_distance": args.weld_distance,
             "render_size": args.render_size,
             "maximum_material_change_fraction": args.maximum_material_change_fraction,
+            "minimum_quad_fraction": args.minimum_quad_fraction,
+            "maximum_removed_faces": args.maximum_removed_faces,
+            "maximum_created_faces": args.maximum_created_faces,
+            "maximum_boundary_loop_sides": args.maximum_boundary_loop_sides,
         },
         output_directory=str(args.output_directory.resolve()),
     )
