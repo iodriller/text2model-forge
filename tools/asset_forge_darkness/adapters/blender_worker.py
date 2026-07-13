@@ -21,6 +21,7 @@ SUPPORTED_OPERATIONS = {
     "blender.repair",
     "blender.repair_retopology",
     "blender.propose_short_biped_rig",
+    "blender.author_short_biped_motion",
     "blender.render_diagnostics",
     "blender.export",
 }
@@ -419,6 +420,25 @@ SHORT_BIPED_BONES = (
     ("foot_r", "ankle_r", "foot_r", "toe_r"),
 )
 
+WEIGHT_JOINT_PAIRS = {
+    "shoulders": (
+        ("shoulder_l", "chest", "shoulder_l"),
+        ("shoulder_r", "chest", "shoulder_r"),
+    ),
+    "elbows": (
+        ("elbow_l", "shoulder_l", "elbow_l"),
+        ("elbow_r", "shoulder_r", "elbow_r"),
+    ),
+    "hips": (
+        ("hip_l", "hips", "hip_l"),
+        ("hip_r", "hips", "hip_r"),
+    ),
+    "knees": (
+        ("knee_l", "hip_l", "knee_l"),
+        ("knee_r", "hip_r", "knee_r"),
+    ),
+}
+
 
 def _nearest_vertex(points: list[Vector], target: Vector) -> tuple[int, Vector, float]:
     index = min(range(len(points)), key=lambda item: (points[item] - target).length_squared)
@@ -426,7 +446,9 @@ def _nearest_vertex(points: list[Vector], target: Vector) -> tuple[int, Vector, 
     return index, point, (point - target).length
 
 
-def infer_short_biped_landmarks() -> dict[str, object]:
+def infer_short_biped_landmarks(
+    normalized_adjustments: dict[str, list[float]] | None = None,
+) -> dict[str, object]:
     objects = _mesh_objects()
     if len(objects) != 1:
         raise ValueError("short-biped landmark inference requires exactly one mesh object")
@@ -471,6 +493,19 @@ def infer_short_biped_landmarks() -> dict[str, object]:
         "foot_r": point(0.15, -0.04, 0.055),
         "toe_r": point(0.15, -0.43, 0.035),
     }
+    adjustments = normalized_adjustments or {}
+    unknown = sorted(set(adjustments) - set(landmarks))
+    if unknown:
+        raise ValueError(f"unknown short-biped landmarks in adjustment: {unknown}")
+    for name, values in adjustments.items():
+        if not isinstance(values, list) or len(values) != 3:
+            raise ValueError(f"landmark adjustment for {name} must contain exactly three values")
+        normalized = Vector(tuple(float(value) for value in values))
+        if any(not math.isfinite(value) or abs(value) > 0.08 for value in normalized):
+            raise ValueError(f"landmark adjustment for {name} exceeds the cumulative 8% bound")
+        landmarks[name] += Vector(
+            (normalized.x * extents.x, normalized.y * extents.y, normalized.z * extents.z)
+        )
     surface_targets = {
         "crown": point(0.0, -0.02, 1.0),
         "palm_l": point(-0.50, -0.20, 0.31),
@@ -509,6 +544,7 @@ def infer_short_biped_landmarks() -> dict[str, object]:
     return {
         "schema_version": 1,
         "method": "bounded_short_biped_proportions_v1",
+        "normalized_adjustments": adjustments,
         "coordinate_system": "Blender Z-up; X left/right; -Y semantic front",
         "bounds": {"minimum": list(minimum), "maximum": list(maximum), "extents": list(extents)},
         "landmarks": {name: list(value) for name, value in landmarks.items()},
@@ -564,31 +600,12 @@ def _create_short_biped_armature(landmark_report: dict[str, object]) -> bpy.type
     return armature
 
 
-def _bind_short_biped_weights_bone_heat(
+def _skinning_report(
     obj: bpy.types.Object,
     armature: bpy.types.Object,
+    *,
+    method: str,
 ) -> dict[str, object]:
-    for group in list(obj.vertex_groups):
-        obj.vertex_groups.remove(group)
-    for modifier in list(obj.modifiers):
-        if modifier.type == "ARMATURE":
-            obj.modifiers.remove(modifier)
-    obj.parent = None
-    bpy.ops.object.select_all(action="DESELECT")
-    obj.select_set(True)
-    armature.select_set(True)
-    bpy.context.view_layer.objects.active = armature
-    result = bpy.ops.object.parent_set(type="ARMATURE_AUTO")
-    if "FINISHED" not in result:
-        raise RuntimeError("Blender bone-heat weighting did not finish")
-    bpy.ops.object.select_all(action="DESELECT")
-    obj.select_set(True)
-    bpy.context.view_layer.objects.active = obj
-    bpy.ops.object.vertex_group_clean(group_select_mode="ALL", limit=1e-6, keep_single=True)
-    bpy.ops.object.vertex_group_limit_total(group_select_mode="ALL", limit=4)
-    bpy.ops.object.vertex_group_normalize_all(group_select_mode="ALL", lock_active=False)
-    bpy.context.view_layer.update()
-
     counts = [len(vertex.groups) for vertex in obj.data.vertices]
     sums = [sum(element.weight for element in vertex.groups) for vertex in obj.data.vertices]
     weights = [element.weight for vertex in obj.data.vertices for element in vertex.groups]
@@ -606,7 +623,7 @@ def _bind_short_biped_weights_bone_heat(
         hard_failures.append("missing_deform_bone_groups")
     return {
         "schema_version": 1,
-        "method": "blender_bone_heat_pruned_to_four_v1",
+        "method": method,
         "vertices": len(obj.data.vertices),
         "bones": len(deform_bone_names),
         "minimum_influences": min(counts, default=0),
@@ -681,6 +698,8 @@ def _evaluated_pose_report(
             "collapsed_faces": collapsed_faces,
             "severely_compressed_faces": severely_compressed_faces,
             "maximum_vertex_displacement": maximum_displacement,
+            "bounds_minimum": list(minimum),
+            "bounds_maximum": list(maximum),
             "bounds_extents": list(extents),
             "hard_failures": hard_failures,
             "gate_passed": not hard_failures,
@@ -695,15 +714,24 @@ def _run_short_biped_rig_probe(
     *,
     render_size: int,
     maximum_material_change_fraction: float,
+    landmark_adjustments: dict[str, list[float]],
+    weight_adjustments: list[dict[str, object]],
 ) -> tuple[list[dict[str, object]], dict[str, object], list[str]]:
     obj = _mesh_objects()[0]
     coordinate_digest_before = _mesh_coordinate_digest(obj)
     topology_digest_before = _mesh_topology_digest(obj)
-    landmark_report = infer_short_biped_landmarks()
+    landmark_report = infer_short_biped_landmarks(landmark_adjustments)
     if not bool(landmark_report["landmark_gate_passed"]):
         raise RuntimeError("short-biped landmark proposal failed its automatic gate")
     armature = _create_short_biped_armature(landmark_report)
     skinning_report = _bind_short_biped_weights_bone_heat(obj, armature)
+    if weight_adjustments:
+        skinning_report = _apply_weight_redistributions(
+            obj,
+            armature,
+            landmark_report,
+            weight_adjustments,
+        )
     coordinate_digest_after = _mesh_coordinate_digest(obj)
     topology_digest_after = _mesh_topology_digest(obj)
     skinning_report["vertex_coordinates_unchanged"] = coordinate_digest_before == coordinate_digest_after
@@ -868,6 +896,559 @@ def _run_short_biped_rig_probe(
         "This is a staged deformation probe on generated topology, not an approved canonical production mesh.",
         "Proportional joint centers and pruned Blender bone-heat weights require visual review and corrective refinement.",
         "Self-collision, twist distribution, facial deformation, clothing rigidity, and motion contacts are not yet gated.",
+    ]
+    return outputs, diagnostics, warnings
+
+
+def _short_biped_motion_specs() -> dict[str, dict[str, object]]:
+    return {
+        "idle": {
+            "loop": True,
+            "poses": [
+                {"frame": 1},
+                {"frame": 13, "hips_location": (0.0, 0.0, 0.012), "rotations": (("chest", (1, 0, 0), 2.0),)},
+                {"frame": 25},
+            ],
+        },
+        "walk": {
+            "loop": True,
+            "poses": [
+                {"frame": 1},
+                {
+                    "frame": 7,
+                    "hips_location": (0.0, 0.0, 0.01),
+                    "rotations": (
+                        ("hip_l", (1, 0, 0), -25.0),
+                        ("knee_l", (1, 0, 0), 38.0),
+                        ("shoulder_l", (1, 0, 0), 18.0),
+                        ("shoulder_r", (1, 0, 0), -18.0),
+                    ),
+                },
+                {"frame": 13},
+                {
+                    "frame": 19,
+                    "hips_location": (0.0, 0.0, 0.01),
+                    "rotations": (
+                        ("hip_r", (1, 0, 0), -25.0),
+                        ("knee_r", (1, 0, 0), 38.0),
+                        ("shoulder_l", (1, 0, 0), -18.0),
+                        ("shoulder_r", (1, 0, 0), 18.0),
+                    ),
+                },
+                {"frame": 25},
+            ],
+        },
+        "attack": {
+            "loop": False,
+            "poses": [
+                {"frame": 1},
+                {
+                    "frame": 7,
+                    "rotations": (
+                        ("chest", (0, 0, 1), -8.0),
+                        ("shoulder_r", (0, 1, 0), 15.0),
+                    ),
+                },
+                {
+                    "frame": 14,
+                    "rotations": (
+                        ("chest", (0, 0, 1), 12.0),
+                        ("shoulder_r", (0, 1, 0), -65.0),
+                        ("elbow_r", (1, 0, 0), -75.0),
+                    ),
+                },
+                {
+                    "frame": 20,
+                    "rotations": (
+                        ("shoulder_r", (0, 1, 0), -25.0),
+                        ("elbow_r", (1, 0, 0), -30.0),
+                    ),
+                },
+                {"frame": 25},
+            ],
+        },
+        "hit": {
+            "loop": False,
+            "poses": [
+                {"frame": 1},
+                {
+                    "frame": 6,
+                    "hips_location": (0.045, 0.025, 0.0),
+                    "rotations": (
+                        ("hips", (0, 0, 1), 10.0),
+                        ("chest", (0, 0, 1), 25.0),
+                        ("head", (0, 0, 1), -15.0),
+                        ("shoulder_l", (0, 1, 0), 12.0),
+                        ("shoulder_r", (0, 1, 0), -12.0),
+                    ),
+                },
+                {"frame": 12, "rotations": (("chest", (0, 0, 1), -6.0),)},
+                {"frame": 19},
+            ],
+        },
+        "death": {
+            "loop": False,
+            "poses": [
+                {"frame": 1},
+                {
+                    "frame": 12,
+                    "hips_location": (0.08, 0.0, -0.08),
+                    "rotations": (("hips", (0, 1, 0), -28.0), ("head", (0, 1, 0), 8.0)),
+                },
+                {
+                    "frame": 24,
+                    "hips_location": (0.28, 0.0, -0.34),
+                    "rotations": (("hips", (0, 1, 0), -65.0), ("head", (0, 1, 0), 12.0)),
+                },
+                {
+                    "frame": 36,
+                    "hips_location": (0.38, 0.0, -0.65),
+                    "rotations": (("hips", (0, 1, 0), -88.0),),
+                },
+            ],
+        },
+    }
+
+
+def _bind_short_biped_weights_bone_heat(
+    obj: bpy.types.Object,
+    armature: bpy.types.Object,
+) -> dict[str, object]:
+    for group in list(obj.vertex_groups):
+        obj.vertex_groups.remove(group)
+    for modifier in list(obj.modifiers):
+        if modifier.type == "ARMATURE":
+            obj.modifiers.remove(modifier)
+    obj.parent = None
+    bpy.ops.object.select_all(action="DESELECT")
+    obj.select_set(True)
+    armature.select_set(True)
+    bpy.context.view_layer.objects.active = armature
+    result = bpy.ops.object.parent_set(type="ARMATURE_AUTO")
+    if "FINISHED" not in result:
+        raise RuntimeError("Blender bone-heat weighting did not finish")
+    bpy.ops.object.select_all(action="DESELECT")
+    obj.select_set(True)
+    bpy.context.view_layer.objects.active = obj
+    bpy.ops.object.vertex_group_clean(group_select_mode="ALL", limit=1e-6, keep_single=True)
+    bpy.ops.object.vertex_group_limit_total(group_select_mode="ALL", limit=4)
+    bpy.ops.object.vertex_group_normalize_all(group_select_mode="ALL", lock_active=False)
+    bpy.context.view_layer.update()
+    return _skinning_report(obj, armature, method="blender_bone_heat_pruned_to_four_v1")
+
+
+def _vertex_group_weight(group: bpy.types.VertexGroup, vertex_index: int) -> float:
+    try:
+        return float(group.weight(vertex_index))
+    except RuntimeError:
+        return 0.0
+
+
+def _apply_weight_redistributions(
+    obj: bpy.types.Object,
+    armature: bpy.types.Object,
+    landmark_report: dict[str, object],
+    adjustments: list[dict[str, object]],
+) -> dict[str, object]:
+    landmarks = {name: Vector(value) for name, value in dict(landmark_report["landmarks"]).items()}
+    extents = Vector(landmark_report["bounds"]["extents"])
+    height = float(extents.z)
+    records: list[dict[str, object]] = []
+    for index, raw in enumerate(adjustments):
+        if not isinstance(raw, dict):
+            raise ValueError(f"weight adjustment {index} must be an object")
+        unknown = sorted(
+            set(raw) - {"joint_pair", "direction", "transfer_fraction", "radius_fraction"}
+        )
+        if unknown:
+            raise ValueError(f"weight adjustment {index} has unknown fields: {unknown}")
+        joint_pair = str(raw.get("joint_pair", ""))
+        direction = str(raw.get("direction", ""))
+        transfer_fraction = float(raw.get("transfer_fraction", 0.0))
+        radius_fraction = float(raw.get("radius_fraction", 0.0))
+        if joint_pair not in WEIGHT_JOINT_PAIRS:
+            raise ValueError(f"unsupported weight joint pair: {joint_pair}")
+        if direction not in {"parent_to_child", "child_to_parent"}:
+            raise ValueError(f"unsupported weight transfer direction: {direction}")
+        if not 0.025 <= transfer_fraction <= 0.15:
+            raise ValueError("weight transfer_fraction must be between 0.025 and 0.15")
+        if not 0.03 <= radius_fraction <= 0.12:
+            raise ValueError("weight radius_fraction must be between 0.03 and 0.12")
+        radius = height * radius_fraction
+        affected_vertices: set[int] = set()
+        transferred_weight = 0.0
+        for landmark_name, parent_name, child_name in WEIGHT_JOINT_PAIRS[joint_pair]:
+            parent_group = obj.vertex_groups.get(parent_name)
+            child_group = obj.vertex_groups.get(child_name)
+            if parent_group is None or child_group is None:
+                raise RuntimeError(
+                    f"weight redistribution requires groups {parent_name} and {child_name}"
+                )
+            donor = parent_group if direction == "parent_to_child" else child_group
+            receiver = child_group if direction == "parent_to_child" else parent_group
+            center = landmarks[landmark_name]
+            for vertex in obj.data.vertices:
+                distance = (obj.matrix_world @ vertex.co - center).length
+                if distance >= radius:
+                    continue
+                falloff = 1.0 - distance / radius
+                donor_weight = _vertex_group_weight(donor, vertex.index)
+                if donor_weight <= 0:
+                    continue
+                amount = donor_weight * transfer_fraction * falloff
+                receiver_weight = _vertex_group_weight(receiver, vertex.index)
+                donor.add([vertex.index], donor_weight - amount, "REPLACE")
+                receiver.add([vertex.index], receiver_weight + amount, "REPLACE")
+                affected_vertices.add(vertex.index)
+                transferred_weight += amount
+        records.append(
+            {
+                "joint_pair": joint_pair,
+                "direction": direction,
+                "transfer_fraction": transfer_fraction,
+                "radius_fraction": radius_fraction,
+                "affected_vertices": len(affected_vertices),
+                "transferred_weight": transferred_weight,
+            }
+        )
+    bpy.context.view_layer.objects.active = obj
+    bpy.ops.object.vertex_group_clean(group_select_mode="ALL", limit=1e-6, keep_single=True)
+    bpy.ops.object.vertex_group_limit_total(group_select_mode="ALL", limit=4)
+    bpy.ops.object.vertex_group_normalize_all(group_select_mode="ALL", lock_active=False)
+    bpy.context.view_layer.update()
+    report = _skinning_report(
+        obj,
+        armature,
+        method="blender_bone_heat_plus_bounded_joint_redistribution_v1",
+    )
+    report["weight_adjustments"] = records
+    return report
+
+
+def _apply_authored_pose(
+    armature: bpy.types.Object,
+    pose: dict[str, object],
+) -> None:
+    _clear_pose(armature)
+    for bone_name, axis, degrees in pose.get("rotations", ()):
+        _rotate_bone_world_axis(armature, bone_name, Vector(axis), float(degrees))
+    hips = armature.pose.bones["hips"]
+    world_offset = Vector(pose.get("hips_location", (0.0, 0.0, 0.0)))
+    hips.location = hips.bone.matrix_local.to_3x3().inverted() @ world_offset
+    bpy.context.view_layer.update()
+
+
+def _author_motion_actions(
+    armature: bpy.types.Object,
+    specs: dict[str, dict[str, object]],
+) -> dict[str, bpy.types.Action]:
+    if armature.animation_data is not None:
+        armature.animation_data_clear()
+    for action in list(bpy.data.actions):
+        bpy.data.actions.remove(action)
+    animation_data = armature.animation_data_create()
+    actions: dict[str, bpy.types.Action] = {}
+    for clip_name, spec in specs.items():
+        action = bpy.data.actions.new(name=clip_name)
+        action.use_fake_user = True
+        animation_data.action = action
+        for pose in spec["poses"]:
+            frame = int(pose["frame"])
+            bpy.context.scene.frame_set(frame)
+            _apply_authored_pose(armature, pose)
+            for bone in armature.pose.bones:
+                bone.keyframe_insert(data_path="rotation_quaternion", frame=frame, group=bone.name)
+                bone.keyframe_insert(data_path="location", frame=frame, group=bone.name)
+        action["darkness_clip"] = clip_name
+        action["darkness_loop"] = bool(spec["loop"])
+        actions[clip_name] = action
+    animation_data.action = None
+    bpy.context.scene.frame_set(0)
+    _clear_pose(armature)
+    return actions
+
+
+def _pose_snapshot(armature: bpy.types.Object) -> tuple[float, ...]:
+    return tuple(
+        float(value)
+        for bone in armature.pose.bones
+        for row in bone.matrix_basis
+        for value in row
+    )
+
+
+def _evaluate_action_frame(
+    armature: bpy.types.Object,
+    action: bpy.types.Action,
+    frame: int,
+) -> None:
+    armature.animation_data.action = action
+    bpy.context.scene.frame_set(frame)
+    bpy.context.view_layer.update()
+
+
+def _bone_tail_world(armature: bpy.types.Object, name: str) -> Vector:
+    return armature.matrix_world @ armature.pose.bones[name].tail
+
+
+def _glb_animation_names(path: Path) -> list[str]:
+    data = path.read_bytes()
+    if data[:4] != b"glTF" or len(data) < 20:
+        raise ValueError("exported animation artifact is not GLB 2.0")
+    json_length = int.from_bytes(data[12:16], "little")
+    if data[16:20] != b"JSON":
+        raise ValueError("GLB does not begin with a JSON chunk")
+    document = json.loads(data[20 : 20 + json_length].decode("utf-8"))
+    return sorted(str(item.get("name", "")) for item in document.get("animations", []))
+
+
+def _run_short_biped_motion(
+    output_root: Path,
+    *,
+    render_size: int,
+) -> tuple[list[dict[str, object]], dict[str, object], list[str]]:
+    armatures = [item for item in bpy.context.scene.objects if item.type == "ARMATURE"]
+    if len(armatures) != 1 or len(_mesh_objects()) != 1:
+        raise ValueError("short-biped motion authoring requires exactly one armature and one mesh")
+    armature = armatures[0]
+    obj = _mesh_objects()[0]
+    required_bones = {item[0] for item in SHORT_BIPED_BONES}
+    available_bones = {bone.name for bone in armature.data.bones}
+    missing_bones = sorted(required_bones - available_bones)
+    if missing_bones:
+        raise RuntimeError(f"motion rig is missing required bones: {missing_bones}")
+    if not any(modifier.type == "ARMATURE" and modifier.object == armature for modifier in obj.modifiers):
+        raise RuntimeError("motion mesh is not bound to the required armature")
+
+    coordinate_digest_before = _mesh_coordinate_digest(obj)
+    topology_digest_before = _mesh_topology_digest(obj)
+    rest_positions = [obj.matrix_world @ vertex.co for vertex in obj.data.vertices]
+    rest_areas = [polygon.area for polygon in obj.data.polygons]
+    height = max(point.z for point in rest_positions) - min(point.z for point in rest_positions)
+    rest_ground = min(point.z for point in rest_positions)
+    specs = _short_biped_motion_specs()
+    actions = _author_motion_actions(armature, specs)
+
+    clip_reports: dict[str, object] = {}
+    all_hard_failures: list[str] = []
+    for clip_name, spec in specs.items():
+        action = actions[clip_name]
+        keyframes = [int(pose["frame"]) for pose in spec["poses"]]
+        sample_frames = sorted(
+            set(keyframes + [(first + second) // 2 for first, second in zip(keyframes, keyframes[1:])])
+        )
+        pose_reports = []
+        for frame in sample_frames:
+            _evaluate_action_frame(armature, action, frame)
+            pose_reports.append(
+                _evaluated_pose_report(
+                    obj,
+                    pose_name=f"{clip_name}@{frame}",
+                    rest_positions=rest_positions,
+                    rest_areas=rest_areas,
+                )
+            )
+        loop_seam_error = None
+        if bool(spec["loop"]):
+            _evaluate_action_frame(armature, action, keyframes[0])
+            start = _pose_snapshot(armature)
+            _evaluate_action_frame(armature, action, keyframes[-1])
+            end = _pose_snapshot(armature)
+            loop_seam_error = max(abs(first - second) for first, second in zip(start, end))
+        hard_failures = [failure for report in pose_reports for failure in report["hard_failures"]]
+        minimum_z = min(float(report["bounds_minimum"][2]) for report in pose_reports)
+        maximum_ground_penetration = max(0.0, rest_ground - minimum_z)
+        if clip_name != "death" and maximum_ground_penetration > height * 0.02:
+            hard_failures.append("ground_penetration")
+        if loop_seam_error is not None and loop_seam_error > 1e-6:
+            hard_failures.append("loop_seam")
+        all_hard_failures.extend(f"{clip_name}:{failure}" for failure in hard_failures)
+        clip_reports[clip_name] = {
+            "frame_start": keyframes[0],
+            "frame_end": keyframes[-1],
+            "loop": bool(spec["loop"]),
+            "authored_keyframes": len(keyframes),
+            "sampled_frames": sample_frames,
+            "loop_seam_error": loop_seam_error,
+            "collapsed_faces": sum(int(report["collapsed_faces"]) for report in pose_reports),
+            "severely_compressed_faces": sum(int(report["severely_compressed_faces"]) for report in pose_reports),
+            "maximum_vertex_displacement": max(float(report["maximum_vertex_displacement"]) for report in pose_reports),
+            "minimum_z": minimum_z,
+            "final_minimum_z": float(pose_reports[-1]["bounds_minimum"][2]),
+            "maximum_ground_penetration": maximum_ground_penetration,
+            "hard_failures": hard_failures,
+            "gate_passed": not hard_failures,
+        }
+
+    walk = actions["walk"]
+    _evaluate_action_frame(armature, walk, 1)
+    rest_left_contact = _bone_tail_world(armature, "foot_l")
+    rest_right_contact = _bone_tail_world(armature, "foot_r")
+    _evaluate_action_frame(armature, walk, 7)
+    right_plant_error = (_bone_tail_world(armature, "foot_r") - rest_right_contact).length
+    _evaluate_action_frame(armature, walk, 19)
+    left_plant_error = (_bone_tail_world(armature, "foot_l") - rest_left_contact).length
+    maximum_walk_plant_error = max(left_plant_error, right_plant_error)
+    contact_gate_passed = maximum_walk_plant_error <= height * 0.01
+    if not contact_gate_passed:
+        all_hard_failures.append("walk:planted_foot_drift")
+    death_ground_error = abs(float(clip_reports["death"]["final_minimum_z"]) - rest_ground)
+    death_ground_gate_passed = death_ground_error <= height * 0.05
+    if not death_ground_gate_passed:
+        all_hard_failures.append("death:ground_settle")
+
+    evidence_frames = (
+        ("idle", 13),
+        ("walk", 7),
+        ("walk", 19),
+        ("attack", 14),
+        ("hit", 6),
+        ("death", 36),
+    )
+    evidence_renders: list[tuple[str, list[Path]]] = []
+    for clip_name, frame in evidence_frames:
+        _evaluate_action_frame(armature, actions[clip_name], frame)
+        prefix = f"motion_{clip_name}_{frame:03d}"
+        evidence_renders.append((prefix, render_diagnostics(output_root, prefix, size=render_size)))
+
+    armature.animation_data.action = None
+    bpy.context.scene.frame_set(0)
+    _clear_pose(armature)
+    _remove_diagnostic_objects()
+    coordinate_digest_after = _mesh_coordinate_digest(obj)
+    topology_digest_after = _mesh_topology_digest(obj)
+    if coordinate_digest_after != coordinate_digest_before:
+        all_hard_failures.append("rest_vertex_coordinates_changed")
+    if topology_digest_after != topology_digest_before:
+        all_hard_failures.append("rest_topology_changed")
+
+    required_clips = sorted(specs)
+    motion_contract = {
+        "schema_version": 1,
+        "anatomy_family": "short_biped_v1",
+        "frames_per_second": 24,
+        "clips": {
+            name: {
+                "frame_start": int(spec["poses"][0]["frame"]),
+                "frame_end": int(spec["poses"][-1]["frame"]),
+                "loop": bool(spec["loop"]),
+            }
+            for name, spec in specs.items()
+        },
+        "events": {"attack": [{"frame": 14, "event": "impact"}], "death": [{"frame": 36, "event": "settled"}]},
+        "contacts": {
+            "walk": [
+                {"frame": 7, "bone": "foot_r", "role": "planted"},
+                {"frame": 19, "bone": "foot_l", "role": "planted"},
+            ]
+        },
+    }
+    motion_report = {
+        "schema_version": 1,
+        "required_clips": required_clips,
+        "authored_clips": sorted(actions),
+        "clip_reports": clip_reports,
+        "walk_contact": {
+            "right_plant_error": right_plant_error,
+            "left_plant_error": left_plant_error,
+            "maximum_error": maximum_walk_plant_error,
+            "maximum_allowed": height * 0.01,
+            "gate_passed": contact_gate_passed,
+        },
+        "ground": {
+            "rest_height": rest_ground,
+            "death_final_minimum_z": clip_reports["death"]["final_minimum_z"],
+            "death_settle_error": death_ground_error,
+            "death_maximum_allowed": height * 0.05,
+            "death_gate_passed": death_ground_gate_passed,
+        },
+        "rest_vertex_coordinates_unchanged": coordinate_digest_after == coordinate_digest_before,
+        "rest_topology_unchanged": topology_digest_after == topology_digest_before,
+        "hard_failures": all_hard_failures,
+        "motion_gate_passed": not all_hard_failures,
+        "human_approval_required": True,
+        "human_approved": False,
+    }
+    contract_path = output_root / "motion_contract.json"
+    report_path = output_root / "motion_validation.json"
+    _write_json(contract_path, motion_contract)
+    _write_json(report_path, motion_report)
+
+    animated_blend = output_root / "animated_candidate.blend"
+    bpy.ops.wm.save_as_mainfile(filepath=str(animated_blend))
+    _triangulate_scene_for_export()
+    animated_glb = output_root / "animated_candidate.glb"
+    bpy.ops.export_scene.gltf(
+        filepath=str(animated_glb),
+        export_format="GLB",
+        export_materials="NONE",
+        export_normals=False,
+        export_tangents=False,
+        export_skins=True,
+        export_animations=True,
+        export_animation_mode="ACTIONS",
+        export_anim_single_armature=True,
+        export_reset_pose_bones=True,
+        export_anim_slide_to_zero=True,
+        export_rest_position_armature=True,
+        export_shared_accessors=True,
+    )
+    exported_animation_names = _glb_animation_names(animated_glb)
+    _import_asset(animated_glb)
+    export_primary = max(_mesh_objects(), key=lambda item: len(item.data.vertices))
+    export_primary_analysis, _ = _object_analysis(export_primary)
+    export_armatures = sum(item.type == "ARMATURE" for item in bpy.context.scene.objects)
+    export_skin_modifiers = sum(
+        modifier.type == "ARMATURE"
+        for mesh in _mesh_objects()
+        for modifier in mesh.modifiers
+    )
+    export_gate_passed = (
+        exported_animation_names == required_clips
+        and export_armatures == 1
+        and export_skin_modifiers == 1
+        and bool(export_primary_analysis["finite_coordinates"])
+        and int(export_primary_analysis["components"]) == 1
+        and int(export_primary_analysis["boundary_edges"]) == 0
+        and int(export_primary_analysis["non_manifold_edges"]) == 0
+    )
+    export_report = {
+        "schema_version": 1,
+        "animations": exported_animation_names,
+        "armatures": export_armatures,
+        "skin_modifiers": export_skin_modifiers,
+        "analysis": export_primary_analysis,
+        "gate_passed": export_gate_passed,
+    }
+    export_path = output_root / "animated_export_validation.json"
+    _write_json(export_path, export_report)
+    automatic_gate_passed = bool(motion_report["motion_gate_passed"]) and export_gate_passed
+    if not automatic_gate_passed:
+        raise RuntimeError("short-biped motion authoring failed an automatic gate")
+
+    outputs = [
+        _output(contract_path, "application/json", "motion_contract"),
+        _output(report_path, "application/json", "motion_validation"),
+        _output(export_path, "application/json", "animated_export_validation"),
+        _output(animated_blend, "application/x-blender", "animated_candidate_checkpoint"),
+        _output(animated_glb, "model/gltf-binary", "animated_candidate"),
+    ]
+    for prefix, paths in evidence_renders:
+        outputs.extend(
+            _output(path, "image/png", f"{prefix}_{path.stem.rsplit('_', 1)[-1]}")
+            for path in paths
+        )
+    diagnostics = {
+        "clips": len(actions),
+        "automatic_motion_gate_passed": automatic_gate_passed,
+        "maximum_walk_plant_error": maximum_walk_plant_error,
+        "human_approved": False,
+    }
+    warnings = [
+        "These are deterministic project-owned baseline clips, not human-approved final animation.",
+        "The unarmed attack is a timing/readability proof; weapon attachment and reach-target validation remain open.",
+        "Existing shoulder/armpit compression from the staged skin remains visible and requires corrective refinement.",
+        "Self-collision, ground penetration across interpolated frames, sprite readability, and Unity clip import are not yet fully gated.",
     ]
     return outputs, diagnostics, warnings
 
@@ -1105,14 +1686,34 @@ def execute(request: dict[str, object]) -> tuple[list[dict[str, object]], dict[s
         comparison_threshold = float(parameters.get("maximum_material_change_fraction", 0.02))
         if not 0 <= comparison_threshold <= 1:
             raise ValueError("maximum_material_change_fraction must be between zero and one")
+        raw_landmark_adjustments = parameters.get("landmark_adjustments", {})
+        if not isinstance(raw_landmark_adjustments, dict):
+            raise ValueError("landmark_adjustments must be an object")
+        landmark_adjustments = {
+            str(name): list(values) if isinstance(values, list) else values
+            for name, values in raw_landmark_adjustments.items()
+        }
+        raw_weight_adjustments = parameters.get("weight_adjustments", [])
+        if not isinstance(raw_weight_adjustments, list):
+            raise ValueError("weight_adjustments must be an array")
+        weight_adjustments = [dict(item) if isinstance(item, dict) else item for item in raw_weight_adjustments]
         probe_outputs, probe_diagnostics, probe_warnings = _run_short_biped_rig_probe(
             output_root,
             source_renders,
             render_size=render_size,
             maximum_material_change_fraction=comparison_threshold,
+            landmark_adjustments=landmark_adjustments,
+            weight_adjustments=weight_adjustments,
         )
         outputs.extend(probe_outputs)
         warnings.extend(probe_warnings)
+    elif operation_id == "blender.author_short_biped_motion":
+        motion_outputs, motion_diagnostics, motion_warnings = _run_short_biped_motion(
+            output_root,
+            render_size=render_size,
+        )
+        outputs.extend(motion_outputs)
+        warnings.extend(motion_warnings)
     elif operation_id in {"blender.repair", "blender.repair_retopology", "blender.export"}:
         component_policy = str(parameters.get("component_policy", "none"))
         weld_distance = float(parameters.get("weld_distance", 0.0))
@@ -1226,6 +1827,8 @@ def execute(request: dict[str, object]) -> tuple[list[dict[str, object]], dict[s
     }
     if operation_id == "blender.propose_short_biped_rig":
         diagnostics.update(probe_diagnostics)
+    elif operation_id == "blender.author_short_biped_motion":
+        diagnostics.update(motion_diagnostics)
     return outputs, diagnostics, warnings
 
 

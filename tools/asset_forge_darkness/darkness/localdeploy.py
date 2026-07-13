@@ -39,7 +39,13 @@ class LocalDeployStructuredClient(Generic[T]):
                 headers={"Authorization": f"Bearer {self.api_key}"},
                 json=payload,
             )
-            response.raise_for_status()
+            try:
+                response.raise_for_status()
+            except httpx.HTTPStatusError as exc:
+                detail = response.text.replace("\n", " ")[:1200]
+                raise RuntimeError(
+                    f"LocalDeploy HTTP {response.status_code}: {detail}"
+                ) from exc
             return response.json()
 
     def request(

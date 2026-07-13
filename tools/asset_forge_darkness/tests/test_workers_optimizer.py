@@ -8,6 +8,7 @@ import threading
 import time
 
 import pytest
+from pydantic import BaseModel, ConfigDict, Field
 
 from darkness.gpu import GpuLease, GpuLeaseBusy
 from darkness.localdeploy import LocalDeployStructuredClient
@@ -135,6 +136,9 @@ def test_optimizer_accepts_only_registered_operations() -> None:
     )
 
     def sender(payload):
+        prompt = payload["messages"][0]["content"][0]["text"]
+        assert "previous accepted and current attempted" in prompt
+        assert "hard numeric verdict is authoritative" in prompt
         proposal = {
             "schema_version": 1,
             "goal_satisfied": False,
@@ -155,12 +159,20 @@ def test_optimizer_accepts_only_registered_operations() -> None:
             "preserve": ["silhouette"],
             "confidence": 0.8,
             "request_human_review": False,
+            "comparison": {
+                "preferred": "current",
+                "visual_delta": 0.2,
+                "reason": "The current shoulder silhouette is less pinched.",
+            },
         }
         return {"choices": [{"message": {"content": json.dumps(proposal)}}]}
 
     client = LocalDeployStructuredClient(sender=sender)
     decision = LocalDeployOptimizer(client=client).diagnose(evidence, [operation])
     assert decision.proposals[0].operation_id == "geometry.smooth"
+    assert decision.comparison is not None
+    assert decision.comparison.preferred == "current"
+    assert decision.comparison.visual_delta == 0.2
 
     def bad_sender(payload):
         bad = json.loads(sender(payload)["choices"][0]["message"]["content"])
@@ -171,3 +183,128 @@ def test_optimizer_accepts_only_registered_operations() -> None:
         LocalDeployOptimizer(client=LocalDeployStructuredClient(sender=bad_sender)).diagnose(
             evidence, [operation]
         )
+
+
+def test_optimizer_rejects_out_of_bounds_registered_parameters() -> None:
+    class BoundedParameters(BaseModel):
+        model_config = ConfigDict(extra="forbid")
+        delta_fraction: float = Field(ge=-0.025, le=0.025)
+
+    operation = OperationDefinition(
+        operation_id="rig.adjust_landmark_pair",
+        worker_id="blender",
+        stages=[AssetStage.rig],
+        description="Move a landmark pair in a bounded trust region.",
+        output_media_type="application/json",
+        parameter_schema=BoundedParameters.model_json_schema(),
+    )
+    evidence = EvidenceBundle(
+        evidence_id="rig.shoulders.v1",
+        stage=AssetStage.rig,
+        goal="Reduce shoulder compression.",
+        items=[EvidenceItem(artifact_id="rig.shoulders.front", role="stress_render")],
+    )
+
+    def sender(payload):
+        return {
+            "choices": [
+                {
+                    "message": {
+                        "content": json.dumps(
+                            {
+                                "schema_version": 1,
+                                "goal_satisfied": False,
+                                "technical_score": 0.5,
+                                "proposals": [
+                                    {
+                                        "schema_version": 1,
+                                        "proposal_id": "proposal.shoulders.1",
+                                        "operation_id": "rig.adjust_landmark_pair",
+                                        "stage": AssetStage.rig.value,
+                                        "input_artifact_ids": ["rig.shoulders.front"],
+                                        "parameters": {"delta_fraction": 0.2},
+                                        "rationale": "Too large on purpose.",
+                                    }
+                                ],
+                                "confidence": 0.9,
+                            }
+                        )
+                    }
+                }
+            ]
+        }
+
+    optimizer = LocalDeployOptimizer(client=LocalDeployStructuredClient(sender=sender))
+    with pytest.raises(ValueError, match="invalid parameters"):
+        optimizer.diagnose(
+            evidence,
+            [operation],
+            parameter_models={"rig.adjust_landmark_pair": BoundedParameters},
+        )
+
+
+def test_optimizer_repairs_one_semantically_invalid_parameter_response() -> None:
+    class JointParameters(BaseModel):
+        model_config = ConfigDict(extra="forbid")
+        joint_pair: str = Field(pattern=r"^(shoulders|knees)$")
+
+    operation = OperationDefinition(
+        operation_id="skin.redistribute_joint_pair_weights",
+        worker_id="blender",
+        stages=[AssetStage.rig],
+        description="Transfer bounded joint weights.",
+        output_media_type="application/json",
+        parameter_schema=JointParameters.model_json_schema(),
+    )
+    evidence = EvidenceBundle(
+        evidence_id="rig.weights.v1",
+        stage=AssetStage.rig,
+        goal="Reduce shoulder compression.",
+        items=[EvidenceItem(artifact_id="rig.weights.front", role="stress_render")],
+    )
+    calls = 0
+
+    def sender(payload):
+        nonlocal calls
+        calls += 1
+        joint_pair = "legs" if calls == 1 else "shoulders"
+        if calls == 2:
+            correction = payload["messages"][0]["content"][-1]["text"]
+            assert "preceding decision was rejected" in correction
+            assert "joint_pair" in correction
+        return {
+            "choices": [
+                {
+                    "message": {
+                        "content": json.dumps(
+                            {
+                                "schema_version": 1,
+                                "goal_satisfied": False,
+                                "technical_score": 0.6,
+                                "proposals": [
+                                    {
+                                        "schema_version": 1,
+                                        "proposal_id": "proposal.weights.1",
+                                        "operation_id": operation.operation_id,
+                                        "stage": AssetStage.rig.value,
+                                        "input_artifact_ids": ["rig.weights.front"],
+                                        "parameters": {"joint_pair": joint_pair},
+                                        "rationale": "Bounded correction.",
+                                    }
+                                ],
+                                "confidence": 0.7,
+                            }
+                        )
+                    }
+                }
+            ]
+        }
+
+    optimizer = LocalDeployOptimizer(client=LocalDeployStructuredClient(sender=sender))
+    decision = optimizer.diagnose(
+        evidence,
+        [operation],
+        parameter_models={operation.operation_id: JointParameters},
+    )
+    assert calls == 2
+    assert decision.proposals[0].parameters["joint_pair"] == "shoulders"
