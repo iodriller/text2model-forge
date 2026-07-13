@@ -8,6 +8,7 @@ are then removed from the resulting checkpoint.
 from __future__ import annotations
 
 import argparse
+from collections import defaultdict, deque
 import hashlib
 import json
 import math
@@ -39,37 +40,47 @@ BONE_CHAINS = {
     "chest": ("spine_03",),
     "neck": ("neck_01",),
     "head": ("Head",),
-    "shoulder_l": ("clavicle_l", "upperarm_l"),
-    "elbow_l": ("lowerarm_l",),
-    "wrist_l": ("hand_l",),
-    "shoulder_r": ("clavicle_r", "upperarm_r"),
-    "elbow_r": ("lowerarm_r",),
-    "wrist_r": ("hand_r",),
-    "hip_l": ("thigh_l",),
-    "knee_l": ("calf_l",),
-    "ankle_l": ("foot_l",),
-    "foot_l": ("ball_l",),
-    "hip_r": ("thigh_r",),
-    "knee_r": ("calf_r",),
-    "ankle_r": ("foot_r",),
-    "foot_r": ("ball_r",),
+    # The research Darkness rig's historical suffixes describe its X side,
+    # while Quaternius uses anatomical sides. Match limbs by rest-space side
+    # rather than equal-looking suffixes: Quaternius right is negative X and
+    # therefore maps to the Darkness ``*_l`` chain.
+    "shoulder_l": ("clavicle_r", "upperarm_r"),
+    "elbow_l": ("lowerarm_r",),
+    "wrist_l": ("hand_r",),
+    "shoulder_r": ("clavicle_l", "upperarm_l"),
+    "elbow_r": ("lowerarm_l",),
+    "wrist_r": ("hand_l",),
+    "hip_l": ("thigh_r",),
+    "knee_l": ("calf_r",),
+    "ankle_l": ("foot_r",),
+    "foot_l": ("ball_r",),
+    "hip_r": ("thigh_l",),
+    "knee_r": ("calf_l",),
+    "ankle_r": ("foot_l",),
+    "foot_r": ("ball_l",),
 }
 
 CRITICAL_BONES = {
     "idle": ("hips", "chest", "head"),
     "walk": ("hips", "hip_l", "knee_l", "ankle_l", "hip_r", "knee_r", "ankle_r"),
-    "attack": ("hips", "chest", "shoulder_r", "elbow_r", "wrist_r"),
+    "attack": ("hips", "chest", "shoulder_l", "elbow_l", "wrist_l"),
     "death": ("hips", "spine", "chest", "neck", "head", "hip_l", "hip_r"),
 }
 
 EQUIPMENT = {
-    "iteration": 3,
+    "iteration": 8,
     "component_id": "darkness.club.short_biped.v1",
     "archetype": "one_handed_club",
     "socket": "hand_right",
-    "bone": "hand_r",
-    "rig_policy": "rigid_socket",
+    "bone": "hand_l",
+    "grip_socket_bone": "grip_socket_right",
+    "semantic_role": "source_anatomical_right_weapon_hand",
+    "source_weapon_bone": "hand_r",
+    "side_resolution_method": "source_motion_dominance_plus_rest_x_alignment_v1",
+    "rig_policy": "articulated_digit_grip_v1",
 }
+
+HANDLE_RADIUS_FRACTION = 0.018
 
 
 def _arguments() -> argparse.Namespace:
@@ -152,19 +163,533 @@ def _final_vertex_height(meshes: set[bpy.types.Object]) -> float:
     return max(point.z for point in points) - min(point.z for point in points)
 
 
+def _source_motion_hand_analysis(
+    source_armature: bpy.types.Object,
+    source_action: bpy.types.Action,
+    target_armature: bpy.types.Object,
+) -> dict[str, object]:
+    """Resolve the weapon side from motion and rest-space evidence.
+
+    Equal suffixes are not a sufficient side contract: the imported library's
+    anatomical right hand is negative X, while the current research Darkness
+    rig calls its negative-X hand ``hand_l``.  The dominant source hand is
+    found from the whole attack, then matched to the target hand on the same
+    rest-space X side.
+    """
+    source_armature.animation_data.action = source_action
+    start = int(math.ceil(float(source_action.frame_range[0])))
+    end = int(math.floor(float(source_action.frame_range[1])))
+    hands: dict[str, dict[str, object]] = {}
+    for name in ("hand_l", "hand_r"):
+        points: list[Vector] = []
+        rotations: list[float] = []
+        for frame in range(start, end + 1):
+            bpy.context.scene.frame_set(frame)
+            bpy.context.view_layer.update()
+            bone = source_armature.pose.bones[name]
+            points.append(source_armature.matrix_world @ bone.head)
+            rotations.append(float(bone.matrix_basis.to_quaternion().angle))
+        path_length = sum(
+            (points[index] - points[index - 1]).length for index in range(1, len(points))
+        )
+        rotation_range = max(rotations) - min(rotations)
+        bone_length = float(source_armature.data.bones[name].length)
+        score = path_length + bone_length * rotation_range
+        rest_x = float(
+            (source_armature.matrix_world @ source_armature.data.bones[name].head_local).x
+        )
+        hands[name] = {
+            "path_length": path_length,
+            "maximum_displacement": max((point - points[0]).length for point in points),
+            "rotation_range_radians": rotation_range,
+            "motion_score": score,
+            "rest_x": rest_x,
+        }
+
+    ranked = sorted(hands, key=lambda name: float(hands[name]["motion_score"]), reverse=True)
+    source_weapon = ranked[0]
+    source_x = float(hands[source_weapon]["rest_x"])
+    target_rest_x = {
+        name: float((target_armature.matrix_world @ target_armature.data.bones[name].head_local).x)
+        for name in ("hand_l", "hand_r")
+    }
+    target_weapon = min(
+        target_rest_x,
+        key=lambda name: (
+            0 if math.copysign(1.0, target_rest_x[name]) == math.copysign(1.0, source_x) else 1,
+            abs(target_rest_x[name]),
+        ),
+    )
+    primary_score = float(hands[ranked[0]]["motion_score"])
+    secondary_score = float(hands[ranked[1]]["motion_score"])
+    dominance_ratio = primary_score / max(secondary_score, 1e-9)
+    passed = (
+        source_weapon == EQUIPMENT["source_weapon_bone"]
+        and target_weapon == EQUIPMENT["bone"]
+        and dominance_ratio >= 1.15
+        and math.copysign(1.0, target_rest_x[target_weapon]) == math.copysign(1.0, source_x)
+    )
+    if not passed:
+        raise RuntimeError(
+            "weapon-hand resolution failed: "
+            f"source={source_weapon}, target={target_weapon}, dominance={dominance_ratio}"
+        )
+    return {
+        "source_action": source_action.name,
+        "source_hands": hands,
+        "selected_source_weapon_bone": source_weapon,
+        "selected_target_weapon_bone": target_weapon,
+        "target_rest_x": target_rest_x,
+        "dominance_ratio": dominance_ratio,
+        "automatic_gate_passed": passed,
+    }
+
+
+def _smoothstep(start: float, end: float, value: float) -> float:
+    if end <= start:
+        return float(value >= end)
+    normalized = max(0.0, min(1.0, (value - start) / (end - start)))
+    return normalized * normalized * (3.0 - 2.0 * normalized)
+
+
+def _build_articulated_grip(
+    armature: bpy.types.Object,
+    meshes: set[bpy.types.Object],
+    actions: dict[str, bpy.types.Action],
+    ranges: dict[str, tuple[int, int]],
+    body_height: float,
+    handle_radius: float,
+) -> dict[str, object]:
+    """Landmark, rig, skin, and pose the goblin's two modeled claws.
+
+    The generated target has two real topology branches but no digit bones.
+    Treating those branches as a generic vertex cloud produced a fist-shaped
+    blob.  This stage instead creates base/joint/tip landmarks, adds two deform
+    bones per branch, transfers only the local hand weights to those bones, and
+    solves a two-link wrap around a dedicated grip socket.  The closed pose is
+    baked into every equipped action, while the open rest topology remains
+    editable in the Blender master.
+    """
+    obj = max(meshes, key=lambda item: len(item.data.vertices))
+    bone_name = str(EQUIPMENT["bone"])
+    group = obj.vertex_groups.get(bone_name)
+    if group is None:
+        raise ValueError(f"weapon hand has no skin-weight group: {bone_name}")
+    bone = armature.data.bones[bone_name]
+    mesh_to_bone = bone.matrix_local.inverted() @ armature.matrix_world.inverted() @ obj.matrix_world
+    hand_matrix = bone.matrix_local.copy()
+    original_areas = [float(polygon.area) for polygon in obj.data.polygons]
+    local_positions = {vertex.index: mesh_to_bone @ vertex.co for vertex in obj.data.vertices}
+    skin_weights = {
+        vertex.index: next(
+            (element.weight for element in vertex.groups if element.group == group.index),
+            0.0,
+        )
+        for vertex in obj.data.vertices
+    }
+    adjacency: dict[int, set[int]] = defaultdict(set)
+    for edge in obj.data.edges:
+        first, second = edge.vertices
+        adjacency[first].add(second)
+        adjacency[second].add(first)
+
+    distal = {
+        index
+        for index, local in local_positions.items()
+        if skin_weights[index] >= 0.15 and local.y >= bone.length
+    }
+    unseen = set(distal)
+    distal_components: list[set[int]] = []
+    while unseen:
+        seed = unseen.pop()
+        component = {seed}
+        stack = [seed]
+        while stack:
+            current = stack.pop()
+            for neighbor in adjacency[current]:
+                if neighbor in unseen:
+                    unseen.remove(neighbor)
+                    component.add(neighbor)
+                    stack.append(neighbor)
+        if len(component) >= 20:
+            distal_components.append(component)
+    distal_components.sort(key=len, reverse=True)
+    if not 2 <= len(distal_components) <= 4:
+        raise RuntimeError(
+            f"grip topology did not resolve the expected goblin digit branches: "
+            f"{[len(component) for component in distal_components]}"
+        )
+
+    region = {
+        index
+        for index, local in local_positions.items()
+        if skin_weights[index] >= 0.15 and local.y >= bone.length * 0.32
+    }
+    labels: dict[int, int] = {}
+    distances: dict[int, int] = {}
+    frontier: deque[tuple[int, int, int]] = deque()
+    for label, component in enumerate(distal_components):
+        for index in component:
+            labels[index] = label
+            distances[index] = 0
+            frontier.append((index, label, 0))
+    while frontier:
+        current, label, distance = frontier.popleft()
+        for neighbor in adjacency[current]:
+            if neighbor not in region:
+                continue
+            candidate_distance = distance + 1
+            if neighbor in distances and distances[neighbor] <= candidate_distance:
+                continue
+            labels[neighbor] = label
+            distances[neighbor] = candidate_distance
+            frontier.append((neighbor, label, candidate_distance))
+
+    branches: list[dict[str, object]] = []
+    for label, component in enumerate(distal_components):
+        assigned = [index for index, value in labels.items() if value == label]
+        base_band = [
+            index
+            for index in assigned
+            if bone.length * 0.32 <= local_positions[index].y <= bone.length * 0.58
+        ]
+        if not base_band:
+            base_band = sorted(assigned, key=lambda index: local_positions[index].y)[: max(8, len(assigned) // 8)]
+        pivot = sum((local_positions[index] for index in base_band), Vector()) / len(base_band)
+        tip = sum((local_positions[index] for index in component), Vector()) / len(component)
+        span = max(tip.y - pivot.y, bone.length * 0.20)
+        joint_band = [
+            index
+            for index in assigned
+            if pivot.y + span * 0.38 <= local_positions[index].y <= pivot.y + span * 0.70
+        ]
+        if not joint_band:
+            joint_band = sorted(
+                assigned,
+                key=lambda index: abs(local_positions[index].y - (pivot.y + span * 0.54)),
+            )[: max(8, len(assigned) // 10)]
+        joint = sum((local_positions[index] for index in joint_band), Vector()) / len(joint_band)
+        if (joint - pivot).length <= body_height * 0.005 or (tip - joint).length <= body_height * 0.005:
+            joint = pivot.lerp(tip, 0.52)
+        transverse_offsets = sorted(
+            math.hypot(local_positions[index].x - tip.x, local_positions[index].z - tip.z)
+            for index in component
+        )
+        transverse_radius = transverse_offsets[int((len(transverse_offsets) - 1) * 0.65)]
+        branches.append(
+            {
+                "label": label,
+                "assigned": assigned,
+                "distal": sorted(component),
+                "pivot": pivot,
+                "joint": joint,
+                "tip_before": tip,
+                "transverse_radius": transverse_radius,
+            }
+        )
+
+    # Place the shaft through the opening actually formed by the two digit-tip
+    # landmarks. The legacy hand-bone origin is not the center of this generated
+    # goblin's palm, which is why earlier socket-only attempts visibly missed.
+    grip_center = Vector(
+        (
+            sum(float(branch["tip_before"].x) for branch in branches) / len(branches),
+            sum(float(branch["pivot"].y) for branch in branches) / len(branches),
+            sum(float(branch["tip_before"].z) for branch in branches) / len(branches),
+        )
+    )
+    for branch in branches:
+        pivot = branch["pivot"]
+        joint = branch["joint"]
+        tip = branch["tip_before"]
+        tip_radial = Vector((tip.x - grip_center.x, 0.0, tip.z - grip_center.z))
+        if tip_radial.length <= 1e-8:
+            tip_radial = Vector((pivot.x - grip_center.x, 0.0, pivot.z - grip_center.z))
+        branch_target_radius = handle_radius + max(
+            body_height * 0.004,
+            float(branch["transverse_radius"]) * 0.82,
+        ) + body_height * 0.002
+        desired_radial = tip_radial.normalized() * branch_target_radius
+        desired_tip = Vector(
+            (
+                grip_center.x + desired_radial.x,
+                grip_center.y + bone.length * 0.08,
+                grip_center.z + desired_radial.z,
+            )
+        )
+
+        first_length = (joint - pivot).length
+        second_length = (tip - joint).length
+        target_delta = desired_tip - pivot
+        minimum_reach = abs(first_length - second_length) + body_height * 0.001
+        maximum_reach = first_length + second_length - body_height * 0.001
+        target_distance = min(max(target_delta.length, minimum_reach), maximum_reach)
+        solved_tip = pivot + target_delta.normalized() * target_distance
+        direction = (solved_tip - pivot).normalized()
+        along = (
+            first_length * first_length
+            - second_length * second_length
+            + target_distance * target_distance
+        ) / (2.0 * target_distance)
+        height = math.sqrt(max(first_length * first_length - along * along, 0.0))
+        plane_normal = (joint - pivot).cross(tip - joint)
+        if plane_normal.length <= 1e-8:
+            plane_normal = direction.cross(Vector((0.0, 1.0, 0.0)))
+        if plane_normal.length <= 1e-8:
+            plane_normal = direction.cross(Vector((0.0, 0.0, 1.0)))
+        perpendicular = plane_normal.normalized().cross(direction).normalized()
+        candidates = (
+            pivot + direction * along + perpendicular * height,
+            pivot + direction * along - perpendicular * height,
+        )
+        branch["desired_tip"] = desired_tip
+        branch["solved_joint"] = min(candidates, key=lambda value: (value - joint).length)
+        branch["solved_tip"] = solved_tip
+        branch["first_length"] = first_length
+        branch["second_length"] = second_length
+        branch["target_tip_radius"] = branch_target_radius
+
+    # Add a non-deforming grip socket and an explicit two-link deform chain for
+    # each topology branch. All coordinates are derived from the detected mesh
+    # landmarks in the legacy hand bone's local space.
+    bpy.context.view_layer.objects.active = armature
+    armature.select_set(True)
+    bpy.ops.object.mode_set(mode="EDIT")
+    parent = armature.data.edit_bones[bone_name]
+    socket = armature.data.edit_bones.new(str(EQUIPMENT["grip_socket_bone"]))
+    socket.head = hand_matrix @ grip_center
+    socket.tail = hand_matrix @ (grip_center + Vector((0.0, body_height * 0.05, 0.0)))
+    socket.parent = parent
+    socket.use_deform = False
+    for branch in branches:
+        label = int(branch["label"]) + 1
+        base_name = f"grip_digit_{label:02d}_base"
+        tip_name = f"grip_digit_{label:02d}_tip"
+        base = armature.data.edit_bones.new(base_name)
+        base.head = hand_matrix @ branch["pivot"]
+        base.tail = hand_matrix @ branch["joint"]
+        base.parent = parent
+        base.use_deform = True
+        tip_bone = armature.data.edit_bones.new(tip_name)
+        tip_bone.head = base.tail
+        tip_bone.tail = hand_matrix @ branch["tip_before"]
+        tip_bone.parent = base
+        tip_bone.use_connect = True
+        tip_bone.use_deform = True
+        branch["base_bone"] = base_name
+        branch["tip_bone"] = tip_name
+    bpy.ops.object.mode_set(mode="OBJECT")
+
+    armature.data.bones[str(EQUIPMENT["grip_socket_bone"])]["darkness_landmark_role"] = "grip_axis"
+    for branch in branches:
+        armature.data.bones[str(branch["base_bone"])]["darkness_landmark_role"] = "digit_base_to_joint"
+        armature.data.bones[str(branch["tip_bone"])]["darkness_landmark_role"] = "digit_joint_to_tip"
+
+    # Replace only each branch's share of the hand weight. The palm side keeps
+    # hand influence, then smoothly transfers through base and tip phalanges.
+    maximum_weight_delta = 0.0
+    total_weight_before = {
+        vertex.index: sum(float(element.weight) for element in vertex.groups)
+        for vertex in obj.data.vertices
+    }
+    for branch in branches:
+        base_group = obj.vertex_groups.new(name=str(branch["base_bone"]))
+        tip_group = obj.vertex_groups.new(name=str(branch["tip_bone"]))
+        assigned = list(branch["assigned"])
+        minimum_y = min(local_positions[index].y for index in assigned)
+        maximum_y = max(local_positions[index].y for index in assigned)
+        for index in assigned:
+            original_hand_weight = skin_weights[index]
+            if original_hand_weight <= 0.0:
+                continue
+            progress = (local_positions[index].y - minimum_y) / max(maximum_y - minimum_y, 1e-8)
+            digit_blend = _smoothstep(0.05, 0.36, progress)
+            tip_blend = _smoothstep(0.38, 0.76, progress)
+            if index in branch["distal"]:
+                digit_blend = 1.0
+                tip_blend = 1.0
+            digit_weight = original_hand_weight * digit_blend
+            remaining_hand_weight = original_hand_weight - digit_weight
+            group.remove([index])
+            if remaining_hand_weight > 1e-6:
+                group.add([index], remaining_hand_weight, "REPLACE")
+            base_weight = digit_weight * (1.0 - tip_blend)
+            tip_weight = digit_weight * tip_blend
+            if base_weight > 1e-6:
+                base_group.add([index], base_weight, "REPLACE")
+            if tip_weight > 1e-6:
+                tip_group.add([index], tip_weight, "REPLACE")
+    obj.data.update()
+    for vertex in obj.data.vertices:
+        after = sum(float(element.weight) for element in vertex.groups)
+        maximum_weight_delta = max(maximum_weight_delta, abs(after - total_weight_before[vertex.index]))
+
+    def oriented_matrix(rest_bone: bpy.types.Bone, head: Vector, tail: Vector) -> Matrix:
+        rest_direction = (rest_bone.tail_local - rest_bone.head_local).normalized()
+        desired_direction = (tail - head).normalized()
+        rotation = rest_direction.rotation_difference(desired_direction)
+        result = (rotation.to_matrix() @ rest_bone.matrix_local.to_3x3()).to_4x4()
+        result.translation = head
+        return result
+
+    for branch in branches:
+        solved_base = hand_matrix @ branch["pivot"]
+        solved_joint = hand_matrix @ branch["solved_joint"]
+        solved_tip = hand_matrix @ branch["solved_tip"]
+        branch["closed_base_matrix"] = oriented_matrix(
+            armature.data.bones[str(branch["base_bone"])], solved_base, solved_joint
+        )
+        branch["closed_tip_matrix"] = oriented_matrix(
+            armature.data.bones[str(branch["tip_bone"])], solved_joint, solved_tip
+        )
+
+    # The grip is constant relative to the animated hand, so two identical keys
+    # per clip make the ownership/export contract explicit without oversampling.
+    for clip_name, action in actions.items():
+        armature.animation_data.action = action
+        for frame in ranges[clip_name]:
+            bpy.context.scene.frame_set(frame)
+            bpy.context.view_layer.update()
+            hand_pose = armature.pose.bones[bone_name]
+            hand_deformation = hand_pose.matrix @ hand_pose.bone.matrix_local.inverted()
+            for branch in branches:
+                base_pose = armature.pose.bones[str(branch["base_bone"])]
+                tip_pose = armature.pose.bones[str(branch["tip_bone"])]
+                base_pose.rotation_mode = "QUATERNION"
+                tip_pose.rotation_mode = "QUATERNION"
+                base_pose.matrix = hand_deformation @ branch["closed_base_matrix"]
+                bpy.context.view_layer.update()
+                tip_pose.matrix = hand_deformation @ branch["closed_tip_matrix"]
+                bpy.context.view_layer.update()
+                for pose_bone in (base_pose, tip_pose):
+                    pose_bone.keyframe_insert(
+                        data_path="rotation_quaternion", frame=frame, group=pose_bone.name
+                    )
+                    pose_bone.keyframe_insert(data_path="location", frame=frame, group=pose_bone.name)
+
+    # Validate the deformed mesh, not merely the control bones. Contact is
+    # measured against the dedicated shaft axis in a representative attack pose.
+    attack_start, attack_end = ranges["attack"]
+    armature.animation_data.action = actions["attack"]
+    bpy.context.scene.frame_set(attack_start + (attack_end - attack_start) // 2)
+    bpy.context.view_layer.update()
+    evaluated = obj.evaluated_get(bpy.context.evaluated_depsgraph_get())
+    evaluated_mesh = evaluated.to_mesh()
+    affected_indices = set(labels)
+    collapsed_polygons = sum(
+        1
+        for index, polygon in enumerate(evaluated_mesh.polygons)
+        if affected_indices.intersection(polygon.vertices)
+        and float(polygon.area)
+        <= max(original_areas[index] * 0.02, body_height * body_height * 1e-10)
+    )
+    socket_pose = armature.pose.bones[str(EQUIPMENT["grip_socket_bone"])]
+    socket_world_inverse = (armature.matrix_world @ socket_pose.matrix).inverted()
+    branch_reports: list[dict[str, object]] = []
+    for branch in branches:
+        local_surface = [
+            socket_world_inverse @ (evaluated.matrix_world @ evaluated_mesh.vertices[index].co)
+            for index in branch["distal"]
+        ]
+        radii = [math.hypot(point.x, point.z) for point in local_surface]
+        centroid = sum(local_surface, Vector()) / len(local_surface)
+        base_pose = armature.pose.bones[str(branch["base_bone"])]
+        tip_pose = armature.pose.bones[str(branch["tip_bone"])]
+        branch_reports.append(
+            {
+                "label": branch["label"],
+                "vertices": len(branch["assigned"]),
+                "distal_vertices": len(branch["distal"]),
+                "base_landmark": list(branch["pivot"]),
+                "joint_landmark": list(branch["joint"]),
+                "tip_landmark": list(branch["tip_before"]),
+                "desired_tip": list(branch["desired_tip"]),
+                "solved_joint": list(branch["solved_joint"]),
+                "solved_tip": list(branch["solved_tip"]),
+                "target_tip_radius": branch["target_tip_radius"],
+                "transverse_radius": branch["transverse_radius"],
+                "base_bone": branch["base_bone"],
+                "tip_bone": branch["tip_bone"],
+                "base_rotation_degrees": math.degrees(float(base_pose.matrix_basis.to_quaternion().angle)),
+                "tip_rotation_degrees": math.degrees(float(tip_pose.matrix_basis.to_quaternion().angle)),
+                "surface_centroid_in_grip_space": list(centroid),
+                "minimum_surface_radius": min(radii),
+                "maximum_surface_radius": max(radii),
+                "closest_surface_error": min(abs(radius - handle_radius) for radius in radii),
+                "deep_penetrating_vertices": sum(radius < handle_radius * 0.55 for radius in radii),
+            }
+        )
+    evaluated.to_mesh_clear()
+    minimum_tip_separation = min(
+        (
+            (
+                Vector(first["surface_centroid_in_grip_space"])
+                - Vector(second["surface_centroid_in_grip_space"])
+            ).length
+            for offset, first in enumerate(branch_reports)
+            for second in branch_reports[offset + 1 :]
+        ),
+        default=0.0,
+    )
+    passed = (
+        len(branches) == 2
+        and len([bone for bone in armature.data.bones if bone.name.startswith("grip_digit_")]) == 4
+        and maximum_weight_delta <= 1e-5
+        and collapsed_polygons == 0
+        and minimum_tip_separation >= body_height * 0.012
+        and all(
+            int(report["deep_penetrating_vertices"]) == 0
+            and float(report["closest_surface_error"]) <= body_height * 0.012
+            for report in branch_reports
+        )
+    )
+    if not passed:
+        raise RuntimeError(
+            "articulated digit grip gate failed: "
+            f"weights={maximum_weight_delta}, collapsed={collapsed_polygons}, "
+            f"separation={minimum_tip_separation}, branches={branch_reports}"
+        )
+
+    obj["darkness_grip_corrective"] = "articulated_digit_landmark_grip_v1"
+    obj["darkness_grip_bone"] = bone_name
+    obj["darkness_grip_affected_vertices"] = len(affected_indices)
+    return {
+        "method": "articulated_digit_landmark_grip_v1",
+        "bone": bone_name,
+        "grip_socket_bone": EQUIPMENT["grip_socket_bone"],
+        "grip_center_in_hand_space": list(grip_center),
+        "handle_radius": handle_radius,
+        "target_tip_radii": [float(branch["target_tip_radius"]) for branch in branches],
+        "detected_digit_branches": len(distal_components),
+        "distal_component_sizes": [len(component) for component in distal_components],
+        "generated_deform_bones": [
+            name
+            for branch in branches
+            for name in (str(branch["base_bone"]), str(branch["tip_bone"]))
+        ],
+        "affected_vertices": len(affected_indices),
+        "maximum_weight_sum_delta": maximum_weight_delta,
+        "branches": branch_reports,
+        "minimum_tip_separation": minimum_tip_separation,
+        "collapsed_polygons": collapsed_polygons,
+        "automatic_gate_passed": passed,
+    }
+
+
 def _create_club(armature: bpy.types.Object, body_height: float) -> bpy.types.Object:
-    """Create a body-relative club whose origin is the right-hand grip socket.
+    """Create a body-relative club whose origin is the resolved weapon-hand socket.
 
     The mesh is authored along bone-local +Y. Copy Transforms binds the grip to
     the declared hand bone, so no world-space coordinates or per-frame edits are
     involved. The dimensions are short-biped proportions, not target-specific
     absolute guesses.
     """
-    if EQUIPMENT["bone"] not in armature.pose.bones:
-        raise ValueError(f"equipment socket bone is missing: {EQUIPMENT['bone']}")
+    socket_bone = str(EQUIPMENT["grip_socket_bone"])
+    if socket_bone not in armature.pose.bones:
+        raise ValueError(f"equipment socket bone is missing: {socket_bone}")
 
     handle_length = body_height * 0.30
-    handle_radius = body_height * 0.022
+    handle_radius = body_height * HANDLE_RADIUS_FRACTION
     head_length = body_height * 0.26
     head_radius = body_height * 0.085
     handle_center = body_height * 0.12
@@ -219,12 +744,12 @@ def _create_club(armature: bpy.types.Object, body_height: float) -> bpy.types.Ob
     bpy.context.scene.collection.objects.link(club)
     club["darkness_component_id"] = EQUIPMENT["component_id"]
     club["darkness_socket"] = EQUIPMENT["socket"]
-    club["darkness_socket_bone"] = EQUIPMENT["bone"]
+    club["darkness_socket_bone"] = socket_bone
     club["darkness_rig_policy"] = EQUIPMENT["rig_policy"]
     constraint = club.constraints.new(type="COPY_TRANSFORMS")
     constraint.name = "DarknessHandSocket"
     constraint.target = armature
-    constraint.subtarget = EQUIPMENT["bone"]
+    constraint.subtarget = socket_bone
     constraint.target_space = "WORLD"
     constraint.owner_space = "WORLD"
     return club
@@ -236,10 +761,14 @@ def _validate_equipment_binding(
     actions: dict[str, bpy.types.Action],
     ranges: dict[str, tuple[int, int]],
     body_height: float,
+    *,
+    source_hand_analysis: dict[str, object],
+    grip_corrective: dict[str, object],
 ) -> dict[str, object]:
     sampled_errors: list[float] = []
     maximum_tip_reach = 0.0
     local_tip = Vector((0.0, body_height * 0.52, 0.0))
+    socket_bone = str(EQUIPMENT["grip_socket_bone"])
     for clip_name, action in actions.items():
         armature.animation_data.action = action
         start, end = ranges[clip_name]
@@ -247,7 +776,7 @@ def _validate_equipment_binding(
             bpy.context.scene.frame_set(frame)
             bpy.context.view_layer.update()
             evaluated = club.evaluated_get(bpy.context.evaluated_depsgraph_get())
-            socket = armature.matrix_world @ armature.pose.bones[str(EQUIPMENT["bone"])].head
+            socket = armature.matrix_world @ armature.pose.bones[socket_bone].head
             grip = evaluated.matrix_world.translation
             sampled_errors.append((grip - socket).length)
             maximum_tip_reach = max(maximum_tip_reach, (evaluated.matrix_world @ local_tip - socket).length)
@@ -258,6 +787,8 @@ def _validate_equipment_binding(
         len(club.data.vertices) > 0
         and maximum_error <= body_height * 0.0001
         and abs(maximum_tip_reach - expected_tip_reach) <= body_height * 0.01
+        and source_hand_analysis.get("automatic_gate_passed") is True
+        and grip_corrective.get("automatic_gate_passed") is True
     )
     if not passed:
         raise RuntimeError(
@@ -270,7 +801,7 @@ def _validate_equipment_binding(
         "vertices": len(club.data.vertices),
         "body_relative_dimensions": {
             "handle_length": 0.30,
-            "handle_radius": 0.022,
+            "handle_radius": HANDLE_RADIUS_FRACTION,
             "head_length": 0.26,
             "head_radius": 0.085,
             "tip_reach": 0.52,
@@ -278,6 +809,8 @@ def _validate_equipment_binding(
         "sampled_attachment_frames": len(sampled_errors),
         "maximum_grip_error": maximum_error,
         "maximum_tip_reach": maximum_tip_reach,
+        "source_hand_analysis": source_hand_analysis,
+        "grip_corrective": grip_corrective,
         "automatic_gate_passed": passed,
         "human_approval_required": True,
         "human_approved": False,
@@ -480,6 +1013,26 @@ def _validate_and_render(
             bounds_override=fixed_bounds,
         )
 
+    grip_evidence: list[str] = []
+    attack_samples = _frame_samples(*ranges["attack"])
+    for frame in (attack_samples[1], attack_samples[2]):
+        armature.animation_data.action = actions["attack"]
+        bpy.context.scene.frame_set(frame)
+        bpy.context.view_layer.update()
+        grip_head = _bone_point(armature, str(EQUIPMENT["bone"]))
+        grip_tail = _bone_point(armature, str(EQUIPMENT["bone"]), tail=True)
+        grip_center = (grip_head + grip_tail) * 0.5
+        half_extent = Vector((height * 0.13,) * 3)
+        grip_evidence.extend(
+            str(path)
+            for path in worker.render_diagnostics(
+                output_root,
+                f"grip_attack_{frame:03d}",
+                size=max(render_size, 640),
+                bounds_override=(grip_center - half_extent, grip_center + half_extent),
+            )
+        )
+
     walk = clips["walk"]
     walk_frames = walk["sampled_frames"]
     foot_heights = {side: [] for side in ("foot_l", "foot_r")}
@@ -492,12 +1045,16 @@ def _validate_and_render(
     attack_frames = ranges["attack"]
     armature.animation_data.action = actions["attack"]
     bpy.context.scene.frame_set(attack_frames[0])
-    attack_start = _bone_point(armature, "wrist_r", tail=True)
+    attack_wrist = str(EQUIPMENT["bone"]).replace("hand_", "wrist_")
+    attack_start = _bone_point(armature, attack_wrist, tail=True)
     attack_travel = 0.0
     for frame in range(attack_frames[0], attack_frames[1] + 1):
         bpy.context.scene.frame_set(frame)
         bpy.context.view_layer.update()
-        attack_travel = max(attack_travel, (_bone_point(armature, "wrist_r", tail=True) - attack_start).length)
+        attack_travel = max(
+            attack_travel,
+            (_bone_point(armature, attack_wrist, tail=True) - attack_start).length,
+        )
     death_frames = ranges["death"]
     armature.animation_data.action = actions["death"]
     bpy.context.scene.frame_set(death_frames[0])
@@ -515,7 +1072,9 @@ def _validate_and_render(
         "walk_swing_ranges": {
             name: max(values) - min(values) for name, values in foot_heights.items()
         },
+        "attack_weapon_wrist": attack_wrist,
         "attack_maximum_hand_travel": attack_travel,
+        "grip_evidence": grip_evidence,
         "death_hips_descent": death_hips_start.z - death_hips_end.z,
         "death_head_descent": death_head_start.z - death_head_end.z,
         "body_height": height,
@@ -569,6 +1128,11 @@ def main() -> int:
             f"source_bones={missing_source_bones}, target_bones={missing_target_bones}"
         )
 
+    source_hand_analysis = _source_motion_hand_analysis(
+        source,
+        source_actions["Sword_Attack"],
+        target,
+    )
     location_scale = _target_height(target_meshes) / _source_height(source)
     reference_pose = _reference_pose(source, source_actions["Idle_Loop"])
     target.animation_data_create()
@@ -596,6 +1160,14 @@ def main() -> int:
         if action not in target_actions.values():
             bpy.data.actions.remove(action)
     body_height = _final_vertex_height(target_meshes)
+    grip_corrective = _build_articulated_grip(
+        target,
+        target_meshes,
+        target_actions,
+        ranges,
+        body_height,
+        body_height * HANDLE_RADIUS_FRACTION,
+    )
     club = _create_club(target, body_height)
     equipment_report = _validate_equipment_binding(
         target,
@@ -603,6 +1175,8 @@ def main() -> int:
         target_actions,
         ranges,
         body_height,
+        source_hand_analysis=source_hand_analysis,
+        grip_corrective=grip_corrective,
     )
     _reset_pose(target)
     target.animation_data.action = None

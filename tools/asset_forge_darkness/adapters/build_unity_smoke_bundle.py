@@ -8,7 +8,11 @@ from pathlib import Path
 import shutil
 
 
+UNITY_RUNTIME_MUTABLE_FILES = (
+    "UnitySmokeProject/ProjectSettings/ProjectVersion.txt",
+)
 UNITY_VERSION = "6000.5.1f1"
+UNITY_VERSION_FAMILY = "6000.5"
 UNITY_REVISION = "0d9463e84828"
 EXPECTED_ACTIONS = {f"{clip}/{direction}" for clip in ("idle", "walk", "attack", "death") for direction in ("north", "south", "east", "west")}
 
@@ -284,6 +288,7 @@ def build(package: Path, output: Path, template: Path) -> dict[str, object]:
         "bundle_kind": "darkness_standalone_unity_smoke",
         "asset_id": manifest["asset_id"],
         "unity_version": UNITY_VERSION,
+        "unity_version_family": UNITY_VERSION_FAMILY,
         "unity_revision": UNITY_REVISION,
         "entrypoint": "run_unity_smoke.ps1",
         "project": "UnitySmokeProject",
@@ -292,6 +297,7 @@ def build(package: Path, output: Path, template: Path) -> dict[str, object]:
         "source_master_sha256": manifest["source_master_sha256"],
         "directional_actions": 16,
         "expected_decoded_sprites": sum(int(action["frames"]) for action in manifest["actions"]),
+        "unity_runtime_mutable_files": list(UNITY_RUNTIME_MUTABLE_FILES),
         "human_approval_required": True,
         "human_approved": False,
         "files": files,

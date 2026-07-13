@@ -14,6 +14,8 @@ STAGES = (
     "retarget",
     "retarget_evidence",
     "retarget_qwen_review",
+    "surface_bake",
+    "surface_qwen_review",
     "sprite_render",
     "sprite_package",
     "sprite_qwen_review",
@@ -41,6 +43,8 @@ def _arguments(argv: list[str] | None = None) -> argparse.Namespace:
     )
     parser.add_argument("--repo-root", type=Path, default=repo)
     parser.add_argument("--model", default="qwen3_6_27b")
+    parser.add_argument("--comfy-url", default="http://127.0.0.1:8188")
+    parser.add_argument("--surface-checkpoint", default="dreamshaper_xl_v2_turbo.safetensors")
     parser.add_argument("--timeout-seconds", type=int, default=900)
     return parser.parse_args(argv)
 
@@ -89,6 +93,22 @@ def _launch_and_wait(
     failure: Path | None,
     timeout: int,
 ) -> None:
+    if Path(command[0]).name.lower() == "blender-launcher.exe":
+        def literal(value: str) -> str:
+            return "'" + value.replace("'", "''") + "'"
+
+        script = (
+            f"$p=Start-Process -FilePath {literal(command[0])} "
+            f"-ArgumentList {literal(subprocess.list2cmdline(command[1:]))} "
+            "-WindowStyle Hidden -Wait -PassThru; exit $p.ExitCode"
+        )
+        command = [
+            "powershell.exe",
+            "-NoProfile",
+            "-NonInteractive",
+            "-Command",
+            script,
+        ]
     process = subprocess.Popen(
         command,
         cwd=str(cwd),
@@ -118,7 +138,9 @@ def _status_path(root: Path) -> Path:
     return root / "pipeline_status.json"
 
 
-def _approved_automatic_candidate_manifest(path: Path) -> bool:
+def _approved_automatic_candidate_manifest(
+    path: Path, *, expected_master_sha256: str | None = None
+) -> bool:
     if not path.is_file():
         return False
     try:
@@ -126,11 +148,37 @@ def _approved_automatic_candidate_manifest(path: Path) -> bool:
     except (OSError, json.JSONDecodeError):
         return False
     return (
-        manifest.get("automatic_gate_passed") is True
+        manifest.get("schema_version") == 1
+        and manifest.get("automatic_gate_passed") is True
+        and manifest.get("quality_gate_version") == 2
         and manifest.get("hard_failures") == []
         and manifest.get("human_approval_required") is True
         and manifest.get("human_approved") is False
+        and (
+            expected_master_sha256 is None
+            or manifest.get("source_master_sha256") == expected_master_sha256
+        )
     )
+
+
+def _bundle_is_current(bundle_manifest: Path, candidate_manifest: Path) -> bool:
+    if not bundle_manifest.is_file() or not candidate_manifest.is_file():
+        return False
+    try:
+        bundle = json.loads(bundle_manifest.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return False
+    return bundle.get("candidate_manifest_sha256") == _sha256(candidate_manifest)
+
+
+def _unity_result_is_current(report_path: Path, bundle_manifest: Path) -> bool:
+    if not report_path.is_file() or not bundle_manifest.is_file():
+        return False
+    try:
+        report = json.loads(report_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return False
+    return report.get("bundle_manifest_sha256") == _sha256(bundle_manifest)
 
 
 def _archive_partial(path: Path) -> None:
@@ -164,7 +212,7 @@ def _write_review_index(root: Path, *, unity_state: str) -> Path:
     path.write_text(
         "\n".join(
             [
-                "# Darkness motion candidate — human review",
+                "# Darkness painted motion candidate — human review",
                 "",
                 "This is a non-promoting review checkpoint. It does not replace the live Unity goblin.",
                 "",
@@ -174,6 +222,13 @@ def _write_review_index(root: Path, *, unity_state: str) -> Path:
                 "- [Motion critic and mediator summary](retarget/human_review/human_review.md)",
                 "- [Editable retargeted Blender master](retarget/quaternius_retargeted_goblin.blend)",
                 "- [GLB with idle, walk, attack, and death](retarget/quaternius_retargeted_goblin.glb)",
+                "",
+                "## Persistent painted surface",
+                "",
+                "- [Before/current multi-view paint board](surface/surface_review.png)",
+                "- [Surface critic and mediator summary](surface/human_review.md)",
+                "- [Surface numeric/provenance gate](surface/surface_validation.json)",
+                "- [Editable painted Blender master](surface/darkness_surface_master.blend)",
                 "",
                 "## Directional sprites",
                 "",
@@ -196,8 +251,8 @@ def _write_review_index(root: Path, *, unity_state: str) -> Path:
                 "",
                 "## Human decision",
                 "",
-                "Approve or reject the motion direction and sprite readability. Human approval remains false until an "
-                "explicit decision is recorded.",
+                "Approve or reject the painted identity, motion direction, and gameplay readability. Human approval "
+                "remains false until an explicit decision is recorded.",
                 "",
             ]
         ),
@@ -218,7 +273,7 @@ def run(args: argparse.Namespace) -> dict[str, object]:
     root.mkdir(parents=True, exist_ok=True)
     status: dict[str, object] = {
         "schema_version": 1,
-        "pipeline": "darkness_motion_candidate_v1",
+        "pipeline": "darkness_motion_surface_candidate_v2",
         "target": str(target),
         "target_sha256": _sha256(target),
         "motion_source": str(motion_source),
@@ -236,6 +291,7 @@ def run(args: argparse.Namespace) -> dict[str, object]:
         ) != status["motion_source_sha256"]:
             raise RuntimeError("resume refused: target or motion-source hash changed")
         status = prior
+        status["pipeline"] = "darkness_motion_surface_candidate_v2"
         stages = status.setdefault("stages", {})
         for name in STAGES:
             stages.setdefault(name, {"state": "pending", "detail": ""})
@@ -321,15 +377,106 @@ def run(args: argparse.Namespace) -> dict[str, object]:
         )
     _record(status, root, "retarget_qwen_review", "complete", str(retarget_mediator))
 
+    surface = root / "surface"
+    surface_master = surface / "darkness_surface_master.blend"
+    surface_report = surface / "surface_validation.json"
+    if not surface_master.is_file() or not surface_report.is_file():
+        blender = _require_executable(blender, "surface_bake")
+        _archive_partial(surface)
+        _record(
+            status,
+            root,
+            "surface_bake",
+            "running",
+            "Painting canonical depth-locked views and projecting them once into a persistent UV master.",
+        )
+        try:
+            _run(
+                [
+                    sys.executable,
+                    str(adapters / "bake_darkness_surface.py"),
+                    "--master",
+                    str(retarget / "quaternius_retargeted_goblin.blend"),
+                    "--output-directory",
+                    str(surface),
+                    "--blender",
+                    str(blender),
+                    "--repo-root",
+                    str(repo),
+                    "--comfy-url",
+                    args.comfy_url,
+                    "--checkpoint",
+                    args.surface_checkpoint,
+                    "--timeout-seconds",
+                    str(args.timeout_seconds),
+                ],
+                cwd=repo,
+                timeout=max(args.timeout_seconds, 1800),
+            )
+        except RuntimeError as error:
+            _record(status, root, "surface_bake", "waiting_for_dependency", str(error)[-1600:])
+            status["outcome"] = "waiting_for_surface_painter"
+            _write_json(_status_path(root), status)
+            return status
+    surface_validation = json.loads(surface_report.read_text(encoding="utf-8"))
+    if surface_validation.get("automatic_gate_passed") is not True:
+        raise RuntimeError(f"surface master failed automatic gate: {surface_report}")
+    surface_master_sha256 = _sha256(surface_master)
+    if surface_validation.get("surface_master_sha256") != surface_master_sha256:
+        raise RuntimeError("surface master hash no longer matches its validation report")
+    _record(status, root, "surface_bake", "complete", str(surface_report))
+
+    surface_mediator = surface / "qwen_surface_mediator.json"
+    if not surface_mediator.is_file():
+        _record(
+            status,
+            root,
+            "surface_qwen_review",
+            "running",
+            "Giving Qwen labeled before/current images, numeric deltas, operation history, and one referee pass.",
+        )
+        _run(
+            [
+                sys.executable,
+                str(adapters / "review_surface_master.py"),
+                "--surface-directory",
+                str(surface),
+                "--model",
+                args.model,
+            ],
+            cwd=repo,
+            timeout=args.timeout_seconds,
+        )
+    _record(status, root, "surface_qwen_review", "complete", str(surface_mediator))
+
     frames = root / "sprites/frames"
     sprite_last = frames / "darkness_short_biped_candidate/death/west/09.png"
-    if not sprite_last.is_file():
+    sprite_render_record = root / "sprites/render_contract.json"
+    render_is_current = False
+    if sprite_render_record.is_file() and sprite_last.is_file():
+        try:
+            render_is_current = (
+                json.loads(sprite_render_record.read_text(encoding="utf-8")).get("surface_master_sha256")
+                == surface_master_sha256
+            )
+        except (OSError, json.JSONDecodeError):
+            render_is_current = False
+    if not render_is_current:
+        _archive_partial(root / "sprites")
+        frames = root / "sprites/frames"
+        sprite_last = frames / "darkness_short_biped_candidate/death/west/09.png"
         blender = _require_executable(blender, "sprite_render")
-        _record(status, root, "sprite_render", "running", "Rendering four actions in four directions.")
+        _record(
+            status,
+            root,
+            "sprite_render",
+            "running",
+            "Rendering four actions in four directions from the hash-bound painted master.",
+        )
         _launch_and_wait(
             [
                 str(blender),
-                str(retarget / "quaternius_retargeted_goblin.blend"),
+                str(surface_master),
                 "--background",
                 "--offline-mode",
                 "--python-exit-code",
@@ -344,7 +491,7 @@ def run(args: argparse.Namespace) -> dict[str, object]:
                 "--frames-root",
                 str(frames),
                 "--source",
-                str(retarget / "quaternius_retargeted_goblin.blend"),
+                str(surface_master),
                 "--skip-aux-passes",
             ],
             cwd=repo,
@@ -352,11 +499,23 @@ def run(args: argparse.Namespace) -> dict[str, object]:
             failure=None,
             timeout=args.timeout_seconds,
         )
+        _write_json(
+            sprite_render_record,
+            {
+                "schema_version": 1,
+                "surface_master": str(surface_master),
+                "surface_master_sha256": surface_master_sha256,
+                "final_frame": str(sprite_last),
+                "final_frame_sha256": _sha256(sprite_last),
+            },
+        )
     _record(status, root, "sprite_render", "complete", str(frames))
 
     package = root / "sprites/package"
     manifest = package / "candidate_unit_manifest.json"
-    if not _approved_automatic_candidate_manifest(manifest):
+    if not _approved_automatic_candidate_manifest(
+        manifest, expected_master_sha256=surface_master_sha256
+    ):
         _archive_partial(package)
         _record(status, root, "sprite_package", "running", "Packaging sheets with alpha/edge/hash gates.")
         _run(
@@ -370,7 +529,7 @@ def run(args: argparse.Namespace) -> dict[str, object]:
                 "--output-directory",
                 str(package),
                 "--master",
-                str(retarget / "quaternius_retargeted_goblin.blend"),
+                str(surface_master),
             ],
             cwd=repo,
             timeout=120,
@@ -397,7 +556,7 @@ def run(args: argparse.Namespace) -> dict[str, object]:
     _record(status, root, "sprite_qwen_review", "complete", str(sprite_mediator))
     smoke_bundle = root / "unity_smoke_bundle"
     smoke_manifest = smoke_bundle / "bundle_manifest.json"
-    if not smoke_manifest.is_file():
+    if not _bundle_is_current(smoke_manifest, manifest):
         _archive_partial(smoke_bundle)
         _record(status, root, "unity_smoke_bundle", "running", "Building portable standalone Unity smoke project.")
         _run(
@@ -443,7 +602,13 @@ def run(args: argparse.Namespace) -> dict[str, object]:
     returned_report = returned_result / "unity_candidate_validation.json"
     unity_output = root / "unity"
     unity_report = unity_output / "unity_candidate_validation.json"
-    if not unity_report.is_file() and returned_report.is_file():
+    if unity_report.is_file() and not _unity_result_is_current(unity_report, smoke_manifest):
+        _archive_partial(unity_output)
+    if (
+        not unity_report.is_file()
+        and returned_report.is_file()
+        and _unity_result_is_current(returned_report, smoke_manifest)
+    ):
         _archive_partial(unity_output)
         _record(status, root, "unity_candidate_validation", "ingesting", "Verifying returned standalone Unity proof.")
         _run(

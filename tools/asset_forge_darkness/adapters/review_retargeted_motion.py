@@ -16,6 +16,11 @@ def _arguments(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--input-directory", type=Path, required=True)
     parser.add_argument("--evidence-directory", type=Path, required=True)
+    parser.add_argument(
+        "--previous-retarget",
+        type=Path,
+        help="Optional prior retarget root; replaces the attack side strip with a labeled previous grip image.",
+    )
     parser.add_argument("--model", default="qwen3_6_27b")
     return parser.parse_args(argv)
 
@@ -58,7 +63,12 @@ def _summary(report: dict[str, object]) -> dict[str, object]:
             "human review rejected the empty-handed Sword_Attack because a weapon-authored clip needs equipment",
             "club iteration 1 proved the rigid hand socket but its short round silhouette read as a mace/spoon",
             "club iteration 2 improved the taper but exposed a pre-deformation body-height measurement mismatch",
-            "current iteration 3 uses final vertex height and targets 52% body-relative club reach",
+            "club iteration 3 attached to equal-suffix hand_r, but human review identified that the source and target side conventions are mirrored and the open hand did not grasp the handle",
+            "club iteration 4 fixed the physical side but its radial squeeze made a closed blob rather than a convincing grip, so human review rejected it before downstream packaging",
+            "club iteration 5 preserved the goblin hand morphology by curling two detected claw branches separately; Qwen and its referee accepted the wrap, but close visual review found the 2.2%-of-body shaft too thick for the palm opening",
+            "club iteration 6 kept the accepted branch curl and reduced the handle radius to 1.8% of body height; comparative Qwen/referee review accepted the clearer shaft clearance",
+            "club iteration 7 corrected the public anatomical hand_right socket, but human review rejected its mesh-only curl because it still had no explicit digit landmarks/bones and the shaft missed the actual claw opening",
+            "current iteration 8 derives base/joint/tip landmarks from both claw branches, adds four local deform bones plus a dedicated grip socket, places the shaft through the detected opening, and solves both digit chains around it",
         ],
     }
 
@@ -71,20 +81,47 @@ def main(argv: list[str] | None = None) -> int:
     numeric = _summary(report)
     master = evidence / "all_motion_front_keyposes.png"
     attack_side = evidence / "attack_left_keyposes.png"
-    walk_side = evidence / "walk_left_keyposes.png"
-    death_side = evidence / "death_left_keyposes.png"
+    grip_front = sorted(root.glob("grip_attack_*_front.png"))
+    grip_side = sorted(root.glob("grip_attack_*_right.png"))
+    if not grip_front or not grip_side:
+        raise FileNotFoundError("retarget output is missing dedicated grip close-up evidence")
+    previous_grip: Path | None = None
+    if args.previous_retarget is not None:
+        previous = sorted(args.previous_retarget.resolve().glob("grip_attack_*_front.png"))
+        if not previous:
+            raise FileNotFoundError("previous retarget is missing grip close-up evidence")
+        previous_grip = previous[0]
     reviewer = LocalDeployRetargetReviewer(model=args.model)
+    comparison_content = (
+        [
+            {
+                "type": "text",
+                "text": "Image 2: previous iteration grip close-up; use it only for direct comparison.",
+            },
+            _image(previous_grip),
+        ]
+        if previous_grip is not None
+        else [
+            {"type": "text", "text": "Image 2: current attack side-view key poses."},
+            _image(attack_side),
+        ]
+    )
     critic = reviewer.review(
         numeric_history=numeric,
         image_content=[
             {"type": "text", "text": "Image 1: fixed-camera front key poses for all four clips."},
             _image(master),
-            {"type": "text", "text": "Image 2: attack side-view key poses."},
-            _image(attack_side),
-            {"type": "text", "text": "Image 3: walk side-view key poses."},
-            _image(walk_side),
-            {"type": "text", "text": "Image 4: death side-view key poses."},
-            _image(death_side),
+            *comparison_content,
+            {
+                "type": "text",
+                "text": "Image 3: current front close-up of the weapon hand around the handle.",
+            },
+            _image(grip_front[0]),
+            {
+                "type": "text",
+                "text": "Image 4: dedicated side close-up of the same deterministic grip corrective.",
+            },
+            _image(grip_side[0]),
         ],
     )
     critic_path = evidence / "qwen_retarget_review.json"
@@ -95,6 +132,19 @@ def main(argv: list[str] | None = None) -> int:
         image_content=[
             {"type": "text", "text": "Blinded mediator image: fixed-camera front key poses."},
             _image(master),
+            *(
+                [
+                    {"type": "text", "text": "Blinded mediator image: previous grip close-up."},
+                    _image(previous_grip),
+                ]
+                if previous_grip is not None
+                else []
+            ),
+            {
+                "type": "text",
+                "text": "Blinded mediator image: current weapon-hand grip close-up.",
+            },
+            _image(grip_front[0]),
         ],
     )
     mediator_path = evidence / "qwen_retarget_mediator.json"
@@ -109,6 +159,11 @@ def main(argv: list[str] | None = None) -> int:
                 f"- Qwen critic: `{critic.overall}` ({critic.confidence})",
                 f"- Independent mediator: `{mediator.corrected_overall}`",
                 f"- More iteration recommended: `{mediator.recommend_more_iteration}`",
+                f"- Source weapon hand: `{report['equipment']['source_hand_analysis']['selected_source_weapon_bone']}`",
+                f"- Resolved target bone: `{report['equipment']['bone']}`",
+                f"- Grip corrective gate: `{report['equipment']['grip_corrective']['automatic_gate_passed']}`",
+                f"- [Front grip close-up](../{grip_front[0].name})",
+                f"- [Side grip close-up](../{grip_side[0].name})",
                 "- Human approval remains required.",
                 "",
                 "| Clip | Readability | Critical limbs | Observations |",

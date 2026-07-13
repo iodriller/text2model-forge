@@ -172,11 +172,20 @@ def camera_axes(camera):
 
 
 def build_depth_tree(distance):
-    tree = bpy.data.node_groups.new("AssetForgeBakeDepth", "CompositorNodeTree")
-    tree.interface.new_socket("Image", in_out="OUTPUT", socket_type="NodeSocketColor")
+    scene = bpy.context.scene
+    is_group_api = hasattr(scene, "compositing_node_group")
+    if is_group_api:
+        tree = bpy.data.node_groups.new("AssetForgeBakeDepth", "CompositorNodeTree")
+        scene.compositing_node_group = tree
+        tree.interface.new_socket("Image", in_out="OUTPUT", socket_type="NodeSocketColor")
+    else:
+        # Blender 4.5 owns compositor nodes directly on Scene.node_tree.
+        scene.use_nodes = True
+        tree = scene.node_tree
+        tree.nodes.clear()
     layers = tree.nodes.new("CompositorNodeRLayers")
     layers.scene = bpy.context.scene
-    group_output = tree.nodes.new("NodeGroupOutput")
+    output = tree.nodes.new("NodeGroupOutput" if is_group_api else "CompositorNodeComposite")
     if "Depth" not in layers.outputs:
         raise RuntimeError("Render Layers node exposes no Depth output")
     map_range = tree.nodes.new("ShaderNodeMapRange")
@@ -186,7 +195,7 @@ def build_depth_tree(distance):
     map_range.inputs["To Min"].default_value = 1.0
     map_range.inputs["To Max"].default_value = 0.0
     tree.links.new(layers.outputs["Depth"], map_range.inputs["Value"])
-    tree.links.new(map_range.outputs["Result"], group_output.inputs[0])
+    tree.links.new(map_range.outputs["Result"], output.inputs[0])
     return tree
 
 
@@ -239,14 +248,20 @@ def render_views(args, config):
         orbit_camera(camera, yaw, view_elevation, distance, target, ortho_scale)
         right, up, forward = camera_axes(camera)
         render_still(scene, os.path.join(views_folder, f"view_{index:02d}.png"))
-        scene.compositing_node_group = depth_tree
+        if hasattr(scene, "compositing_node_group"):
+            scene.compositing_node_group = depth_tree
+        else:
+            scene.use_nodes = True
         scene.render.use_compositing = True
         if depth_encoding == "linear":
             scene.view_settings.view_transform = "Raw"
         render_still(scene, os.path.join(views_folder, f"depth_{index:02d}.png"))
         scene.view_settings.view_transform = color_transform
         scene.render.use_compositing = False
-        scene.compositing_node_group = None
+        if hasattr(scene, "compositing_node_group"):
+            scene.compositing_node_group = None
+        else:
+            scene.use_nodes = False
         metadata["views"].append({
             "index": index,
             "yaw_deg": yaw,
@@ -621,4 +636,19 @@ def main():
         render_icons(args, config)
 
 
-main()
+try:
+    main()
+except Exception:
+    # Microsoft Store Blender does not forward background stdout/stderr through its
+    # app-execution alias. Persist the traceback beside the stage so orchestrators can
+    # still diagnose a failed, resumable bake.
+    import traceback
+
+    raw = sys.argv[sys.argv.index("--") + 1 :] if "--" in sys.argv else []
+    if "--work" in raw:
+        folder = os.path.abspath(raw[raw.index("--work") + 1])
+        os.makedirs(folder, exist_ok=True)
+        mode = raw[raw.index("--mode") + 1] if "--mode" in raw else "unknown"
+        with open(os.path.join(folder, f"blender-{mode}-error.txt"), "w", encoding="utf-8") as handle:
+            handle.write(traceback.format_exc())
+    raise

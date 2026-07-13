@@ -799,7 +799,9 @@ def _run_short_biped_rig_probe(
             for name, parent, head, tail in SHORT_BIPED_BONES
         ],
         "contacts": {"foot_left": "toe_l", "foot_right": "toe_r"},
-        "sockets": {"hand_left": "hand_l", "hand_right": "hand_r", "projectile_origin": "chest"},
+        # The research rig's legacy suffixes denote X side. Expose anatomical
+        # sockets so negative-X ``hand_l`` is the character's right hand.
+        "sockets": {"hand_left": "hand_r", "hand_right": "hand_l", "projectile_origin": "chest"},
         "human_approval_required": True,
         "human_approved": False,
     }
