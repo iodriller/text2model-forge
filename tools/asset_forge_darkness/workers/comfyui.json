@@ -1,0 +1,23 @@
+{
+  "schema_version": 1,
+  "capability": {
+    "schema_version": 1,
+    "worker_id": "comfyui",
+    "worker_version": "unpinned",
+    "stages": ["D1_concept", "D8_surface"],
+    "operations": ["concept.generate", "concept.inpaint", "texture.patch"],
+    "requires_gpu": true,
+    "exclusive_gpu": true,
+    "supports_cancel": true,
+    "deterministic": false,
+    "input_media_types": ["application/json", "image/png"],
+    "output_media_types": ["image/png", "application/json"]
+  },
+  "adapter": "http",
+  "lifecycle": "discovered",
+  "source_url": "https://github.com/comfyanonymous/ComfyUI",
+  "environment_kind": "windows",
+  "health_url": "http://127.0.0.1:8188/system_stats",
+  "license_gate": "review_required",
+  "blockers": ["Repository revision and every selected checkpoint/LoRA license must be pinned before execution."]
+}

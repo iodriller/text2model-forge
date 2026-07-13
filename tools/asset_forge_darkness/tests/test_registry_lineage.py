@@ -4,7 +4,7 @@ from pathlib import Path
 
 from darkness.lineage import evaluate_release, evaluate_research
 from darkness.registry import candidates_in_priority_order, load_registry
-from darkness.schemas import ArtifactLineage, ModelRuntimeQualification
+from darkness.schemas import ArtifactLineage, ModelRuntimeQualification, WorkerRuntimeQualification
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -23,6 +23,7 @@ def artifact(artifact_id: str, producer: str, parents: list[str] | None = None) 
 def test_registry_prioritizes_permissive_open_models_and_logs_later_candidates() -> None:
     registry = load_registry()
     order = candidates_in_priority_order(registry)
+    assert order.index("triposg-1.5b") < order.index("hunyuan3d-2.1")
     assert order.index("trellis2-4b") < order.index("hunyuan3d-2.1")
     assert order.index("hunyuan3d-2.1") < order.index("r-dmesh")
     assert {item.candidate_id for item in registry.candidates} >= {"r-dmesh", "roblox-cubepart", "spar3d"}
@@ -66,3 +67,31 @@ def test_runtime_qualification_record_is_strict_and_digest_pinned() -> None:
     assert record.semantic_qualified_max_images == 2
     assert record.model_sha256.startswith("sha256:")
     assert any(probe.image_count == 8 and not probe.schema_valid for probe in record.probes)
+
+
+def test_triposg_qualification_records_permissive_lineage_and_exclusions() -> None:
+    path = ROOT / "qualifications" / "triposg-1.5b_windows_rtx5090.json"
+    record = WorkerRuntimeQualification.model_validate_json(path.read_text(encoding="utf-8"))
+    assert record.code_license == "MIT"
+    assert record.weights_license == "MIT"
+    assert record.observed["background_removal_model"] == "none"
+    assert record.observed["connected_surface_components"] == 17
+    assert any("RMBG-1.4" in item for item in record.excluded_dependencies)
+
+
+def test_canonical_qualification_records_passing_skin_stress_and_missing_fit() -> None:
+    path = ROOT / "qualifications" / "canonical-short-biped-v1.json"
+    record = WorkerRuntimeQualification.model_validate_json(path.read_text(encoding="utf-8"))
+    assert record.observed["components"] == 1
+    assert record.observed["skinning_hard_failures"] == []
+    assert record.observed["lod1_skinning_hard_failures"] == []
+    assert record.observed["lod2_skinning_hard_failures"] == []
+    assert record.observed["lod1_faces"] < record.observed["faces"]
+    assert record.observed["lod2_faces"] < record.observed["lod1_faces"]
+    assert record.observed["sprite_sheets"] == 20
+    assert record.observed["body_colliders"] == 3
+    assert record.observed["target_fit"] == "cross_section_envelope_v1"
+    assert record.observed["target_fit_mean_relative_extent_error_after"] < record.observed[
+        "target_fit_mean_relative_extent_error_before"
+    ]
+    assert record.status == "partial"

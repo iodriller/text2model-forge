@@ -1,0 +1,35 @@
+{
+  "schema_version": 1,
+  "capability": {
+    "schema_version": 1,
+    "worker_id": "trellis2.4b",
+    "worker_version": "0.0.0-unpinned",
+    "candidate_id": "trellis2-4b",
+    "stages": ["D2_geometry"],
+    "operations": ["geometry.generate_from_rgba"],
+    "requires_gpu": true,
+    "exclusive_gpu": true,
+    "supports_cancel": true,
+    "deterministic": false,
+    "environment_digest": null,
+    "input_media_types": ["image/png"],
+    "output_media_types": ["model/gltf-binary", "application/json"]
+  },
+  "adapter": "subprocess",
+  "lifecycle": "research_ready",
+  "source_url": "https://github.com/microsoft/TRELLIS.2",
+  "pinned_revision": "75fbf0183001ed9876c8dbb35de6b68552ee08bd",
+  "environment_kind": "wsl2",
+  "executable_candidates": ["%DARKNESS_TRELLIS2_WSL_PYTHON%"],
+  "license_gate": "permitted",
+  "blockers": [
+    "Live RTX 5090 smoke candidate passed transport and mesh-health capture 2026-07-12 (see qualifications/trellis2-4b_wsl2_rtx5090.json): 263.6s end to end, real GLB with PBR textures, by far the most visually coherent/recognizable result of the three geometry candidates qualified so far (TripoSG, InstantMesh, TRELLIS.2) on the same goblin fixture.",
+    "mesh.is_watertight is False and raw connected-component count is very high (134,145) but almost entirely a duplicate/unwelded-vertex artifact of o_voxel's voxel-based surface extraction, not real fragmentation -- trimesh.merge_vertices() drops it to 11,830, still more technical fragments than TripoSG (17) or InstantMesh (10) despite the clearly best visual result. Corpus-level quality qualification and a documented vertex-welding step are still pending before this can be treated as deformation-ready.",
+    "No model weights revision recorded yet; record the exact microsoft/TRELLIS.2-4B snapshot digest for provenance.",
+    "pipeline.run(image) reproducibility surface (seed/generator parameter) is not confirmed against the live source; the adapter seeds torch globally as a conservative approximation.",
+    "RESOLVED 2026-07-12: TRELLIS.2's preprocess_image() only uses the pipeline's internal rembg_model when the input lacks real alpha; when it has real alpha it is used directly. But from_pretrained() unconditionally CONSTRUCTS that rembg_model (a BiRefNet pointed at the gated, non-commercial briaai/RMBG-2.0 in this pipeline's config), downloading its config eagerly regardless of whether run() will ever call it. The adapter now passes the RGBA image through with alpha intact (not composited to opaque RGB, which had been defeating the has-alpha path) and monkeypatches trellis2.pipelines.rembg.BiRefNet to a stub that never touches the network before calling from_pretrained().",
+    "RESOLVED 2026-07-12: the installed transformers==5.13.1 (unpinned by TRELLIS.2's own setup.sh) restructured DINOv3ViTModel so its transformer blocks live at model.model.layer instead of the flat model.layer TRELLIS.2's code expects, raising AttributeError. The adapter monkeypatches DinoV3FeatureExtractor.extract_features with a compatibility shim that checks both layouts.",
+    "RESOLVED 2026-07-12: glb.export(..., extension_webp=True) (the README's own example) failed with \"module 'PIL._webp' has no attribute 'HAVE_WEBPANIM'\", a Pillow/libwebp build mismatch in this environment. The adapter now exports with extension_webp=False (uncompressed PNG textures, larger file, same quality); revisit once the root cause is understood.",
+    "RESOLVED 2026-07-12 (found while qualifying InstantMesh on the same host, then confirmed here too): torch==2.6.0+cu124 -- what this environment's setup.sh installs by default -- reported torch.cuda.is_available()==True but failed real kernel execution on this RTX 5090 with 'CUDA error: no kernel image is available for execution on the device'. Fixed by installing a separate CUDA 12.8 toolkit, upgrading to torch==2.7.1+cu128, and rebuilding all six extensions (flash-attn/nvdiffrast/nvdiffrec/cumesh/flexgemm/o_voxel) against it; flash-attn in particular required forcing a from-source rebuild with --no-cache-dir because pip silently reused a stale prebuilt wheel from the old torch ABI."
+  ]
+}

@@ -1,0 +1,20 @@
+{
+  "schema_version": 1,
+  "capability": {
+    "schema_version": 1,
+    "worker_id": "mesh.deterministic",
+    "worker_version": "0.1.0",
+    "stages": ["D2_geometry", "D4_topology"],
+    "operations": ["mesh.analyze_health", "mesh.repair_structural"],
+    "requires_gpu": false,
+    "exclusive_gpu": false,
+    "supports_cancel": true,
+    "deterministic": true,
+    "input_media_types": ["model/obj"],
+    "output_media_types": ["model/obj", "application/json"]
+  },
+  "adapter": "builtin",
+  "lifecycle": "available",
+  "environment_kind": "builtin",
+  "license_gate": "permitted"
+}
