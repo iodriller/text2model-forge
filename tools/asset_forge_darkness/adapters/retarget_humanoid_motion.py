@@ -15,6 +15,7 @@ import sys
 import traceback
 from pathlib import Path
 
+import bmesh
 import bpy
 from mathutils import Matrix, Quaternion, Vector
 
@@ -59,6 +60,15 @@ CRITICAL_BONES = {
     "walk": ("hips", "hip_l", "knee_l", "ankle_l", "hip_r", "knee_r", "ankle_r"),
     "attack": ("hips", "chest", "shoulder_r", "elbow_r", "wrist_r"),
     "death": ("hips", "spine", "chest", "neck", "head", "hip_l", "hip_r"),
+}
+
+EQUIPMENT = {
+    "iteration": 3,
+    "component_id": "darkness.club.short_biped.v1",
+    "archetype": "one_handed_club",
+    "socket": "hand_right",
+    "bone": "hand_r",
+    "rig_policy": "rigid_socket",
 }
 
 
@@ -133,6 +143,145 @@ def _reset_pose(armature: bpy.types.Object) -> None:
 def _target_height(meshes: set[bpy.types.Object]) -> float:
     points = [obj.matrix_world @ Vector(corner) for obj in meshes for corner in obj.bound_box]
     return max(point.z for point in points) - min(point.z for point in points)
+
+
+def _final_vertex_height(meshes: set[bpy.types.Object]) -> float:
+    """Use the same authoritative vertex-space measure as motion validation."""
+    obj = max(meshes, key=lambda item: len(item.data.vertices))
+    points = [obj.matrix_world @ vertex.co for vertex in obj.data.vertices]
+    return max(point.z for point in points) - min(point.z for point in points)
+
+
+def _create_club(armature: bpy.types.Object, body_height: float) -> bpy.types.Object:
+    """Create a body-relative club whose origin is the right-hand grip socket.
+
+    The mesh is authored along bone-local +Y. Copy Transforms binds the grip to
+    the declared hand bone, so no world-space coordinates or per-frame edits are
+    involved. The dimensions are short-biped proportions, not target-specific
+    absolute guesses.
+    """
+    if EQUIPMENT["bone"] not in armature.pose.bones:
+        raise ValueError(f"equipment socket bone is missing: {EQUIPMENT['bone']}")
+
+    handle_length = body_height * 0.30
+    handle_radius = body_height * 0.022
+    head_length = body_height * 0.26
+    head_radius = body_height * 0.085
+    handle_center = body_height * 0.12
+    head_center = body_height * 0.36
+    along_bone = Matrix.Rotation(-math.pi / 2.0, 4, "X")
+
+    mesh = bpy.data.meshes.new("DarknessClubMesh")
+    geometry = bmesh.new()
+    bmesh.ops.create_cone(
+        geometry,
+        cap_ends=True,
+        cap_tris=False,
+        segments=10,
+        radius1=handle_radius * 0.82,
+        radius2=handle_radius,
+        depth=handle_length,
+        matrix=Matrix.Translation((0.0, handle_center, 0.0)) @ along_bone,
+    )
+    bmesh.ops.create_cone(
+        geometry,
+        cap_ends=True,
+        cap_tris=False,
+        segments=9,
+        radius1=head_radius * 0.56,
+        radius2=head_radius,
+        depth=head_length,
+        matrix=Matrix.Translation((0.0, head_center, 0.0)) @ along_bone,
+    )
+    # An uneven cap and two restrained knots keep the silhouette hand-made at sprite scale.
+    bmesh.ops.create_icosphere(
+        geometry,
+        subdivisions=1,
+        radius=head_radius * 0.94,
+        matrix=Matrix.Translation((head_radius * 0.06, body_height * 0.49, -head_radius * 0.05))
+        @ Matrix.Diagonal((1.0, 0.72, 0.92, 1.0)),
+    )
+    for x, y, z, radius in (
+        (head_radius * 0.78, head_center + head_length * 0.03, head_radius * 0.16, head_radius * 0.30),
+        (-head_radius * 0.68, head_center - head_length * 0.12, -head_radius * 0.22, head_radius * 0.25),
+    ):
+        bmesh.ops.create_icosphere(
+            geometry,
+            subdivisions=1,
+            radius=radius,
+            matrix=Matrix.Translation((x, y, z)),
+        )
+    geometry.to_mesh(mesh)
+    geometry.free()
+    mesh.update()
+
+    club = bpy.data.objects.new("DarknessClub", mesh)
+    bpy.context.scene.collection.objects.link(club)
+    club["darkness_component_id"] = EQUIPMENT["component_id"]
+    club["darkness_socket"] = EQUIPMENT["socket"]
+    club["darkness_socket_bone"] = EQUIPMENT["bone"]
+    club["darkness_rig_policy"] = EQUIPMENT["rig_policy"]
+    constraint = club.constraints.new(type="COPY_TRANSFORMS")
+    constraint.name = "DarknessHandSocket"
+    constraint.target = armature
+    constraint.subtarget = EQUIPMENT["bone"]
+    constraint.target_space = "WORLD"
+    constraint.owner_space = "WORLD"
+    return club
+
+
+def _validate_equipment_binding(
+    armature: bpy.types.Object,
+    club: bpy.types.Object,
+    actions: dict[str, bpy.types.Action],
+    ranges: dict[str, tuple[int, int]],
+    body_height: float,
+) -> dict[str, object]:
+    sampled_errors: list[float] = []
+    maximum_tip_reach = 0.0
+    local_tip = Vector((0.0, body_height * 0.52, 0.0))
+    for clip_name, action in actions.items():
+        armature.animation_data.action = action
+        start, end = ranges[clip_name]
+        for frame in _frame_samples(start, end):
+            bpy.context.scene.frame_set(frame)
+            bpy.context.view_layer.update()
+            evaluated = club.evaluated_get(bpy.context.evaluated_depsgraph_get())
+            socket = armature.matrix_world @ armature.pose.bones[str(EQUIPMENT["bone"])].head
+            grip = evaluated.matrix_world.translation
+            sampled_errors.append((grip - socket).length)
+            maximum_tip_reach = max(maximum_tip_reach, (evaluated.matrix_world @ local_tip - socket).length)
+
+    maximum_error = max(sampled_errors, default=float("inf"))
+    expected_tip_reach = body_height * 0.52
+    passed = (
+        len(club.data.vertices) > 0
+        and maximum_error <= body_height * 0.0001
+        and abs(maximum_tip_reach - expected_tip_reach) <= body_height * 0.01
+    )
+    if not passed:
+        raise RuntimeError(
+            f"club socket gate failed: vertices={len(club.data.vertices)}, "
+            f"maximum_grip_error={maximum_error}, maximum_tip_reach={maximum_tip_reach}"
+        )
+    return {
+        **EQUIPMENT,
+        "mesh": club.name,
+        "vertices": len(club.data.vertices),
+        "body_relative_dimensions": {
+            "handle_length": 0.30,
+            "handle_radius": 0.022,
+            "head_length": 0.26,
+            "head_radius": 0.085,
+            "tip_reach": 0.52,
+        },
+        "sampled_attachment_frames": len(sampled_errors),
+        "maximum_grip_error": maximum_error,
+        "maximum_tip_reach": maximum_tip_reach,
+        "automatic_gate_passed": passed,
+        "human_approval_required": True,
+        "human_approved": False,
+    }
 
 
 def _source_height(armature: bpy.types.Object) -> float:
@@ -446,6 +595,15 @@ def main() -> int:
     for action in list(bpy.data.actions):
         if action not in target_actions.values():
             bpy.data.actions.remove(action)
+    body_height = _final_vertex_height(target_meshes)
+    club = _create_club(target, body_height)
+    equipment_report = _validate_equipment_binding(
+        target,
+        club,
+        target_actions,
+        ranges,
+        body_height,
+    )
     _reset_pose(target)
     target.animation_data.action = None
     bpy.context.scene.frame_set(1)
@@ -468,6 +626,7 @@ def main() -> int:
     report["target"] = {"path": str(target_path), "sha256": _sha256(target_path)}
     report["bone_chains"] = {name: list(chain) for name, chain in BONE_CHAINS.items()}
     report["location_scale"] = location_scale
+    report["equipment"] = equipment_report
     report_path = output_root / "retarget_validation.json"
     _write_json(report_path, report)
 
@@ -501,6 +660,7 @@ def main() -> int:
             "anatomy_family": "short_biped_v1",
             "source_library": "Quaternius Universal Animation Library Standard",
             "source_license": "CC0-1.0",
+            "equipment": equipment_report,
             "clips": {
                 name: {
                     "source_action": CLIPS[name]["source"],

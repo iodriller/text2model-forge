@@ -60,7 +60,10 @@ class LocalDeployRetargetReviewer:
                     "not a request for perfection. Review only the supplied Quaternius-to-goblin idle, walk, attack, "
                     "and death key poses plus exact numerical history. Pay special attention to hips, knees, ankles, "
                     "shoulders, elbows, and whether attack/death read at game scale. You have wide diagnostic freedom "
-                    "and may request a new system capability, but do not edit files or emit code. Static key poses do "
+                    "to judge declared equipment semantics, rigid hand grip, club silhouette, and whether the weapon "
+                    "makes the attack's wind-up/contact/recovery readable. Treat numeric socket error as authoritative "
+                    "for attachment, while the images remain authoritative for visual weapon scale and shape. "
+                    "You may request a new system capability, but do not edit files or emit code. Static key poses do "
                     "not prove timing or foot sliding. Counts of severely compressed faces are soft warnings unless a "
                     "visible deformation is material. If the clips are usable and defects are soft, send them to the "
                     "human gate instead of asking for polish.\n\n"
@@ -93,7 +96,8 @@ class LocalDeployRetargetReviewer:
                     "the exact numbers and image sheet. Do not invent a new improvement plan and do not prefer more "
                     "iteration by default. The purpose is to stop when the retarget is usable enough for a human to "
                     "judge. Static strips cannot prove foot sliding or animation timing. Recommend one more revision "
-                    "only for a clearly visible or numerically supported critical failure.\n\n"
+                    "only for a clearly visible or numerically supported critical failure. Verify equipment and grip "
+                    "claims against the supplied equipment metrics as well as the image.\n\n"
                     f"retarget_numeric_history={numeric_history}\ncritic={critic.model_dump_json()}"
                 ),
             },

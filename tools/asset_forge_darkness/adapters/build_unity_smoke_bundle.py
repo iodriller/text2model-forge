@@ -118,11 +118,121 @@ Write-Output "Darkness Unity smoke validation passed. Return the result folder t
 '''
 
 
+def _interactive_runner_text() -> str:
+    return rf'''param(
+    [string]$Unity
+)
+
+$ErrorActionPreference = "Stop"
+$Root = Split-Path -Parent $MyInvocation.MyCommand.Path
+$Version = "{UNITY_VERSION}"
+if (-not $Unity) {{
+    $Candidates = @(
+        "C:\Program Files\Unity\Hub\Editor\$Version\Editor\Unity.exe",
+        "C:\UnityLocal\$Version\Editor\Unity.exe"
+    )
+    $Unity = $Candidates | Where-Object {{ Test-Path -LiteralPath $_ }} | Select-Object -First 1
+}}
+if (-not $Unity -or -not (Test-Path -LiteralPath $Unity)) {{
+    throw "Unity $Version was not found. Pass -Unity <path-to-Unity.exe>."
+}}
+
+$Project = Join-Path $Root "UnitySmokeProject"
+$env:DARKNESS_CANDIDATE_PACKAGE = Join-Path $Root "candidate"
+$Arguments = @("-projectPath", ('"' + $Project + '"'))
+Start-Process -FilePath $Unity -ArgumentList $Arguments
+Write-Output "Unity review project launched. The Goblin Review window opens automatically; use Darkness > Goblin Motion Review if it was closed."
+'''
+
+
+def _review_html(manifest: dict[str, object]) -> str:
+    actions = [
+        {
+            "name": action["name"],
+            "direction": action["direction"],
+            "frames": action["frames"],
+            "fps": action["fps"],
+            "loop": action["loop"],
+            "sheet": action["sheet"],
+        }
+        for action in manifest["actions"]
+    ]
+    data = json.dumps(actions, separators=(",", ":"))
+    display_name = str(manifest.get("display_name", manifest["asset_id"]))
+    return f'''<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Darkness Goblin Motion Review</title>
+<style>
+  :root {{ color-scheme: dark; font-family: Inter, Segoe UI, sans-serif; }}
+  body {{ margin:0; background:#0a0e14; color:#e7edf4; display:grid; place-items:center; min-height:100vh; }}
+  main {{ width:min(94vw,760px); padding:22px; box-sizing:border-box; }}
+  h1 {{ margin:0 0 4px; font-size:22px; }}
+  .sub {{ color:#91a1b3; margin-bottom:16px; }}
+  .row {{ display:flex; gap:8px; flex-wrap:wrap; margin:8px 0; }}
+  button {{ border:1px solid #334356; border-radius:6px; padding:9px 14px; background:#182230; color:#dce7f3; cursor:pointer; }}
+  button.active {{ background:#2d6683; border-color:#65b7dc; color:white; }}
+  canvas {{ display:block; width:min(100%,560px); aspect-ratio:1; margin:14px auto; background:#09101a; border:1px solid #28394b; border-radius:8px; }}
+  .status {{ text-align:center; color:#b8c6d5; font-variant-numeric:tabular-nums; }}
+  .hint {{ background:#111a25; border-left:3px solid #5da7ca; padding:12px; color:#aebdcb; line-height:1.45; margin-top:14px; }}
+  label {{ margin-left:auto; align-self:center; color:#aebdcb; }}
+</style>
+</head>
+<body>
+<main>
+  <h1>Darkness Goblin — Human Motion Review</h1>
+  <div class="sub">{display_name} · real generated sprite sheets · non-promoting review</div>
+  <div id="actions" class="row"></div>
+  <div id="directions" class="row"></div>
+  <div class="row">
+    <button id="play">Pause [Space]</button><button id="restart">Restart [R]</button>
+    <label><input id="tour" type="checkbox" checked> Auto-tour all motions</label>
+  </div>
+  <canvas id="view" width="560" height="560"></canvas>
+  <div id="status" class="status"></div>
+  <div class="hint">Review foot sliding, attack contact and strength, elbow/knee/hip collapse, silhouette pops, and whether the death reads clearly. Keys 1–4 select motion; arrow keys select direction.</div>
+</main>
+<script>
+const clips={data};
+const names=['idle','walk','attack','death'], directions=['north','south','east','west'];
+let name='idle', direction='south', started=performance.now(), paused=false, pausedAt=0, tour=true, image=null;
+const canvas=document.querySelector('#view'), ctx=canvas.getContext('2d'), status=document.querySelector('#status');
+ctx.imageSmoothingEnabled=true;
+function clip(){{return clips.find(x=>x.name===name&&x.direction===direction)}}
+function duration(c){{return c.loop?2500:(c.frames/c.fps*1000)+800}}
+function setClip(nextName=name,nextDirection=direction){{name=nextName;direction=nextDirection;started=performance.now();paused=false;load();buttons()}}
+function load(){{const c=clip();image=new Image();image.src='candidate/'+c.sheet}}
+function buttonGroup(root, values, labels, current, setter){{root.innerHTML='';values.forEach((v,i)=>{{const b=document.createElement('button');b.textContent=labels[i];b.className=v===current?'active':'';b.onclick=()=>setter(v);root.appendChild(b)}})}}
+function buttons(){{buttonGroup(document.querySelector('#actions'),names,['Idle [1]','Walk [2]','Attack [3]','Death [4]'],name,v=>setClip(v));buttonGroup(document.querySelector('#directions'),directions,['North [↑]','South [↓]','East [→]','West [←]'],direction,v=>setClip(name,v));document.querySelector('#play').textContent=paused?'Play [Space]':'Pause [Space]'}}
+function toggle(){{if(paused){{started+=performance.now()-pausedAt;paused=false}}else{{pausedAt=performance.now();paused=true}}buttons()}}
+function draw(now){{const c=clip(),elapsed=(paused?pausedAt:now)-started;if(tour&&!paused&&elapsed>=duration(c)){{setClip(names[(names.indexOf(name)+1)%names.length]);requestAnimationFrame(draw);return}}let frame=Math.floor(elapsed/1000*c.fps);frame=c.loop?frame%c.frames:Math.min(frame,c.frames-1);ctx.fillStyle='#09101a';ctx.fillRect(0,0,560,560);ctx.strokeStyle='#365068';ctx.globalAlpha=.65;ctx.beginPath();ctx.moveTo(38,459);ctx.lineTo(522,459);ctx.stroke();ctx.globalAlpha=1;if(image&&image.complete)ctx.drawImage(image,frame*256,0,256,256,0,0,560,560);status.textContent=`${{name}} / ${{direction}} · frame ${{frame+1}}/${{c.frames}} · ${{c.fps}} fps · ${{c.loop?'loop':'one-shot'}}`;requestAnimationFrame(draw)}}
+document.querySelector('#play').onclick=toggle;document.querySelector('#restart').onclick=()=>setClip();document.querySelector('#tour').onchange=e=>tour=e.target.checked;
+addEventListener('keydown',e=>{{if(e.key>='1'&&e.key<='4')setClip(names[+e.key-1]);else if(e.key==='ArrowUp')setClip(name,'north');else if(e.key==='ArrowDown')setClip(name,'south');else if(e.key==='ArrowRight')setClip(name,'east');else if(e.key==='ArrowLeft')setClip(name,'west');else if(e.key===' ')toggle();else if(e.key.toLowerCase()==='r')setClip();}});
+load();buttons();requestAnimationFrame(draw);
+</script>
+</body>
+</html>
+'''
+
+
 def _readme_text() -> str:
     return f"""# Darkness standalone Unity smoke check
 
 This bundle checks the candidate in an isolated Unity project. It does not import anything into EmberDefense or modify
 another game project.
+
+## Human motion review
+
+- Open `review.html` for an immediate animation preview using the exact candidate sheets.
+- For the Unity-native viewer, ensure Unity `{UNITY_VERSION}` is licensed, then run
+  `powershell -ExecutionPolicy Bypass -File .\\open_unity_review.ps1`.
+- The Unity Goblin Review window opens automatically. Reopen it from `Darkness > Goblin Motion Review` if needed.
+
+Both viewers provide Idle, Walk, Attack, and Death buttons, four directions, auto-tour, pause, and restart.
+
+## Automated Unity smoke proof
 
 1. Copy this complete folder to the Unity computer.
 2. Ensure Unity `{UNITY_VERSION}` is licensed on that computer.
@@ -162,6 +272,8 @@ def build(package: Path, output: Path, template: Path) -> dict[str, object]:
     _write_json(portable_manifest_path, portable_manifest)
 
     (output / "run_unity_smoke.ps1").write_text(_runner_text(), encoding="utf-8")
+    (output / "open_unity_review.ps1").write_text(_interactive_runner_text(), encoding="utf-8")
+    (output / "review.html").write_text(_review_html(manifest), encoding="utf-8")
     (output / "README.md").write_text(_readme_text(), encoding="utf-8")
     files = []
     for path in sorted(item for item in output.rglob("*") if item.is_file()):

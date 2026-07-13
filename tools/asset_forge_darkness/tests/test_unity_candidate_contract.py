@@ -3,6 +3,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 VALIDATOR = ROOT / "unity_smoke_template/Assets/Editor/DarknessCandidateValidator.cs"
+REVIEW_WINDOW = ROOT / "unity_smoke_template/Assets/Editor/DarknessGoblinReviewWindow.cs"
 
 
 def test_unity_candidate_validator_is_non_promoting_and_hash_bound() -> None:
@@ -34,3 +35,15 @@ def test_unity_smoke_template_is_a_minimal_pinned_project() -> None:
     assert "6000.5.1f1" in version
     assert "0d9463e84828" in version
     assert '"dependencies": {}' in packages
+
+
+def test_unity_human_review_window_plays_all_required_motions_without_promotion() -> None:
+    source = REVIEW_WINDOW.read_text(encoding="utf-8")
+    assert '"idle", "walk", "attack", "death"' in source
+    assert '"north", "south", "east", "west"' in source
+    assert "GUI.DrawTextureWithTexCoords" in source
+    assert "Auto-tour all four motions" in source
+    assert "human_approval_required" in source
+    assert "human_approved" in source
+    assert "ConfigureUnitPrefabs" not in source
+    assert "EmberDefense" not in source

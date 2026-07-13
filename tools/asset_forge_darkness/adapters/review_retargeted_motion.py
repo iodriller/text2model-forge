@@ -37,6 +37,7 @@ def _summary(report: dict[str, object]) -> dict[str, object]:
         "attack_maximum_hand_travel": report["attack_maximum_hand_travel"],
         "death_hips_descent": report["death_hips_descent"],
         "death_head_descent": report["death_head_descent"],
+        "equipment": report.get("equipment"),
         "clips": {
             name: {
                 "source_action": clips[name]["source_action"],
@@ -54,7 +55,10 @@ def _summary(report: dict[str, object]) -> dict[str, object]:
             "raw absolute-pose transfer left arms open and made Punch_Cross poorly readable",
             "idle-relative neutral calibration corrected idle/walk arm posture",
             "Punch_Cross was replaced by Sword_Attack after direct human-visible evidence showed weak readability",
-            "this checkpoint is the first calibrated comparison and has not entered a polish loop",
+            "human review rejected the empty-handed Sword_Attack because a weapon-authored clip needs equipment",
+            "club iteration 1 proved the rigid hand socket but its short round silhouette read as a mace/spoon",
+            "club iteration 2 improved the taper but exposed a pre-deformation body-height measurement mismatch",
+            "current iteration 3 uses final vertex height and targets 52% body-relative club reach",
         ],
     }
 

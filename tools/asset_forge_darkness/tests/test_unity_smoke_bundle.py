@@ -65,6 +65,11 @@ def test_standalone_unity_bundle_builds_and_ingests_hash_bound_result(tmp_path: 
     assert built["directional_actions"] == 16
     assert built["expected_decoded_sprites"] == 16
     assert (bundle / "run_unity_smoke.ps1").is_file()
+    assert (bundle / "open_unity_review.ps1").is_file()
+    assert (bundle / "review.html").is_file()
+    review = (bundle / "review.html").read_text(encoding="utf-8")
+    assert "Auto-tour all motions" in review
+    assert "idle_south.png" in review
     portable = json.loads((bundle / "candidate/candidate_unit_manifest.json").read_text(encoding="utf-8"))
     assert portable["source_master"].startswith("source/")
     first = ARCHIVE(bundle, tmp_path / "bundle.zip")
@@ -73,6 +78,7 @@ def test_standalone_unity_bundle_builds_and_ingests_hash_bound_result(tmp_path: 
     with zipfile.ZipFile(tmp_path / "bundle.zip") as zipped:
         assert "bundle_manifest.json" in zipped.namelist()
         assert "UnitySmokeProject/Assets/Editor/DarknessCandidateValidator.cs" in zipped.namelist()
+        assert "UnitySmokeProject/Assets/Editor/DarknessGoblinReviewWindow.cs" in zipped.namelist()
 
     result = bundle / "result"
     result.mkdir()

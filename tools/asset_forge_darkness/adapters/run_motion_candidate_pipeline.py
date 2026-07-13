@@ -118,6 +118,21 @@ def _status_path(root: Path) -> Path:
     return root / "pipeline_status.json"
 
 
+def _approved_automatic_candidate_manifest(path: Path) -> bool:
+    if not path.is_file():
+        return False
+    try:
+        manifest = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return False
+    return (
+        manifest.get("automatic_gate_passed") is True
+        and manifest.get("hard_failures") == []
+        and manifest.get("human_approval_required") is True
+        and manifest.get("human_approved") is False
+    )
+
+
 def _archive_partial(path: Path) -> None:
     """Preserve an interrupted stage and give the deterministic retry an empty directory."""
     if not path.exists() or not any(path.iterdir()):
@@ -139,6 +154,13 @@ def _record(status: dict[str, object], root: Path, stage: str, state: str, detai
 
 def _write_review_index(root: Path, *, unity_state: str) -> Path:
     path = root / "human_review.md"
+    interactive_review = (
+        "- [Open interactive motion review](unity_human_review/review.html); the matching Unity project opens with "
+        "`unity_human_review/open_unity_review.ps1`."
+        if (root / "unity_human_review/review.html").is_file()
+        else "- [Open interactive motion review](unity_smoke_bundle/review.html); the matching Unity project opens "
+        "with `unity_smoke_bundle/open_unity_review.ps1`."
+    )
     path.write_text(
         "\n".join(
             [
@@ -170,6 +192,7 @@ def _write_review_index(root: Path, *, unity_state: str) -> Path:
                     "Run it on the licensed Unity computer, return its `result` folder, then resume with "
                     "`--unity-result <result-folder>`. No EmberDefense project import is required."
                 ),
+                interactive_review,
                 "",
                 "## Human decision",
                 "",
@@ -333,7 +356,7 @@ def run(args: argparse.Namespace) -> dict[str, object]:
 
     package = root / "sprites/package"
     manifest = package / "candidate_unit_manifest.json"
-    if not manifest.is_file():
+    if not _approved_automatic_candidate_manifest(manifest):
         _archive_partial(package)
         _record(status, root, "sprite_package", "running", "Packaging sheets with alpha/edge/hash gates.")
         _run(
@@ -363,6 +386,8 @@ def run(args: argparse.Namespace) -> dict[str, object]:
                 str(adapters / "review_motion_sprites.py"),
                 "--package",
                 str(package),
+                "--retarget-report",
+                str(retarget_report),
                 "--model",
                 args.model,
             ],

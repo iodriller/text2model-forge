@@ -22,6 +22,7 @@ def _image(path: Path) -> dict[str, object]:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--package", type=Path, required=True)
+    parser.add_argument("--retarget-report", type=Path)
     parser.add_argument("--model", default="qwen3_6_27b")
     args = parser.parse_args(argv)
     package = args.package.resolve()
@@ -34,9 +35,20 @@ def main(argv: list[str] | None = None) -> int:
         "framing_history": [
             "global 4.4 camera made idle/walk/attack too small",
             "2.8 camera made those three clips readable but cropped the far-travel death",
-            "final package uses 2.8 for idle/walk/attack and 4.4 for death; all edge gates pass",
+            "the larger club exposed edge clipping in a fixed 2.8 active-motion camera",
+            "current package measures evaluated body-plus-equipment bounds across every sampled frame and direction, "
+            "then uses one stable auto-frame scale per clip with 10% margin; death retains a 4.4 minimum",
         ],
     }
+    if args.retarget_report:
+        retarget_report = json.loads(args.retarget_report.resolve().read_text(encoding="utf-8"))
+        summary["equipment"] = retarget_report.get("equipment")
+        summary["equipment_history"] = [
+            "empty-handed Sword_Attack failed human semantic review",
+            "club iteration 1 passed its socket gate but looked too small and round",
+            "club iteration 2 improved the taper but exposed a pre-deformation body-height mismatch",
+            "current iteration 3 uses the final validated vertex height and targets 52% body-relative reach",
+        ]
     sheet = package / manifest["review_sheet"]
     reviewer = LocalDeploySpriteReviewer(model=args.model)
     critic = reviewer.review(
