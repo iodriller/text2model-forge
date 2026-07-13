@@ -68,7 +68,8 @@ python -m darkness run-worker --worker-id canonical.short_biped --request C:/pat
 python -m darkness mesh-check --input C:/path/triangular.obj --output C:/path/new-evidence-directory
 python -m darkness glb-component-audit --input C:/path/candidate.glb --output C:/path/new-audit-directory
 python tools/asset_forge_darkness/adapters/build_blender_request.py `
-  --input C:/path/candidate.glb --output C:/path/blender-request.json --operation blender.repair
+  --input C:/path/candidate.glb --output-directory C:/path/blender-evidence `
+  --out C:/path/blender-request.json --job-id blender.example.v1 --operation-id blender.repair
 python -m darkness run-worker --worker-id blender --request C:/path/blender-request.json
 python -m darkness package --package-id goblin.v1 --candidate-id darkness-canonical-short-biped-v1 `
   --source C:/path/validated-output --output C:/path/package `
