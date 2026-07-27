@@ -1,0 +1,25 @@
+{
+  "schema_version": 1,
+  "capability": {
+    "schema_version": 1,
+    "worker_id": "hy-motion.1.0",
+    "worker_version": "acb5ed",
+    "candidate_id": "hy-motion-1.0-standard",
+    "stages": ["D7_motion"],
+    "operations": ["motion.generate"],
+    "requires_gpu": true,
+    "exclusive_gpu": true,
+    "supports_cancel": true,
+    "deterministic": false,
+    "input_media_types": ["application/json"],
+    "output_media_types": ["application/json", "application/octet-stream"]
+  },
+  "adapter": "subprocess",
+  "lifecycle": "discovered",
+  "source_url": "https://github.com/Tencent-Hunyuan/HY-Motion-1.0",
+  "pinned_revision": "acb5ed",
+  "environment_kind": "wsl2",
+  "executable_candidates": [],
+  "license_gate": "review_required",
+  "blockers": ["Parked behind the project-owned procedural motion baseline.", "Canonical motion conversion adapter is not implemented.", "Outputs remain research lineage pending release review."]
+}

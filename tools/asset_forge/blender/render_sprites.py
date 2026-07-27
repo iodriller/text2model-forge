@@ -156,6 +156,49 @@ def position_camera(camera, direction, config):
     camera.rotation_euler = (target - camera.location).to_track_quat("-Z", "Y").to_euler()
 
 
+def required_orthographic_scale(camera, config):
+    """Measure evaluated meshes in camera space so equipment cannot clip silently."""
+    inverse_camera = camera.matrix_world.inverted()
+    aspect = float(config["render_size"][0]) / float(config["render_size"][1])
+    maximum_x = 0.0
+    maximum_y = 0.0
+    depsgraph = bpy.context.evaluated_depsgraph_get()
+    for obj in bpy.context.scene.objects:
+        if obj.type != "MESH" or obj.hide_render:
+            continue
+        evaluated = obj.evaluated_get(depsgraph)
+        mesh = evaluated.to_mesh()
+        try:
+            for vertex in mesh.vertices:
+                camera_point = inverse_camera @ (evaluated.matrix_world @ vertex.co)
+                maximum_x = max(maximum_x, abs(float(camera_point.x)))
+                maximum_y = max(maximum_y, abs(float(camera_point.y)))
+        finally:
+            evaluated.to_mesh_clear()
+    if maximum_x <= 0.0 or maximum_y <= 0.0:
+        raise RuntimeError("Auto-frame found no visible evaluated mesh bounds")
+    return max(maximum_y * 2.0, maximum_x * 2.0 / aspect)
+
+
+def auto_frame_animation(camera, animation_object, action, animation_config, config):
+    """Choose one stable scale for every frame and direction in a clip."""
+    frame_count = int(animation_config["frames"])
+    loop = bool(animation_config.get("loop", False))
+    required = 0.0
+    for direction in config["directions"]:
+        position_camera(camera, direction, config)
+        for index in range(frame_count):
+            frame = sampled_frame(action, index, frame_count, loop, animation_config) if action is not None else float(index + 1)
+            bpy.context.scene.frame_set(int(math.floor(frame)), subframe=frame - math.floor(frame))
+            bpy.context.view_layer.update()
+            required = max(required, required_orthographic_scale(camera, config))
+    margin = float(config.get("auto_frame_margin_fraction", 0.10))
+    if margin < 0.0 or margin >= 0.4:
+        raise RuntimeError("auto_frame_margin_fraction must be in [0, 0.4)")
+    minimum = float(config.get("orthographic_scale", 0.0))
+    return max(minimum, required * (1.0 + 2.0 * margin))
+
+
 def build_depth_tree(scene, config):
     """Compositor tree whose OUTPUT is normalized depth (white = near).
 
@@ -342,8 +385,20 @@ def main():
             animation_object.animation_data.action = action
         frame_count = int(animation_config["frames"])
         loop = bool(animation_config.get("loop", False))
+        view_config = dict(config)
+        view_config.update(animation_config.get("camera", {}))
+        if view_config.get("auto_frame", False):
+            camera.data.ortho_scale = auto_frame_animation(
+                camera,
+                animation_object,
+                action,
+                animation_config,
+                view_config,
+            )
+        else:
+            camera.data.ortho_scale = float(view_config.get("orthographic_scale", 4.6))
         for direction in config["directions"]:
-            position_camera(camera, direction, config)
+            position_camera(camera, direction, view_config)
             output_folder = os.path.join(frames_root, config["id"], animation_name, direction)
             os.makedirs(output_folder, exist_ok=True)
             depth_folder = os.path.join(frames_root, config["id"] + "-depth", animation_name, direction)

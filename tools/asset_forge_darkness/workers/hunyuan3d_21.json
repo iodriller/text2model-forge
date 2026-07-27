@@ -1,0 +1,25 @@
+{
+  "schema_version": 1,
+  "capability": {
+    "schema_version": 1,
+    "worker_id": "hunyuan3d.2.1",
+    "worker_version": "82920d",
+    "candidate_id": "hunyuan3d-2.1",
+    "stages": ["D2_geometry", "D8_surface"],
+    "operations": ["geometry.generate", "texture.generate_pbr"],
+    "requires_gpu": true,
+    "exclusive_gpu": true,
+    "supports_cancel": true,
+    "deterministic": false,
+    "input_media_types": ["image/png", "model/obj"],
+    "output_media_types": ["model/obj", "model/gltf-binary", "image/png", "application/json"]
+  },
+  "adapter": "subprocess",
+  "lifecycle": "discovered",
+  "source_url": "https://github.com/Tencent-Hunyuan/Hunyuan3D-2.1",
+  "pinned_revision": "82920d",
+  "environment_kind": "wsl2",
+  "executable_candidates": [],
+  "license_gate": "review_required",
+  "blockers": ["Parked behind permissive open-source-first geometry workers.", "Checkpoint execution and output quality are not qualified.", "All outputs must retain research lineage before release review."]
+}
