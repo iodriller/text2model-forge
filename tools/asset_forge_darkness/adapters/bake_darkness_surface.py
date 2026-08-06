@@ -144,7 +144,7 @@ def _review_board(
         pairs.append((before, after))
         deltas.append(_difference(before, after))
         alpha = ImageChops.difference(before.getchannel("A"), after.getchannel("A"))
-        alpha_mismatches.append(sum(1 for value in alpha.getdata() if value != 0))
+        alpha_mismatches.append(sum(1 for value in alpha.get_flattened_data() if value != 0))
 
     cell = 384
     header = 64

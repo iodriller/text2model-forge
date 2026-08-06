@@ -27,8 +27,8 @@ class GrowEdgesTests(unittest.TestCase):
         image.paste(Image.new("RGBA", (4, 4), (90, 90, 90, 137)), (6, 6))
         grown = grow_edges(image, steps=2)
         self.assertEqual(
-            list(image.getchannel("A").getdata()),
-            list(grown.getchannel("A").getdata()),
+            list(image.getchannel("A").get_flattened_data()),
+            list(grown.getchannel("A").get_flattened_data()),
         )
 
 

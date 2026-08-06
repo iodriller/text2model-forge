@@ -9,8 +9,11 @@ description = "Independent, evidence-driven AI asset compiler"
 requires-python = ">=3.11"
 dependencies = [
   "httpx>=0.27,<1",
-  "Pillow>=10,<13",
+  "networkx>=3,<4",
+  "numpy>=1.26,<3",
+  "Pillow>=12.3,<13",
   "pydantic>=2.8,<3",
+  "trimesh>=4.4,<5",
 ]
 
 [tool.setuptools.packages.find]

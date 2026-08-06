@@ -30,7 +30,7 @@
         "Code and VAST-AI/TripoSG weights are MIT.",
         "Darkness requires a pre-masked RGBA input and does not download the non-commercial BRIA RMBG dependency.",
         "Windows uses the repository's CPU marching-cubes path because compiled DiSo is unavailable.",
-        "Local environment removed 2026-07-12 (14 GB venv+weights) after demoting this candidate to offline fallback and retiring the Python 3.10 install it required; needs a Python 3.12 rebuild before it can run again."
+        "Local environment removed 2026-07-12 (14 GB venv+weights) after demoting this candidate to offline fallback and retiring the Python 3.10 install it required; the CUDA 13.0 rebuild baseline now uses security-fixed PyTorch/Diffusers/Transformers versions and needs a fresh Python 3.12 live qualification before it can run again."
       ]
     },
     {

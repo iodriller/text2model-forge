@@ -79,7 +79,8 @@ def test_worker_manager_captures_output_and_times_out_process_tree(tmp_path, mon
         )
     )
     assert success.return_code == 0
-    assert "worker-ok" in open(success.stdout_path, encoding="utf-8").read()
+    with open(success.stdout_path, encoding="utf-8") as stdout:
+        assert "worker-ok" in stdout.read()
 
     timed = manager.run(
         WorkerJob(
