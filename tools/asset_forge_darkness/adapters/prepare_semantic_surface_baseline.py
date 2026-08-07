@@ -17,6 +17,7 @@ def _arguments() -> argparse.Namespace:
     parser.add_argument("--source", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--report", type=Path, required=True)
+    parser.add_argument("--asset-spec", type=Path)
     return parser.parse_args(raw)
 
 
@@ -28,7 +29,13 @@ def _sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
-def _material(name: str, dark: tuple[float, float, float], light: tuple[float, float, float], roughness: float):
+def _material(
+    name: str,
+    dark: tuple[float, float, float],
+    light: tuple[float, float, float],
+    roughness: float,
+    metallic: float = 0.0,
+):
     material = bpy.data.materials.get(name) or bpy.data.materials.new(name)
     material.use_nodes = True
     nodes = material.node_tree.nodes
@@ -37,7 +44,7 @@ def _material(name: str, dark: tuple[float, float, float], light: tuple[float, f
     output = nodes.new("ShaderNodeOutputMaterial")
     principled = nodes.new("ShaderNodeBsdfPrincipled")
     principled.inputs["Roughness"].default_value = roughness
-    principled.inputs["Metallic"].default_value = 0.0
+    principled.inputs["Metallic"].default_value = metallic
     coordinates = nodes.new("ShaderNodeTexCoord")
     noise = nodes.new("ShaderNodeTexNoise")
     noise.inputs["Scale"].default_value = 7.0
@@ -55,68 +62,105 @@ def _material(name: str, dark: tuple[float, float, float], light: tuple[float, f
     return material
 
 
-def _semantic_materials():
+def _material_descriptor(description: str, index: int):
+    value = description.lower()
+    if any(token in value for token in ("steel", "iron", "metal", "silver")):
+        colors = ((0.025, 0.035, 0.045), (0.20, 0.24, 0.27), 0.46, 0.74)
+    elif "stone" in value:
+        colors = ((0.08, 0.075, 0.07), (0.34, 0.32, 0.28), 0.91, 0.0)
+    elif any(token in value for token in ("wood", "timber")):
+        colors = ((0.065, 0.022, 0.008), (0.30, 0.12, 0.025), 0.88, 0.0)
+    elif "leather" in value:
+        colors = ((0.055, 0.025, 0.012), (0.24, 0.105, 0.035), 0.84, 0.0)
+    elif any(token in value for token in ("blue", "cobalt")):
+        colors = ((0.018, 0.035, 0.075), (0.055, 0.16, 0.34), 0.91, 0.0)
+    elif any(token in value for token in ("red", "crimson")):
+        colors = ((0.075, 0.012, 0.012), (0.34, 0.045, 0.025), 0.9, 0.0)
+    elif "skin" in value and any(token in value for token in ("olive", "green", "goblin")):
+        colors = ((0.09, 0.16, 0.045), (0.30, 0.43, 0.12), 0.82, 0.0)
+    elif "skin" in value:
+        colors = ((0.18, 0.075, 0.045), (0.54, 0.28, 0.17), 0.78, 0.0)
+    elif any(token in value for token in ("cloth", "fabric", "linen")):
+        colors = ((0.025, 0.022, 0.030), (0.105, 0.075, 0.095), 0.92, 0.0)
+    else:
+        hue = (index * 0.173) % 1.0
+        colors = ((0.04 + hue * 0.05, 0.045, 0.055), (0.15 + hue * 0.12, 0.16, 0.18), 0.84, 0.0)
+    dark, light, roughness, metallic = colors
+    key = f"surface_{index:02d}"
+    material = _material(
+        f"Darkness {description.title()}", dark, light, roughness, metallic
+    )
+    return key, material
+
+
+def _semantic_materials(spec):
+    descriptions = [str(item) for item in spec.get("materials", []) if str(item).strip()]
+    if not descriptions:
+        descriptions = ["neutral worn material"]
     return {
-        "skin": _material("Darkness Skin Olive", (0.09, 0.16, 0.045), (0.30, 0.43, 0.12), 0.82),
-        "cloth": _material("Darkness Cloth Charcoal", (0.025, 0.022, 0.030), (0.105, 0.075, 0.095), 0.92),
-        "leather": _material("Darkness Leather Worn", (0.055, 0.025, 0.012), (0.24, 0.105, 0.035), 0.84),
-        "wood": _material("Darkness Club Wood", (0.065, 0.022, 0.008), (0.30, 0.12, 0.025), 0.88),
-        "iron": _material("Darkness Club Iron", (0.018, 0.022, 0.026), (0.16, 0.19, 0.20), 0.58),
+        key: {"description": description, "material": material}
+        for index, description in enumerate(descriptions)
+        for key, material in [_material_descriptor(description, index)]
     }
 
 
-def _assign_body(obj, materials) -> dict[str, int]:
+def _select_index(materials, *tokens: str) -> int:
+    records = list(materials.values())
+    for index, record in enumerate(records):
+        description = record["description"].lower()
+        if any(token in description for token in tokens):
+            return index
+    return 0
+
+
+def _assign_mesh(obj, materials, *, asset_kind: str) -> dict[str, int]:
+    records = list(materials.items())
     obj.data.materials.clear()
-    keys = ("skin", "cloth", "leather")
-    for key in keys:
-        obj.data.materials.append(materials[key])
-    indices = {key: index for index, key in enumerate(keys)}
-    group_names = {group.index: group.name.lower() for group in obj.vertex_groups}
+    for _, record in records:
+        obj.data.materials.append(record["material"])
+    counts = {key: 0 for key, _ in records}
+    if len(records) == 1:
+        for polygon in obj.data.polygons:
+            polygon.material_index = 0
+            counts[records[0][0]] += 1
+        return counts
+
+    name = obj.name.lower()
+    if any(token in name for token in ("weapon", "sword", "blade", "club")):
+        preferred = _select_index(materials, "steel", "iron", "metal", "wood")
+    elif "shield" in name:
+        preferred = _select_index(materials, "wood", "steel", "iron", "metal")
+    elif asset_kind not in {"character", "creature"}:
+        preferred = next(
+            (
+                index
+                for index, (_, record) in enumerate(records)
+                if any(token in name for token in record["description"].lower().split())
+            ),
+            0,
+        )
+    else:
+        preferred = -1
+
     world_z = [float((obj.matrix_world @ vertex.co).z) for vertex in obj.data.vertices]
     minimum, maximum = min(world_z), max(world_z)
     height = max(maximum - minimum, 1e-6)
-    counts = {key: 0 for key in keys}
+    cloth = _select_index(materials, "cloth", "fabric", "linen", "blue", "cobalt")
+    leather = _select_index(materials, "leather")
     for polygon in obj.data.polygons:
-        vertices = [obj.data.vertices[index] for index in polygon.vertices]
-        normalized_z = (sum(world_z[item.index] for item in vertices) / len(vertices) - minimum) / height
-        weights: dict[str, float] = {}
-        for vertex in vertices:
-            for assignment in vertex.groups:
-                name = group_names.get(assignment.group, "")
-                weights[name] = weights.get(name, 0.0) + float(assignment.weight)
-        relevant = {name for name, value in weights.items() if value >= 0.15}
-        is_leg = any(token in name for name in relevant for token in ("foot", "ankle", "shin", "calf"))
-        is_pelvis = any(token in name for name in relevant for token in ("hip", "pelvis", "thigh"))
-        if normalized_z < 0.19 or (is_leg and normalized_z < 0.31):
-            semantic = "leather"
-        elif 0.43 <= normalized_z <= 0.485:
-            semantic = "leather"
-        elif (is_pelvis and normalized_z < 0.56) or 0.31 <= normalized_z < 0.43:
-            semantic = "cloth"
+        normalized_z = (
+            sum(world_z[index] for index in polygon.vertices) / len(polygon.vertices) - minimum
+        ) / height
+        if preferred >= 0:
+            index = preferred
+        elif normalized_z < 0.20 or 0.43 <= normalized_z <= 0.49:
+            index = leather
+        elif 0.28 <= normalized_z < 0.57:
+            index = cloth
         else:
-            semantic = "skin"
-        polygon.material_index = indices[semantic]
-        counts[semantic] += 1
-    return counts
-
-
-def _assign_club(obj, materials) -> dict[str, int]:
-    obj.data.materials.clear()
-    keys = ("wood", "iron")
-    for key in keys:
-        obj.data.materials.append(materials[key])
-    indices = {key: index for index, key in enumerate(keys)}
-    local_y = [float(vertex.co.y) for vertex in obj.data.vertices]
-    minimum, maximum = min(local_y), max(local_y)
-    length = max(maximum - minimum, 1e-6)
-    counts = {key: 0 for key in keys}
-    for polygon in obj.data.polygons:
-        normalized_y = (
-            sum(local_y[index] for index in polygon.vertices) / len(polygon.vertices) - minimum
-        ) / length
-        semantic = "iron" if 0.53 <= normalized_y <= 0.63 or normalized_y >= 0.93 else "wood"
-        polygon.material_index = indices[semantic]
-        counts[semantic] += 1
+            index = 0
+        polygon.material_index = index
+        counts[records[index][0]] += 1
     return counts
 
 
@@ -128,18 +172,24 @@ def main() -> int:
     error_path = report_path.parent / "semantic_surface_error.txt"
     if error_path.is_file():
         error_path.unlink()
-    materials = _semantic_materials()
+    spec = (
+        json.loads(args.asset_spec.resolve().read_text(encoding="utf-8"))
+        if args.asset_spec is not None
+        else {
+            "asset_kind": "character",
+            "materials": ["olive skin", "charcoal cloth", "worn leather", "dark wood", "iron"],
+        }
+    )
+    materials = _semantic_materials(spec)
     meshes = [obj for obj in bpy.context.scene.objects if obj.type == "MESH" and not obj.hide_render]
     if not meshes:
         raise RuntimeError("surface baseline found no visible meshes")
-    club = bpy.data.objects.get("DarknessClub")
-    if club is None or club.type != "MESH":
-        raise RuntimeError("surface baseline requires DarknessClub")
-    bodies = [obj for obj in meshes if obj is not club]
-    body = max(bodies, key=lambda obj: len(obj.data.polygons))
-    assignments = {body.name: _assign_body(body, materials), club.name: _assign_club(club, materials)}
-    body["darkness_surface_semantics"] = "skin,cloth,leather"
-    club["darkness_surface_semantics"] = "wood,iron"
+    assignments = {
+        obj.name: _assign_mesh(obj, materials, asset_kind=str(spec.get("asset_kind", "character")))
+        for obj in meshes
+    }
+    for obj in meshes:
+        obj["darkness_surface_semantics"] = ",".join(materials)
     output.parent.mkdir(parents=True, exist_ok=True)
     bpy.ops.wm.save_as_mainfile(filepath=str(output))
     report = {
@@ -149,16 +199,12 @@ def main() -> int:
         "source_sha256": _sha256(source),
         "output": str(output),
         "output_sha256": _sha256(output),
-        "body": body.name,
-        "club": club.name,
+        "asset_spec": str(args.asset_spec.resolve()) if args.asset_spec is not None else None,
+        "asset_spec_sha256": _sha256(args.asset_spec.resolve()) if args.asset_spec is not None else None,
+        "asset_kind": spec.get("asset_kind", "character"),
+        "meshes": [obj.name for obj in meshes],
         "material_face_counts": assignments,
-        "palette": {
-            "skin": "desaturated_olive",
-            "cloth": "charcoal_plum",
-            "leather": "worn_brown",
-            "wood": "dark_warm_wood",
-            "iron": "cold_dark_iron",
-        },
+        "palette": {key: record["description"] for key, record in materials.items()},
         "automatic_gate_passed": all(sum(values.values()) > 0 for values in assignments.values()),
     }
     report_path.parent.mkdir(parents=True, exist_ok=True)

@@ -3,10 +3,10 @@
   "capability": {
     "schema_version": 1,
     "worker_id": "blender",
-    "worker_version": "4.5.11-darkness.6",
+    "worker_version": "4.5.11-darkness.7",
     "candidate_id": "blender-4.5-lts",
     "stages": ["D2_geometry", "D3_anatomy", "D4_topology", "D5_rig", "D6_skinning", "D7_motion", "D8_surface", "D9_optimization", "D10_export"],
-    "operations": ["blender.analyze", "blender.repair", "blender.repair_retopology", "blender.propose_short_biped_rig", "blender.author_short_biped_motion", "blender.render_diagnostics", "blender.export"],
+    "operations": ["blender.analyze", "blender.repair", "blender.repair_retopology", "blender.propose_short_biped_rig", "blender.author_short_biped_motion", "blender.author_rigid_articulation", "blender.render_diagnostics", "blender.export"],
     "requires_gpu": false,
     "exclusive_gpu": false,
     "supports_cancel": false,

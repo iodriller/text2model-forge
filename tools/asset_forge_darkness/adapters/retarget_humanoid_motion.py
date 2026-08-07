@@ -78,6 +78,8 @@ EQUIPMENT = {
     "source_weapon_bone": "hand_r",
     "side_resolution_method": "source_motion_dominance_plus_rest_x_alignment_v1",
     "rig_policy": "articulated_digit_grip_v1",
+    "object_name": "DarknessClub",
+    "shield": None,
 }
 
 HANDLE_RADIUS_FRACTION = 0.018
@@ -90,7 +92,46 @@ def _arguments() -> argparse.Namespace:
     parser.add_argument("--source", type=Path, required=True)
     parser.add_argument("--output-directory", type=Path, required=True)
     parser.add_argument("--render-size", type=int, default=448)
+    parser.add_argument(
+        "--character-spec",
+        type=Path,
+        help="Optional Darkness Studio character_spec.json; defaults to the historical club fixture.",
+    )
     return parser.parse_args(argv)
+
+
+def _load_equipment_spec(path: Path | None) -> None:
+    if path is None:
+        return
+    value = json.loads(path.resolve().read_text(encoding="utf-8"))
+    equipment = list(value.get("equipment") or [])
+    weapons = [item for item in equipment if item.get("category") == "weapon"]
+    if len(weapons) != 1:
+        raise ValueError("Studio humanoid retarget currently requires exactly one weapon")
+    weapon = weapons[0]
+    if weapon.get("side") != "right" or weapon.get("socket") != "hand_right.grip":
+        raise ValueError("Studio weapon contract requires the anatomical right-hand grip")
+    description = str(weapon.get("description", "")).lower()
+    archetype = "one_handed_sword" if "sword" in description or "sword" in str(weapon.get("equipment_id")) else "one_handed_club"
+    shields = [item for item in equipment if item.get("category") == "shield"]
+    if len(shields) > 1:
+        raise ValueError("Studio humanoid retarget supports at most one shield")
+    shield = shields[0] if shields else None
+    if shield is not None and (
+        shield.get("side") != "left"
+        or shield.get("socket") != "forearm_left.shield"
+        or shield.get("grip") != "forearm_strap"
+    ):
+        raise ValueError("Studio shield contract requires the anatomical left forearm strap")
+    EQUIPMENT.update(
+        {
+            "component_id": str(weapon["equipment_id"]),
+            "archetype": archetype,
+            "object_name": "DarknessWeapon",
+            "shield": shield,
+            "studio_character_spec": str(path.resolve()),
+        }
+    )
 
 
 def _sha256(path: Path) -> str:
@@ -677,7 +718,7 @@ def _build_articulated_grip(
 
 
 def _create_club(armature: bpy.types.Object, body_height: float) -> bpy.types.Object:
-    """Create a body-relative club whose origin is the resolved weapon-hand socket.
+    """Create a body-relative one-handed weapon at the resolved anatomical-right socket.
 
     The mesh is authored along bone-local +Y. Copy Transforms binds the grip to
     the declared hand bone, so no world-space coordinates or per-frame edits are
@@ -688,15 +729,16 @@ def _create_club(armature: bpy.types.Object, body_height: float) -> bpy.types.Ob
     if socket_bone not in armature.pose.bones:
         raise ValueError(f"equipment socket bone is missing: {socket_bone}")
 
-    handle_length = body_height * 0.30
+    is_sword = EQUIPMENT["archetype"] == "one_handed_sword"
+    handle_length = body_height * (0.16 if is_sword else 0.30)
     handle_radius = body_height * HANDLE_RADIUS_FRACTION
-    head_length = body_height * 0.26
-    head_radius = body_height * 0.085
-    handle_center = body_height * 0.12
-    head_center = body_height * 0.36
+    head_length = body_height * (0.43 if is_sword else 0.26)
+    head_radius = body_height * (0.032 if is_sword else 0.085)
+    handle_center = body_height * (0.035 if is_sword else 0.12)
+    head_center = body_height * (0.335 if is_sword else 0.36)
     along_bone = Matrix.Rotation(-math.pi / 2.0, 4, "X")
 
-    mesh = bpy.data.meshes.new("DarknessClubMesh")
+    mesh = bpy.data.meshes.new("DarknessWeaponMesh" if is_sword else "DarknessClubMesh")
     geometry = bmesh.new()
     bmesh.ops.create_cone(
         geometry,
@@ -708,44 +750,69 @@ def _create_club(armature: bpy.types.Object, body_height: float) -> bpy.types.Ob
         depth=handle_length,
         matrix=Matrix.Translation((0.0, handle_center, 0.0)) @ along_bone,
     )
-    bmesh.ops.create_cone(
-        geometry,
-        cap_ends=True,
-        cap_tris=False,
-        segments=9,
-        radius1=head_radius * 0.56,
-        radius2=head_radius,
-        depth=head_length,
-        matrix=Matrix.Translation((0.0, head_center, 0.0)) @ along_bone,
-    )
-    # An uneven cap and two restrained knots keep the silhouette hand-made at sprite scale.
-    bmesh.ops.create_icosphere(
-        geometry,
-        subdivisions=1,
-        radius=head_radius * 0.94,
-        matrix=Matrix.Translation((head_radius * 0.06, body_height * 0.49, -head_radius * 0.05))
-        @ Matrix.Diagonal((1.0, 0.72, 0.92, 1.0)),
-    )
-    for x, y, z, radius in (
-        (head_radius * 0.78, head_center + head_length * 0.03, head_radius * 0.16, head_radius * 0.30),
-        (-head_radius * 0.68, head_center - head_length * 0.12, -head_radius * 0.22, head_radius * 0.25),
-    ):
+    if is_sword:
+        # Broad low-poly blade, guard, and pommel; all dimensions remain body-relative.
+        blade = bmesh.ops.create_cube(geometry, size=1.0)["verts"]
+        bmesh.ops.transform(
+            geometry,
+            verts=blade,
+            matrix=Matrix.Translation((0.0, head_center, 0.0))
+            @ Matrix.Diagonal((body_height * 0.055, head_length, body_height * 0.012, 1.0)),
+        )
+        guard = bmesh.ops.create_cube(geometry, size=1.0)["verts"]
+        bmesh.ops.transform(
+            geometry,
+            verts=guard,
+            matrix=Matrix.Translation((0.0, body_height * 0.125, 0.0))
+            @ Matrix.Diagonal((body_height * 0.18, body_height * 0.025, body_height * 0.025, 1.0)),
+        )
         bmesh.ops.create_icosphere(
             geometry,
             subdivisions=1,
-            radius=radius,
-            matrix=Matrix.Translation((x, y, z)),
+            radius=body_height * 0.035,
+            matrix=Matrix.Translation((0.0, -body_height * 0.065, 0.0)),
         )
+    else:
+        bmesh.ops.create_cone(
+            geometry,
+            cap_ends=True,
+            cap_tris=False,
+            segments=9,
+            radius1=head_radius * 0.56,
+            radius2=head_radius,
+            depth=head_length,
+            matrix=Matrix.Translation((0.0, head_center, 0.0)) @ along_bone,
+        )
+        # An uneven cap and restrained knots keep the silhouette hand-made at sprite scale.
+        bmesh.ops.create_icosphere(
+            geometry,
+            subdivisions=1,
+            radius=head_radius * 0.94,
+            matrix=Matrix.Translation((head_radius * 0.06, body_height * 0.49, -head_radius * 0.05))
+            @ Matrix.Diagonal((1.0, 0.72, 0.92, 1.0)),
+        )
+        for x, y, z, radius in (
+            (head_radius * 0.78, head_center + head_length * 0.03, head_radius * 0.16, head_radius * 0.30),
+            (-head_radius * 0.68, head_center - head_length * 0.12, -head_radius * 0.22, head_radius * 0.25),
+        ):
+            bmesh.ops.create_icosphere(
+                geometry,
+                subdivisions=1,
+                radius=radius,
+                matrix=Matrix.Translation((x, y, z)),
+            )
     geometry.to_mesh(mesh)
     geometry.free()
     mesh.update()
 
-    club = bpy.data.objects.new("DarknessClub", mesh)
+    club = bpy.data.objects.new(str(EQUIPMENT["object_name"]), mesh)
     bpy.context.scene.collection.objects.link(club)
     club["darkness_component_id"] = EQUIPMENT["component_id"]
     club["darkness_socket"] = EQUIPMENT["socket"]
     club["darkness_socket_bone"] = socket_bone
     club["darkness_rig_policy"] = EQUIPMENT["rig_policy"]
+    club["darkness_equipment_category"] = "weapon"
+    club["darkness_tip_reach_fraction"] = 0.55 if is_sword else 0.52
     constraint = club.constraints.new(type="COPY_TRANSFORMS")
     constraint.name = "DarknessHandSocket"
     constraint.target = armature
@@ -753,6 +820,49 @@ def _create_club(armature: bpy.types.Object, body_height: float) -> bpy.types.Ob
     constraint.target_space = "WORLD"
     constraint.owner_space = "WORLD"
     return club
+
+
+def _create_shield(armature: bpy.types.Object, body_height: float) -> bpy.types.Object | None:
+    shield_spec = EQUIPMENT.get("shield")
+    if not shield_spec:
+        return None
+    socket_bone = "hand_r"  # target negative/positive suffix convention: hand_r is anatomical left.
+    if socket_bone not in armature.pose.bones:
+        raise ValueError(f"shield socket bone is missing: {socket_bone}")
+    mesh = bpy.data.meshes.new("DarknessShieldMesh")
+    geometry = bmesh.new()
+    bmesh.ops.create_icosphere(
+        geometry,
+        subdivisions=2,
+        radius=1.0,
+        matrix=Matrix.Translation((0.0, body_height * 0.05, body_height * 0.055))
+        @ Matrix.Diagonal((body_height * 0.22, body_height * 0.34, body_height * 0.028, 1.0)),
+    )
+    # A visible inner strap communicates the forearm attachment in close-up review.
+    strap = bmesh.ops.create_cube(geometry, size=1.0)["verts"]
+    bmesh.ops.transform(
+        geometry,
+        verts=strap,
+        matrix=Matrix.Translation((0.0, body_height * 0.02, -body_height * 0.04))
+        @ Matrix.Diagonal((body_height * 0.055, body_height * 0.18, body_height * 0.025, 1.0)),
+    )
+    geometry.to_mesh(mesh)
+    geometry.free()
+    mesh.update()
+    shield = bpy.data.objects.new("DarknessShield", mesh)
+    bpy.context.scene.collection.objects.link(shield)
+    shield["darkness_component_id"] = str(shield_spec["equipment_id"])
+    shield["darkness_socket"] = "forearm_left.shield"
+    shield["darkness_socket_bone"] = socket_bone
+    shield["darkness_rig_policy"] = "rigid_forearm_strap_v1"
+    shield["darkness_equipment_category"] = "shield"
+    constraint = shield.constraints.new(type="COPY_TRANSFORMS")
+    constraint.name = "DarknessLeftForearmShieldSocket"
+    constraint.target = armature
+    constraint.subtarget = socket_bone
+    constraint.target_space = "WORLD"
+    constraint.owner_space = "WORLD"
+    return shield
 
 
 def _validate_equipment_binding(
@@ -767,7 +877,8 @@ def _validate_equipment_binding(
 ) -> dict[str, object]:
     sampled_errors: list[float] = []
     maximum_tip_reach = 0.0
-    local_tip = Vector((0.0, body_height * 0.52, 0.0))
+    tip_reach_fraction = float(club.get("darkness_tip_reach_fraction", 0.52))
+    local_tip = Vector((0.0, body_height * tip_reach_fraction, 0.0))
     socket_bone = str(EQUIPMENT["grip_socket_bone"])
     for clip_name, action in actions.items():
         armature.animation_data.action = action
@@ -782,7 +893,7 @@ def _validate_equipment_binding(
             maximum_tip_reach = max(maximum_tip_reach, (evaluated.matrix_world @ local_tip - socket).length)
 
     maximum_error = max(sampled_errors, default=float("inf"))
-    expected_tip_reach = body_height * 0.52
+    expected_tip_reach = body_height * tip_reach_fraction
     passed = (
         len(club.data.vertices) > 0
         and maximum_error <= body_height * 0.0001
@@ -792,7 +903,7 @@ def _validate_equipment_binding(
     )
     if not passed:
         raise RuntimeError(
-            f"club socket gate failed: vertices={len(club.data.vertices)}, "
+            f"weapon socket gate failed: vertices={len(club.data.vertices)}, "
             f"maximum_grip_error={maximum_error}, maximum_tip_reach={maximum_tip_reach}"
         )
     return {
@@ -800,11 +911,11 @@ def _validate_equipment_binding(
         "mesh": club.name,
         "vertices": len(club.data.vertices),
         "body_relative_dimensions": {
-            "handle_length": 0.30,
+            "handle_length": 0.16 if EQUIPMENT["archetype"] == "one_handed_sword" else 0.30,
             "handle_radius": HANDLE_RADIUS_FRACTION,
             "head_length": 0.26,
             "head_radius": 0.085,
-            "tip_reach": 0.52,
+            "tip_reach": tip_reach_fraction,
         },
         "sampled_attachment_frames": len(sampled_errors),
         "maximum_grip_error": maximum_error,
@@ -812,6 +923,46 @@ def _validate_equipment_binding(
         "source_hand_analysis": source_hand_analysis,
         "grip_corrective": grip_corrective,
         "automatic_gate_passed": passed,
+        "human_approval_required": True,
+        "human_approved": False,
+    }
+
+
+def _validate_shield_binding(
+    armature: bpy.types.Object,
+    shield: bpy.types.Object | None,
+    actions: dict[str, bpy.types.Action],
+    ranges: dict[str, tuple[int, int]],
+    body_height: float,
+) -> dict[str, object] | None:
+    if shield is None:
+        return None
+    socket_bone = str(shield["darkness_socket_bone"])
+    errors = []
+    for clip_name, action in actions.items():
+        armature.animation_data.action = action
+        start, end = ranges[clip_name]
+        for frame in _frame_samples(start, end):
+            bpy.context.scene.frame_set(frame)
+            bpy.context.view_layer.update()
+            evaluated = shield.evaluated_get(bpy.context.evaluated_depsgraph_get())
+            socket = armature.matrix_world @ armature.pose.bones[socket_bone].head
+            errors.append((evaluated.matrix_world.translation - socket).length)
+    maximum_error = max(errors, default=float("inf"))
+    passed = len(shield.data.vertices) > 0 and maximum_error <= body_height * 0.0001
+    if not passed:
+        raise RuntimeError(
+            f"shield socket gate failed: vertices={len(shield.data.vertices)}, maximum_error={maximum_error}"
+        )
+    return {
+        "component_id": shield["darkness_component_id"],
+        "mesh": shield.name,
+        "socket": shield["darkness_socket"],
+        "socket_bone": socket_bone,
+        "rig_policy": shield["darkness_rig_policy"],
+        "sampled_attachment_frames": len(errors),
+        "maximum_attachment_error": maximum_error,
+        "automatic_gate_passed": True,
         "human_approval_required": True,
         "human_approved": False,
     }
@@ -1086,6 +1237,7 @@ def _validate_and_render(
 
 def main() -> int:
     args = _arguments()
+    _load_equipment_spec(args.character_spec)
     target_path = args.target.resolve()
     source_path = args.source.resolve()
     output_root = args.output_directory.resolve()
@@ -1169,6 +1321,7 @@ def main() -> int:
         body_height * HANDLE_RADIUS_FRACTION,
     )
     club = _create_club(target, body_height)
+    shield = _create_shield(target, body_height)
     equipment_report = _validate_equipment_binding(
         target,
         club,
@@ -1177,6 +1330,9 @@ def main() -> int:
         body_height,
         source_hand_analysis=source_hand_analysis,
         grip_corrective=grip_corrective,
+    )
+    equipment_report["shield"] = _validate_shield_binding(
+        target, shield, target_actions, ranges, body_height
     )
     _reset_pose(target)
     target.animation_data.action = None

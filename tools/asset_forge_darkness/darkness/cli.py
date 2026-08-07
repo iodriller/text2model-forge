@@ -115,6 +115,14 @@ def _parser() -> argparse.ArgumentParser:
 
     subparsers.add_parser("workers", help="print strict worker manifests and live preflight state")
 
+    studio = subparsers.add_parser(
+        "studio", help="launch the standalone description-to-character browser control plane"
+    )
+    studio.add_argument("--workspace", type=Path)
+    studio.add_argument("--host", default="127.0.0.1")
+    studio.add_argument("--port", type=int, default=8766)
+    studio.add_argument("--open-browser", action="store_true")
+
     worker = subparsers.add_parser("run-worker", help="run one configured worker through the validated file contract")
     worker.add_argument("--worker-id", required=True)
     worker.add_argument("--request", type=Path, required=True)
@@ -150,6 +158,15 @@ def _parser() -> argparse.ArgumentParser:
 
 def main(argv: list[str] | None = None) -> int:
     args = _parser().parse_args(argv)
+    if args.command == "studio":
+        from .studio_web import serve
+
+        config = load_local_config()
+        workspace = args.workspace or (Path(config.workspace_root) if config else None)
+        if workspace is None:
+            raise SystemExit("--workspace is required when config.local.json is missing")
+        serve(workspace, host=args.host, port=args.port, open_browser=args.open_browser)
+        return 0
     if args.command == "workers":
         config = load_local_config()
         result = {}

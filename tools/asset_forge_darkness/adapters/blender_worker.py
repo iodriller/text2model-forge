@@ -22,6 +22,7 @@ SUPPORTED_OPERATIONS = {
     "blender.repair_retopology",
     "blender.propose_short_biped_rig",
     "blender.author_short_biped_motion",
+    "blender.author_rigid_articulation",
     "blender.render_diagnostics",
     "blender.export",
 }
@@ -1819,6 +1820,243 @@ def compare_renders(
     }
 
 
+def _scene_world_bounds() -> tuple[Vector, Vector]:
+    points = [obj.matrix_world @ Vector(corner) for obj in _mesh_objects() for corner in obj.bound_box]
+    return (
+        Vector(tuple(min(point[axis] for point in points) for axis in range(3))),
+        Vector(tuple(max(point[axis] for point in points) for axis in range(3))),
+    )
+
+
+def _front_normalized(point: Vector, minimum: Vector, maximum: Vector) -> tuple[float, float]:
+    width = max(float(maximum.x - minimum.x), 1e-9)
+    height = max(float(maximum.z - minimum.z), 1e-9)
+    return (
+        float((point.x - minimum.x) / width),
+        float(1.0 - (point.z - minimum.z) / height),
+    )
+
+
+def _object_front_box(obj: bpy.types.Object, minimum: Vector, maximum: Vector) -> tuple[float, float, float, float]:
+    projected = [_front_normalized(obj.matrix_world @ Vector(corner), minimum, maximum) for corner in obj.bound_box]
+    return (
+        min(item[0] for item in projected),
+        min(item[1] for item in projected),
+        max(item[0] for item in projected),
+        max(item[1] for item in projected),
+    )
+
+
+def _box_iou(first, second) -> float:
+    x0, y0 = max(first[0], second[0]), max(first[1], second[1])
+    x1, y1 = min(first[2], second[2]), min(first[3], second[3])
+    intersection = max(0.0, x1 - x0) * max(0.0, y1 - y0)
+    first_area = max(0.0, first[2] - first[0]) * max(0.0, first[3] - first[1])
+    second_area = max(0.0, second[2] - second[0]) * max(0.0, second[3] - second[1])
+    return intersection / max(first_area + second_area - intersection, 1e-9)
+
+
+def _extract_faces_in_front_box(
+    source: bpy.types.Object,
+    component_id: str,
+    box: list[float],
+    minimum: Vector,
+    maximum: Vector,
+) -> bpy.types.Object:
+    selected = []
+    for polygon in source.data.polygons:
+        center = source.matrix_world @ polygon.center
+        x, y = _front_normalized(center, minimum, maximum)
+        if box[0] <= x <= box[2] and box[1] <= y <= box[3]:
+            selected.append(polygon)
+    if not selected:
+        raise RuntimeError(f"rigid component {component_id} selected zero faces")
+    vertex_indices = sorted({index for polygon in selected for index in polygon.vertices})
+    remap = {old: new for new, old in enumerate(vertex_indices)}
+    vertices = [tuple(source.data.vertices[index].co) for index in vertex_indices]
+    faces = [[remap[index] for index in polygon.vertices] for polygon in selected]
+    mesh = bpy.data.meshes.new(component_id + "Mesh")
+    mesh.from_pydata(vertices, [], faces)
+    mesh.update()
+    result = bpy.data.objects.new(component_id, mesh)
+    bpy.context.collection.objects.link(result)
+    result.matrix_world = source.matrix_world.copy()
+    for material in source.data.materials:
+        result.data.materials.append(material)
+    for target, polygon in zip(result.data.polygons, selected, strict=True):
+        target.material_index = min(polygon.material_index, max(0, len(result.data.materials) - 1))
+
+    bm = bmesh.new()
+    try:
+        bm.from_mesh(source.data)
+        bm.faces.ensure_lookup_table()
+        delete = [bm.faces[polygon.index] for polygon in selected]
+        bmesh.ops.delete(bm, geom=delete, context="FACES")
+        bm.to_mesh(source.data)
+        source.data.update()
+    finally:
+        bm.free()
+    return result
+
+
+def _set_origin_at_world(obj: bpy.types.Object, point: Vector) -> None:
+    bpy.ops.object.select_all(action="DESELECT")
+    obj.select_set(True)
+    bpy.context.view_layer.objects.active = obj
+    bpy.context.scene.cursor.location = point
+    bpy.ops.object.origin_set(type="ORIGIN_CURSOR", center="MEDIAN")
+    obj.select_set(False)
+
+
+def _author_rigid_actions(
+    parts: list[tuple[bpy.types.Object, dict[str, object]]], animations: list[str]
+) -> list[str]:
+    created: list[str] = []
+    for obj, part in parts:
+        component_id = str(part["component_id"])
+        axis_index = {"x": 0, "y": 1, "z": 2}[str(part["rotation_axis"])]
+        neutral = math.radians(float(part["neutral_degrees"]))
+        target = math.radians(float(part["maximum_degrees"]))
+        obj.rotation_mode = "XYZ"
+        obj.rotation_euler[axis_index] = neutral
+        obj.animation_data_create()
+        for clip in animations:
+            side_tokens = {token for token in ("left", "right") if token in clip.lower()}
+            if side_tokens and not any(token in component_id.lower() for token in side_tokens):
+                continue
+            action = bpy.data.actions.new(name=f"{clip}__{component_id}")
+            action.use_fake_user = True
+            obj.animation_data.action = action
+            is_close = "close" in clip.lower()
+            values = (target, neutral) if is_close else (neutral, target)
+            for frame, value in ((1, values[0]), (20, values[1])):
+                obj.rotation_euler[axis_index] = value
+                obj.keyframe_insert(data_path="rotation_euler", index=axis_index, frame=frame)
+            action["darkness_clip"] = clip
+            action["darkness_component_id"] = component_id
+            created.append(action.name)
+        obj.animation_data.action = None
+        obj.rotation_euler[axis_index] = neutral
+    bpy.context.scene.frame_set(1)
+    bpy.context.view_layer.update()
+    return created
+
+
+def _run_rigid_articulation(
+    output_root: Path,
+    structure_plan: dict[str, object],
+    animations: list[str],
+    *,
+    render_size: int,
+) -> tuple[list[dict[str, object]], dict[str, object], list[str]]:
+    parts_plan = list(structure_plan.get("parts") or [])
+    if not parts_plan:
+        raise ValueError("rigid articulation requires at least one planned part")
+    minimum, maximum = _scene_world_bounds()
+    unused = set(_mesh_objects())
+    parts: list[tuple[bpy.types.Object, dict[str, object]]] = []
+    for raw in parts_plan:
+        part = dict(raw)
+        component_id = str(part["component_id"])
+        box = [float(item) for item in part["front_box_normalized"]]
+        scored = sorted(
+            (
+                (_box_iou(_object_front_box(obj, minimum, maximum), box), len(obj.data.polygons), obj)
+                for obj in unused
+            ),
+            key=lambda item: (-item[0], -item[1], item[2].name),
+        )
+        if scored and scored[0][0] >= 0.45 and len(unused) > len(parts_plan) - len(parts):
+            obj = scored[0][2]
+            unused.remove(obj)
+            obj.name = component_id
+        else:
+            source = max(unused or set(_mesh_objects()), key=lambda item: len(item.data.polygons))
+            obj = _extract_faces_in_front_box(source, component_id, box, minimum, maximum)
+        pivot_x, pivot_y = [float(item) for item in part["pivot_normalized"]]
+        pivot = Vector(
+            (
+                minimum.x + pivot_x * (maximum.x - minimum.x),
+                sum((obj.matrix_world @ Vector(corner)).y for corner in obj.bound_box) / 8.0,
+                maximum.z - pivot_y * (maximum.z - minimum.z),
+            )
+        )
+        _set_origin_at_world(obj, pivot)
+        obj["darkness_component_id"] = component_id
+        obj["darkness_rotation_axis"] = str(part["rotation_axis"])
+        obj["darkness_minimum_degrees"] = float(part["minimum_degrees"])
+        obj["darkness_maximum_degrees"] = float(part["maximum_degrees"])
+        obj["darkness_neutral_degrees"] = float(part["neutral_degrees"])
+        parts.append((obj, part))
+    actions = _author_rigid_actions(parts, animations)
+    neutral_renders = render_diagnostics(output_root, "rigid_neutral", size=render_size)
+    for obj, part in parts:
+        axis = {"x": 0, "y": 1, "z": 2}[str(part["rotation_axis"])]
+        obj.rotation_euler[axis] = math.radians(float(part["maximum_degrees"]))
+    bpy.context.view_layer.update()
+    open_renders = render_diagnostics(output_root, "rigid_open", size=render_size)
+    for obj, part in parts:
+        axis = {"x": 0, "y": 1, "z": 2}[str(part["rotation_axis"])]
+        obj.rotation_euler[axis] = math.radians(float(part["neutral_degrees"]))
+    bpy.context.view_layer.update()
+    _remove_diagnostic_objects()
+
+    blend_path = output_root / "rigid_articulated_candidate.blend"
+    bpy.ops.wm.save_as_mainfile(filepath=str(blend_path))
+    glb_path = output_root / "rigid_articulated_candidate.glb"
+    bpy.ops.export_scene.gltf(
+        filepath=str(glb_path),
+        export_format="GLB",
+        export_materials="EXPORT",
+        export_animations=True,
+    )
+    report = {
+        "schema_version": 1,
+        "method": "qwen_semantic_front_boxes_deterministic_mesh_partition_v1",
+        "parts": [
+            {
+                "component_id": str(part["component_id"]),
+                "object": obj.name,
+                "faces": len(obj.data.polygons),
+                "rotation_axis": part["rotation_axis"],
+                "minimum_degrees": part["minimum_degrees"],
+                "maximum_degrees": part["maximum_degrees"],
+                "neutral_degrees": part["neutral_degrees"],
+            }
+            for obj, part in parts
+        ],
+        "animations": actions,
+        "hard_failures": [
+            f"empty_component:{obj.name}" for obj, _ in parts if len(obj.data.polygons) == 0
+        ],
+        "gate_passed": all(len(obj.data.polygons) > 0 for obj, _ in parts) and bool(actions),
+        "human_approval_required": True,
+        "human_approved": False,
+    }
+    report_path = output_root / "rigid_articulation_report.json"
+    _write_json(report_path, report)
+    if not report["gate_passed"]:
+        raise RuntimeError("rigid articulation failed component/action hard gates")
+    outputs = [
+        _output(report_path, "application/json", "rigid_articulation_report"),
+        _output(blend_path, "application/x-blender", "rigid_articulated_checkpoint"),
+        _output(glb_path, "model/gltf-binary", "rigid_articulated_candidate"),
+    ]
+    for prefix, paths in (("rigid_neutral", neutral_renders), ("rigid_open", open_renders)):
+        outputs.extend(
+            _output(path, "image/png", f"{prefix}_{path.stem.rsplit('_', 1)[-1]}")
+            for path in paths
+        )
+    diagnostics = {
+        "rigid_parts": len(parts),
+        "rigid_actions": len(actions),
+        "automatic_rigid_gate_passed": True,
+    }
+    return outputs, diagnostics, [
+        "Front-view semantic segmentation is a proposal; human approval of part boundaries and pivots is required."
+    ]
+
+
 def _output(path: Path, media_type: str, role: str, **metadata: object) -> dict[str, object]:
     return {"path": str(path), "media_type": media_type, "role": role, "metadata": metadata}
 
@@ -1886,8 +2124,29 @@ def execute(request: dict[str, object]) -> tuple[list[dict[str, object]], dict[s
         )
         outputs.extend(motion_outputs)
         warnings.extend(motion_warnings)
+    elif operation_id == "blender.author_rigid_articulation":
+        structure_plan = parameters.get("structure_plan")
+        animations = parameters.get("animations")
+        if not isinstance(structure_plan, dict):
+            raise ValueError("structure_plan must be an object")
+        if not isinstance(animations, list) or not all(isinstance(item, str) for item in animations):
+            raise ValueError("animations must be an array of ids")
+        rigid_outputs, rigid_diagnostics, rigid_warnings = _run_rigid_articulation(
+            output_root,
+            structure_plan,
+            list(animations),
+            render_size=render_size,
+        )
+        outputs.extend(rigid_outputs)
+        warnings.extend(rigid_warnings)
     elif operation_id in {"blender.repair", "blender.repair_retopology", "blender.export"}:
         component_policy = str(parameters.get("component_policy", "none"))
+        minimum_connected_components = int(parameters.get("minimum_connected_components", 1))
+        maximum_connected_components = int(parameters.get("maximum_connected_components", 1))
+        if not 1 <= minimum_connected_components <= maximum_connected_components <= 256:
+            raise ValueError(
+                "connected-component bounds must satisfy 1 <= minimum <= maximum <= 256"
+            )
         weld_distance = float(parameters.get("weld_distance", 0.0))
         if not 0 <= weld_distance <= 0.01:
             raise ValueError("weld_distance must be between zero and 0.01")
@@ -1949,7 +2208,9 @@ def execute(request: dict[str, object]) -> tuple[list[dict[str, object]], dict[s
         export_analysis = analyze_scene()
         export_hard_gate_passed = (
             bool(export_analysis["finite_coordinates"])
-            and int(export_analysis["connected_components"]) == 1
+            and minimum_connected_components
+            <= int(export_analysis["connected_components"])
+            <= maximum_connected_components
             and int(export_analysis["boundary_edges"]) == 0
             and int(export_analysis["non_manifold_edges"]) == 0
             and int(export_analysis["inconsistent_winding_edges"]) == 0
@@ -1959,6 +2220,8 @@ def execute(request: dict[str, object]) -> tuple[list[dict[str, object]], dict[s
             "hard_gate_passed": export_hard_gate_passed,
             "pre_export_analysis": pre_export_analysis,
             "analysis": export_analysis,
+            "minimum_connected_components": minimum_connected_components,
+            "maximum_connected_components": maximum_connected_components,
         }
         export_validation_path = output_root / "export_validation.json"
         _write_json(export_validation_path, export_validation)
@@ -2001,6 +2264,8 @@ def execute(request: dict[str, object]) -> tuple[list[dict[str, object]], dict[s
         diagnostics.update(probe_diagnostics)
     elif operation_id == "blender.author_short_biped_motion":
         diagnostics.update(motion_diagnostics)
+    elif operation_id == "blender.author_rigid_articulation":
+        diagnostics.update(rigid_diagnostics)
     return outputs, diagnostics, warnings
 
 

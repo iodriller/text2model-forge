@@ -29,6 +29,11 @@ def _arguments(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--target", type=Path, required=True)
     parser.add_argument("--motion-source", type=Path, required=True)
+    parser.add_argument(
+        "--character-spec",
+        type=Path,
+        help="Darkness Studio character_spec.json for equipment, naming, and surface semantics.",
+    )
     parser.add_argument("--output-root", type=Path, required=True)
     parser.add_argument(
         "--blender",
@@ -46,6 +51,11 @@ def _arguments(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--comfy-url", default="http://127.0.0.1:8188")
     parser.add_argument("--surface-checkpoint", default="dreamshaper_xl_v2_turbo.safetensors")
     parser.add_argument("--timeout-seconds", type=int, default=900)
+    parser.add_argument(
+        "--stop-after",
+        choices=STAGES,
+        help="Return after this resumable stage so an external control plane can enforce a human gate.",
+    )
     return parser.parse_args(argv)
 
 
@@ -200,6 +210,15 @@ def _record(status: dict[str, object], root: Path, stage: str, state: str, detai
     _write_json(_status_path(root), status)
 
 
+def _stop_after(args: argparse.Namespace, status: dict[str, object], root: Path, stage: str) -> bool:
+    if args.stop_after != stage:
+        return False
+    status["outcome"] = f"stopped_after_{stage}"
+    status["human_review"] = str(_write_review_index(root, unity_state="ready"))
+    _write_json(_status_path(root), status)
+    return True
+
+
 def _write_review_index(root: Path, *, unity_state: str) -> Path:
     path = root / "human_review.md"
     interactive_review = (
@@ -265,9 +284,12 @@ def run(args: argparse.Namespace) -> dict[str, object]:
     repo = args.repo_root.resolve()
     target = args.target.resolve()
     motion_source = args.motion_source.resolve()
+    character_spec = args.character_spec.resolve() if args.character_spec is not None else None
     blender = args.blender.resolve() if args.blender is not None else None
     root = args.output_root.resolve()
-    for path in (repo, target, motion_source):
+    for path in (repo, target, motion_source, character_spec):
+        if path is None:
+            continue
         if not path.exists():
             raise FileNotFoundError(path)
     root.mkdir(parents=True, exist_ok=True)
@@ -278,6 +300,8 @@ def run(args: argparse.Namespace) -> dict[str, object]:
         "target_sha256": _sha256(target),
         "motion_source": str(motion_source),
         "motion_source_sha256": _sha256(motion_source),
+        "character_spec": str(character_spec) if character_spec else None,
+        "character_spec_sha256": _sha256(character_spec) if character_spec else None,
         "stages": {name: {"state": "pending", "detail": ""} for name in STAGES},
         "current_stage": "retarget",
         "human_approval_required": True,
@@ -290,6 +314,8 @@ def run(args: argparse.Namespace) -> dict[str, object]:
             "motion_source_sha256"
         ) != status["motion_source_sha256"]:
             raise RuntimeError("resume refused: target or motion-source hash changed")
+        if prior.get("character_spec_sha256") != status["character_spec_sha256"]:
+            raise RuntimeError("resume refused: character specification hash changed")
         status = prior
         status["pipeline"] = "darkness_motion_surface_candidate_v2"
         stages = status.setdefault("stages", {})
@@ -305,8 +331,7 @@ def run(args: argparse.Namespace) -> dict[str, object]:
         blender = _require_executable(blender, "retarget")
         _archive_partial(retarget)
         _record(status, root, "retarget", "running", "Baking four Quaternius actions onto the Darkness rig.")
-        _launch_and_wait(
-            [
+        retarget_command = [
                 str(blender),
                 "--background",
                 "--factory-startup",
@@ -324,7 +349,11 @@ def run(args: argparse.Namespace) -> dict[str, object]:
                 str(retarget),
                 "--render-size",
                 "320",
-            ],
+            ]
+        if character_spec is not None:
+            retarget_command.extend(["--character-spec", str(character_spec)])
+        _launch_and_wait(
+            retarget_command,
             cwd=repo,
             success=retarget_glb,
             failure=retarget_error,
@@ -376,6 +405,8 @@ def run(args: argparse.Namespace) -> dict[str, object]:
             timeout=args.timeout_seconds,
         )
     _record(status, root, "retarget_qwen_review", "complete", str(retarget_mediator))
+    if _stop_after(args, status, root, "retarget_qwen_review"):
+        return status
 
     surface = root / "surface"
     surface_master = surface / "darkness_surface_master.blend"
@@ -391,8 +422,7 @@ def run(args: argparse.Namespace) -> dict[str, object]:
             "Painting canonical depth-locked views and projecting them once into a persistent UV master.",
         )
         try:
-            _run(
-                [
+            surface_command = [
                     sys.executable,
                     str(adapters / "bake_darkness_surface.py"),
                     "--master",
@@ -409,7 +439,11 @@ def run(args: argparse.Namespace) -> dict[str, object]:
                     args.surface_checkpoint,
                     "--timeout-seconds",
                     str(args.timeout_seconds),
-                ],
+                ]
+            if character_spec is not None:
+                surface_command.extend(["--character-spec", str(character_spec)])
+            _run(
+                surface_command,
                 cwd=repo,
                 timeout=max(args.timeout_seconds, 1800),
             )
@@ -448,6 +482,8 @@ def run(args: argparse.Namespace) -> dict[str, object]:
             timeout=args.timeout_seconds,
         )
     _record(status, root, "surface_qwen_review", "complete", str(surface_mediator))
+    if _stop_after(args, status, root, "surface_qwen_review"):
+        return status
 
     frames = root / "sprites/frames"
     sprite_last = frames / "darkness_short_biped_candidate/death/west/09.png"
@@ -554,6 +590,8 @@ def run(args: argparse.Namespace) -> dict[str, object]:
             timeout=args.timeout_seconds,
         )
     _record(status, root, "sprite_qwen_review", "complete", str(sprite_mediator))
+    if _stop_after(args, status, root, "sprite_qwen_review"):
+        return status
     smoke_bundle = root / "unity_smoke_bundle"
     smoke_manifest = smoke_bundle / "bundle_manifest.json"
     if not _bundle_is_current(smoke_manifest, manifest):

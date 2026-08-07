@@ -16,6 +16,13 @@ def _arguments(argv: list[str] | None = None) -> argparse.Namespace:
     repo = Path(__file__).resolve().parents[3]
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--master", type=Path, required=True)
+    parser.add_argument(
+        "--asset-spec",
+        "--character-spec",
+        dest="asset_spec",
+        type=Path,
+        help="Darkness Studio asset_spec.json used for material semantics and paint prompts.",
+    )
     parser.add_argument("--output-directory", type=Path, required=True)
     parser.add_argument("--blender", type=Path, required=True)
     parser.add_argument("--repo-root", type=Path, default=repo)
@@ -41,16 +48,78 @@ def _write_json(path: Path, value: object) -> None:
     temporary.replace(path)
 
 
-def _config(args: argparse.Namespace, output: Path, baseline: Path, baked: Path) -> dict[str, Any]:
+def _load_asset_spec(path: Path | None) -> dict[str, Any]:
+    if path is None:
+        return {
+            "asset_id": "legacy_goblin",
+            "title": "Legacy Goblin Surface Candidate",
+            "description": "original stylized dark fantasy goblin raider",
+            "creative_direction": "broad readable mobile game shapes",
+            "asset_kind": "character",
+            "behavior": "deformable_animated",
+            "materials": ["olive skin", "charcoal cloth", "worn leather", "dark wood", "iron"],
+            "equipment": [{"description": "rough wooden club with dark iron bands"}],
+            "animations": ["idle"],
+            "locked_features": ["same exact geometry and pose"],
+            "negative_constraints": ["changed silhouette", "extra limbs", "text", "watermark"],
+            "dimensions_m": [1.0, 1.4, 0.8],
+        }
+    resolved = path.resolve()
+    if not resolved.is_file():
+        raise FileNotFoundError(resolved)
+    value = json.loads(resolved.read_text(encoding="utf-8"))
+    if not isinstance(value, dict) or not value.get("asset_id"):
+        raise ValueError("asset spec must be a Studio asset specification object")
+    return value
+
+
+def _config(
+    args: argparse.Namespace,
+    output: Path,
+    baseline: Path,
+    baked: Path,
+    spec: dict[str, Any],
+) -> dict[str, Any]:
     work = output / "work"
-    return {
+    asset_id = str(spec.get("asset_id", "darkness_asset"))
+    materials = ", ".join(str(item) for item in spec.get("materials", []))
+    equipment = ", ".join(
+        str(item.get("description", "")) for item in spec.get("equipment", []) if isinstance(item, dict)
+    )
+    positive = ", ".join(
+        item
+        for item in (
+            str(spec.get("description", "original game asset")),
+            str(spec.get("creative_direction", "stylized readable production asset")),
+            materials,
+            equipment,
+            ", ".join(str(item) for item in spec.get("locked_features", [])),
+            "same exact geometry and pose in every view, coherent hand-authored PBR surface",
+        )
+        if item
+    )
+    negative = ", ".join(
+        [str(item) for item in spec.get("negative_constraints", [])]
+        + [
+            "changed geometry",
+            "changed silhouette",
+            "missing component",
+            "extra component",
+            "text",
+            "watermark",
+            "baked directional lighting",
+        ]
+    )
+    dimensions = [float(item) for item in spec.get("dimensions_m", [1.0, 1.8, 1.0])]
+    view_scale = max(dimensions) * 1.75
+    animated = bool(spec.get("animations")) and spec.get("behavior") == "deformable_animated"
+    config = {
         "schema_version": 1,
-        "id": "darkness_triposg_goblin_surface",
-        "display_name": "Darkness TripoSG Goblin Surface Candidate",
+        "id": f"darkness_{asset_id}_surface",
+        "display_name": f"{spec.get('title', asset_id)} Surface Candidate",
         "source": str(baseline.resolve()),
-        "animation_object": "DarknessShortBipedRig",
         "render_size": [768, 768],
-        "orthographic_scale": 3.15,
+        "orthographic_scale": view_scale,
         "animations": {"idle": {"actions": ["idle"], "sample_frames": [1]}},
         "overpaint": {
             "enabled": False,
@@ -58,26 +127,16 @@ def _config(args: argparse.Namespace, output: Path, baseline: Path, baked: Path)
             "seed": args.seed,
             "steps": 7,
             "cfg": 2.5,
-            "prompt": (
-                "original stylized dark fantasy goblin raider, full body, mottled desaturated olive green skin, "
-                "scarred heavy brow, red orange eyes, bone tusks, crude dark charcoal loincloth, worn brown leather "
-                "belt and wraps, rough wooden club with dark iron bands, broad readable mobile game shapes, painterly "
-                "hand authored PBR materials, same exact geometry and pose in every view"
-            ),
-            "negative": (
-                "human skin, friendly face, plate armor, knight, extra weapon, missing club, changed pose, changed "
-                "silhouette, extra fingers, text, watermark, bright toy plastic, baked directional lighting"
-            ),
+            "prompt": positive,
+            "negative": negative,
             "control_strength": 0.72,
         },
         "texture_master": {
             "enabled": True,
             "baked_source": str(baked),
-            "pose_action": "idle",
-            "pose_frame": 1,
             "views": 6,
             "view_size": 512,
-            "view_scale": 3.15,
+            "view_scale": view_scale,
             "view_elevation": 14.0,
             "view_target_height": 0.0,
             "bake_resolution": 1024,
@@ -89,6 +148,10 @@ def _config(args: argparse.Namespace, output: Path, baseline: Path, baked: Path)
             "icons_output": str(output / "icons"),
         },
     }
+    if animated:
+        config["animation_object"] = "DarknessShortBipedRig"
+        config["texture_master"].update({"pose_action": "idle", "pose_frame": 1})
+    return config
 
 
 def _run_blender(command: list[str], *, work: Path) -> None:
@@ -172,6 +235,7 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
     master = args.master.resolve()
     blender = args.blender.resolve()
     output = args.output_directory.resolve()
+    spec = _load_asset_spec(args.asset_spec)
     prior_board_hash = None
     prior_report_path = output / "surface_validation.json"
     if prior_report_path.is_file():
@@ -191,33 +255,40 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
     regenerate_baseline = True
     if baseline.is_file() and baseline_report.is_file():
         prior_baseline = json.loads(baseline_report.read_text(encoding="utf-8"))
-        regenerate_baseline = prior_baseline.get("source_sha256") != _sha256(master)
+        expected_spec_hash = _sha256(args.asset_spec.resolve()) if args.asset_spec is not None else None
+        regenerate_baseline = (
+            prior_baseline.get("source_sha256") != _sha256(master)
+            or prior_baseline.get("asset_spec_sha256") != expected_spec_hash
+        )
     if regenerate_baseline:
+        baseline_command = [
+            str(blender),
+            "--background",
+            str(master),
+            "--python-exit-code",
+            "1",
+            "--python",
+            str(repo / "tools/asset_forge_darkness/adapters/prepare_semantic_surface_baseline.py"),
+            "--",
+            "--source",
+            str(master),
+            "--output",
+            str(baseline),
+            "--report",
+            str(baseline_report),
+        ]
+        if args.asset_spec is not None:
+            baseline_command.extend(["--asset-spec", str(args.asset_spec.resolve())])
         _run_blender(
-            [
-                str(blender),
-                "--background",
-                str(master),
-                "--python-exit-code",
-                "1",
-                "--python",
-                str(repo / "tools/asset_forge_darkness/adapters/prepare_semantic_surface_baseline.py"),
-                "--",
-                "--source",
-                str(master),
-                "--output",
-                str(baseline),
-                "--report",
-                str(baseline_report),
-            ],
+            baseline_command,
             work=output,
         )
-        for stale_anchor in (output / "anchors").glob("darkness_triposg_goblin_surface.anchor*.png"):
+        for stale_anchor in (output / "anchors").glob("darkness_*_surface.anchor*.png"):
             stale_anchor.unlink()
     baked = output / "darkness_surface_master.blend"
     config_path = output / "surface_config.json"
     config_path.write_text(
-        json.dumps(_config(args, output, baseline, baked), indent=2) + "\n", encoding="utf-8"
+        json.dumps(_config(args, output, baseline, baked, spec), indent=2) + "\n", encoding="utf-8"
     )
 
     asset_forge = repo / "tools" / "asset_forge"

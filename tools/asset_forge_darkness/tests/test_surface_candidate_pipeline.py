@@ -37,22 +37,38 @@ def test_darkness_surface_runtime_config_keeps_paint_on_one_master(tmp_path: Pat
             "seed": 42,
         },
     )()
-    config = namespace["_config"](args, baked.parent, baseline, baked)
+    spec = {
+        "asset_id": "test_footman",
+        "title": "Test Footman",
+        "description": "original stylized armored footman",
+        "creative_direction": "chunky mobile-readable shapes",
+        "asset_kind": "character",
+        "behavior": "deformable_animated",
+        "materials": ["worn steel", "blue cloth", "leather"],
+        "equipment": [{"description": "one right-hand arming sword"}],
+        "animations": ["idle"],
+        "locked_features": ["right-hand sword"],
+        "negative_constraints": ["no copied insignia"],
+        "dimensions_m": [1.0, 1.8, 0.8],
+    }
+    config = namespace["_config"](args, baked.parent, baseline, baked, spec)
     assert config["source"] == str(baseline.resolve())
     assert config["texture_master"]["baked_source"] == str(baked)
     assert config["texture_master"]["work_root"] == str(baked.parent / "work")
     assert config["texture_master"]["icons_output"] == str(baked.parent / "icons")
     assert config["texture_master"]["views"] >= 6
     assert config["overpaint"]["enabled"] is False
-    assert "wooden club" in config["overpaint"]["prompt"]
+    assert "right-hand arming sword" in config["overpaint"]["prompt"]
+    assert config["id"] == "darkness_test_footman_surface"
 
 
-def test_semantic_baseline_has_skin_cloth_leather_wood_and_iron() -> None:
+def test_semantic_baseline_derives_generic_materials_from_asset_spec() -> None:
     source = (ROOT / "adapters/prepare_semantic_surface_baseline.py").read_text(encoding="utf-8")
-    for semantic in ("skin", "cloth", "leather", "wood", "iron"):
+    for semantic in ("skin", "cloth", "leather", "wood", "iron", "stone"):
         assert f'"{semantic}"' in source
     assert "material_face_counts" in source
-    assert "DarknessClub" in source
+    assert "asset_spec_sha256" in source
+    assert "surface baseline requires DarknessClub" not in source
 
 
 def test_qwen_surface_prompt_carries_before_current_numbers_and_stops_iteration() -> None:

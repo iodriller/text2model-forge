@@ -30,7 +30,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--job-id", required=True)
     parser.add_argument("--run-id", default="blender.smoke.run.v1")
     parser.add_argument("--artifact-id", default="geometry.blender.input.v1")
-    parser.add_argument("--operation-id", choices=("blender.analyze", "blender.repair", "blender.repair_retopology", "blender.propose_short_biped_rig", "blender.author_short_biped_motion", "blender.export"), default="blender.analyze")
+    parser.add_argument("--operation-id", choices=("blender.analyze", "blender.repair", "blender.repair_retopology", "blender.propose_short_biped_rig", "blender.author_short_biped_motion", "blender.author_rigid_articulation", "blender.export"), default="blender.analyze")
     parser.add_argument("--component-policy", choices=("none", "keep_largest"), default="none")
     parser.add_argument("--weld-distance", type=float, default=0.0)
     parser.add_argument("--render-size", type=int, default=512)
