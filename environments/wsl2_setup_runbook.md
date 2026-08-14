@@ -239,10 +239,10 @@ pip install "accelerate==0.24.1" -c ~/instantmesh_constraints.txt   # see trap 5
 
 ## 8. Darkness-side wiring (Windows side, once both environments above exist)
 
-- `tools/asset_forge_darkness/config.local.json` needs a `command_prefix` entry per worker pointing at
+- `config.local.toml` needs a `command_prefix` entry per worker pointing at
   `adapters/wsl_launch.py`, which bridges the Windows-side `--request`/`--response` paths across the WSL2 DrvFS
   boundary. It is a **generic** launcher — the same script works for any WSL2-hosted worker; only the
-  `--wsl-python`/`--wsl-script`/`--env` arguments differ per worker. See `config.example.json` for the exact shape.
+  `--wsl-python`/`--wsl-script`/`--env` arguments differ per worker. See `machine.example.toml` for the exact shape.
 - Smoke-test a worker with `adapters/build_smoke_request.py` (builds a schema-valid request against a real image)
   and `python -m darkness run-worker --worker-id <id> --request <path>`.
 - If a worker fails, check `<workspace_root>/worker_logs/<job_id>.std{out,err}.log` — that's where
@@ -254,9 +254,8 @@ pip install "accelerate==0.24.1" -c ~/instantmesh_constraints.txt   # see trap 5
 ## 9. Reproducing the exact result recorded 2026-07-12
 
 ```powershell
-$env:PYTHONPATH = (Resolve-Path tools/asset_forge_darkness).Path
-python tools/asset_forge_darkness/adapters/build_smoke_request.py `
-  --image tools/asset_forge_darkness/fixtures/concepts/darkness_goblin_tripsg_rgba_v1.png `
+python adapters/build_smoke_request.py `
+  --image fixtures/concepts/darkness_goblin_tripsg_rgba_v1.png `
   --output-directory C:/AssetForgeDarknessRuns/smoke/trellis2/output `
   --job-id trellis2.smoke.v1 --run-id trellis2.smoke.run.v1 `
   --artifact-id concept.goblin.smoke.v1 `

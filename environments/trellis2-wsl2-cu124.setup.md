@@ -82,17 +82,17 @@ conda activate trellis2
 which python   # -> the --wsl-python value for the worker binding
 ```
 
-`--wsl-script` is the absolute Linux path to
-`tools/asset_forge_darkness/adapters/trellis2_worker.py` as seen from inside WSL2 (this repository lives under
-`C:\Users\oneye\Documents\for fun\EmberDefense`, which WSL2's default DrvFS mount exposes at
-`/mnt/c/Users/oneye/Documents/for fun/EmberDefense/tools/asset_forge_darkness/adapters/trellis2_worker.py`).
+`--wsl-script` is the absolute Linux path to `adapters/trellis2_worker.py` as seen from inside WSL2. WSL2's default
+DrvFS mount exposes a Windows checkout at `C:\path\to\asset-forge` as `/mnt/c/path/to/asset-forge`, so if this repo
+lives at `C:\path\to\asset-forge`, the worker script is
+`/mnt/c/path/to/asset-forge/adapters/trellis2_worker.py`.
 
 `DARKNESS_TRELLIS2_WEIGHTS` may stay as the default `microsoft/TRELLIS.2-4B` Hugging Face repo id (downloaded and
 cached on first run) or point at a local snapshot directory once one is pinned.
 
-## 5. Wire the binding into `config.local.json`
+## 5. Wire the binding into `config.local.toml`
 
-See `config.example.json` for the `trellis2.4b` entry. Darkness always calls the generic
+See `machine.example.toml` for the `trellis2.4b` entry. Darkness always calls the generic
 `adapters/wsl_launch.py` on the Windows side; that script translates the request/response file paths across the
 WSL2 DrvFS boundary and forwards to `trellis2_worker.py` on the Linux side. No worker-specific Windows-side code is
 needed beyond that config binding.
@@ -100,12 +100,12 @@ needed beyond that config binding.
 ## 6. First smoke test
 
 ```powershell
-$env:PYTHONPATH = (Resolve-Path tools/asset_forge_darkness).Path
 python -m darkness run-worker --worker-id trellis2.4b --request C:/path/to/request.json
 ```
 
 Until this has actually been run once and produced a valid GLB, `workers/trellis2.json` must stay at
-`lifecycle: "discovered"`, not `"research_ready"` — see Section 7.1 of `DESIGN/asset_forge_darkness_master_plan.md`.
+`lifecycle: "discovered"`, not `"research_ready"` — see the original master plan's Section 7.1 (an EmberDefense-side
+design document from before this repository's extraction, not included here).
 Record the result (peak VRAM, elapsed time, mesh health) as a `WorkerRuntimeQualification` next to
 `qualifications/triposg-1.5b_windows_rtx5090.json`.
 

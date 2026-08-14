@@ -127,7 +127,7 @@ influences, neutral identity comparison, shoulder/elbow and hip/knee stress rend
 automatic gates pass, but visible shoulder/armpit compression, canonical fitting, corrective weights, and human
 approval remain open; this operation does not promote the generated topology.
 
-Machine-specific worker commands belong in ignored `config.local.json`; use `config.example.json` as the template.
+Machine-specific worker commands belong in ignored `config.local.toml`; use `machine.example.toml` as the template.
 
 Run tests from the repo root with a Python environment containing the project dependencies:
 
