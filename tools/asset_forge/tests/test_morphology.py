@@ -13,9 +13,9 @@ def _repo_root() -> Path:
     return Path(__file__).resolve().parents[3]
 
 
-def test_goblin_profile_satisfies_biped_family_contract():
+def test_example_profile_satisfies_biped_family_contract():
     root = _repo_root()
-    profile = json.loads((root / "tools/asset_forge/creatures/goblin.morphology.json").read_text(encoding="utf-8"))
+    profile = json.loads((root / "tools/asset_forge/creatures/example_biped.morphology.json").read_text(encoding="utf-8"))
     contract, failures = validate_profile(profile, root)
     assert failures == []
     assert contract["id"] == "biped_humanoid_v1"
@@ -24,12 +24,12 @@ def test_goblin_profile_satisfies_biped_family_contract():
 
 def test_morphology_build_requires_every_landmark_and_current_profile_hash(tmp_path):
     root = _repo_root()
-    source_profile = root / "tools/asset_forge/creatures/goblin.morphology.json"
+    source_profile = root / "tools/asset_forge/creatures/example_biped.morphology.json"
     profile = json.loads(source_profile.read_text(encoding="utf-8"))
     profile["family_contract"] = str((root / profile["family_contract"]).resolve())
     profile_path = tmp_path / "profile.json"
     profile_path.write_text(json.dumps(profile), encoding="utf-8")
-    master = tmp_path / "goblin.blend"
+    master = tmp_path / "example.blend"
     master.write_bytes(b"blend-fixture")
     report = {
         "profile_id": profile["id"],
@@ -52,7 +52,7 @@ def test_morphology_build_requires_every_landmark_and_current_profile_hash(tmp_p
 
 def test_morphology_proof_composes_required_views_and_action_phases(tmp_path):
     root = _repo_root()
-    config = json.loads((root / "tools/asset_forge/characters/goblin.character.json").read_text(encoding="utf-8"))
+    config = json.loads((root / "tools/asset_forge/characters/example_biped.character.json").read_text(encoding="utf-8"))
     config["animations"]["attack"]["phases"] = {
         "anticipation_frame": 0,
         "contact_frame": 1,
@@ -74,7 +74,7 @@ def test_morphology_proof_composes_required_views_and_action_phases(tmp_path):
     output = tmp_path / "proof.png"
     result = create_morphology_proof(
         config_path,
-        root / "tools/asset_forge/creatures/goblin.morphology.json",
+        root / "tools/asset_forge/creatures/example_biped.morphology.json",
         tmp_path / "frames",
         output,
     )
@@ -84,17 +84,17 @@ def test_morphology_proof_composes_required_views_and_action_phases(tmp_path):
         assert proof.size == (1400, 900)
 
 
-def test_contract_only_dragon_family_cannot_validate_a_production_build(tmp_path):
+def test_contract_only_winged_family_cannot_validate_a_production_build(tmp_path):
     root = _repo_root()
-    source = json.loads((root / "tools/asset_forge/creatures/goblin.morphology.json").read_text(encoding="utf-8"))
+    source = json.loads((root / "tools/asset_forge/creatures/example_biped.morphology.json").read_text(encoding="utf-8"))
     source["family"] = "winged_quadruped_v1"
     source["family_contract"] = str(
         (root / "tools/asset_forge/creatures/families/winged_quadruped.family.json").resolve()
     )
-    profile_path = tmp_path / "dragon.json"
+    profile_path = tmp_path / "winged.json"
     profile_path.write_text(json.dumps(source), encoding="utf-8")
-    master = tmp_path / "dragon.blend"
-    master.write_bytes(b"not-a-production-dragon")
+    master = tmp_path / "winged.blend"
+    master.write_bytes(b"not-a-production-winged-creature")
     report = {
         "profile_id": source["id"],
         "profile_sha256": sha256_file(profile_path),

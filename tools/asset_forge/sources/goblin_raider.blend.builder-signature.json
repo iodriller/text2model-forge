@@ -1,8 +1,0 @@
-{
-    "input_hashes":  {
-                         "tools/asset_forge/creatures/goblin.morphology.json":  "98813038AE8012CF9655E08F69609E34B3C0EE44EF33F0072B0722DE22099793",
-                         "tools/asset_forge/creatures/families/biped_humanoid.family.json":  "9196112A107A761C5348E9B606E3C7E8D16C3B42BC321A449FDA3AAEC04567D1"
-                     },
-    "builder_sha256":  "27DA4EF0B2D01FD9C449A035713634337548CB2E0FD6AB27850FE10911ECBFA3",
-    "base_sha256":  "2310B2A910769E3DAD6AAF534C5418CCA25A1BDE3D408231A3C8D632D2D35A56"
-}

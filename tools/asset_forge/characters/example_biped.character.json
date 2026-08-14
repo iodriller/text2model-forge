@@ -1,0 +1,56 @@
+{
+  "schema_version": 2,
+  "id": "example_biped",
+  "display_name": "Example Biped",
+  "source_kind": "owned_blender_master",
+  "master_license": "CC0-1.0 example fixture",
+  "source": "tools/asset_forge/sources/example_biped.blend",
+  "max_polygons": 40000,
+  "animation_object": "CharacterArmature",
+  "cell_size": [256, 256],
+  "render_size": [768, 768],
+  "packing_mode": "fixed_camera",
+  "outline": true,
+  "outline_thickness": 0.9,
+  "render_exposure": -0.3,
+  "orthographic_scale": 5.6,
+  "camera_target_height": 1.1,
+  "camera_distance": 10.0,
+  "camera_height": 6.6,
+  "directions": ["north", "south", "east", "west"],
+  "baseline_tolerance": 12,
+  "min_occupancy": 0.035,
+  "min_motion": 0.01,
+  "default_facing": "south",
+  "pixels_per_unit": 256,
+  "pivot_x": 0.5,
+  "pivot_y": 0.297,
+  "prefab_scale": 1.62,
+  "health_bar_y": 0.80,
+  "morphology_profile": "tools/asset_forge/creatures/example_biped.morphology.json",
+  "provenance_inputs": [
+    "tools/asset_forge/creatures/example_biped.morphology.json"
+  ],
+  "animations": {
+    "idle": {
+      "actions": ["Idle_Weapon"],
+      "frames": 6,
+      "fps": 9,
+      "loop": true,
+      "sample_frames": [1, 13, 25]
+    },
+    "attack": {
+      "actions": ["Sword_Attack"],
+      "frames": 10,
+      "fps": 18,
+      "loop": false,
+      "baseline_tolerance": 24,
+      "sample_frames": [1, 3, 5, 7, 9],
+      "phases": {
+        "anticipation_frame": 3,
+        "contact_frame": 6,
+        "recovery_frame": 9
+      }
+    }
+  }
+}

@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
-  "id": "ash_goblin_v2",
-  "species": "goblin",
+  "id": "example_biped_v1",
+  "species": "example_creature",
   "family": "biped_humanoid_v1",
   "family_contract": "tools/asset_forge/creatures/families/biped_humanoid.family.json",
   "implementation": "tools/asset_forge/blender/build_creature_master.py",
@@ -17,15 +17,12 @@
     "Death"
   ],
   "remove_objects": [
-    "Face",
-    "Warrior_Sword",
-    "ShoulderPad.L",
-    "ShoulderPad.R"
+    "Face"
   ],
   "posture": {
     "space": "bone_local_pose",
     "apply_to_every_action": true,
-    "_comment": "Spine stays at 0 so the goblin inherits the donor rig's own clean animations (the footman's motion). A static spine hunch baked onto every frame corrupts walk/death/taunt (fall+lean=bow) -- proven regression. Only a small head-forward peer is kept for gremlin character; the head barely moves in locomotion so it does not distort the motion.",
+    "_comment": "Generic proportional adjustment example: keep the spine at zero and only offset the head slightly so locomotion clips stay clean.",
     "bones_degrees_xyz": {
       "Abdomen": [0.0, 0.0, 0.0],
       "Torso": [0.0, 0.0, 0.0],
@@ -65,33 +62,6 @@
         "upturn_degrees": 12.0,
         "material": "skin"
       },
-      "nostrils": {
-        "spacing": 0.043,
-        "forward": 0.35,
-        "up": -0.005,
-        "radius": 0.018,
-        "material": "mouth"
-      },
-      "jaw": {
-        "scale": [0.16, 0.095, 0.095],
-        "forward": 0.205,
-        "up": -0.18,
-        "material": "skin"
-      },
-      "mouth": {
-        "scale": [0.12, 0.019, 0.03],
-        "forward": 0.29,
-        "up": -0.13,
-        "material": "mouth"
-      },
-      "tusks": {
-        "spacing": 0.09,
-        "forward": 0.29,
-        "up": -0.15,
-        "length": 0.085,
-        "radius": 0.018,
-        "material": "tusk"
-      },
       "pointed_ears": {
         "root_spacing": 0.15,
         "forward": -0.015,
@@ -102,52 +72,28 @@
         "back_sweep": 0.10,
         "down_angle_degrees": 18.0,
         "material": "skin"
-      },
-      "skullcap": {
-        "enabled": true,
-        "material": "hood",
-        "scale": [0.235, 0.205, 0.21],
-        "forward": -0.10,
-        "up": 0.075
       }
     }
   },
   "body": {
     "construction": "donor_mesh_adapt",
-    "donor_object": "Warrior_Body",
+    "donor_object": "Example_Body",
     "skin_material": "skin"
-  },
-  "equipment": {
-    "weapon": {
-      "kind": "spiked_club",
-      "source_grip_object": "Warrior_Sword",
-      "bone": "Weapon.R"
-    }
   },
   "materials": {
     "skin": {"color": [0.23, 0.29, 0.13], "roughness": 0.82},
     "eye": {"color": [0.85, 0.46, 0.06], "roughness": 0.32, "emission": 0.08},
-    "pupil": {"color": [0.02, 0.02, 0.02], "roughness": 0.4},
-    "mouth": {"color": [0.045, 0.018, 0.014], "roughness": 0.9},
-    "tusk": {"color": [0.68, 0.62, 0.45], "roughness": 0.62},
-    "hood": {"color": [0.10, 0.065, 0.035], "roughness": 0.9},
-    "cloth": {"color": [0.14, 0.075, 0.045], "roughness": 0.94},
-    "leather": {"color": [0.095, 0.055, 0.032], "roughness": 0.88},
-    "iron": {"color": [0.075, 0.085, 0.085], "roughness": 0.58, "metallic": 0.22}
+    "pupil": {"color": [0.02, 0.02, 0.02], "roughness": 0.4}
   },
   "silhouette_contract": {
     "required_landmarks": [
-      "Morph.Skullcap",
       "Morph.Eye.L",
       "Morph.Eye.R",
       "Morph.Brow.L",
       "Morph.Brow.R",
       "Morph.Snout",
-      "Morph.Jaw",
       "Morph.Ear.L",
-      "Morph.Ear.R",
-      "Morph.Tusk.L",
-      "Morph.Tusk.R"
+      "Morph.Ear.R"
     ],
     "minimum_ear_span_to_head_width": 1.65,
     "minimum_snout_projection_to_head_depth": 0.45,
