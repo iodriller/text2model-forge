@@ -1,0 +1,16 @@
+{
+  "schema_version": 1,
+  "clips": [
+    {
+      "clip_id": "example_walk_cycle",
+      "display_name": "Example Walk Cycle",
+      "description": "Template entry. Replace with a real donor clip: fill in every provenance field below, download the file, and set local_path before selecting this clip_id from [stages.D7].donor_motion_id.",
+      "compatible_anatomy_family": "short_biped",
+      "source_url": "https://example.com/replace-with-the-real-source-page",
+      "author": "replace with the real author/publisher name",
+      "license": "replace with the real license, e.g. CC0-1.0 or CC-BY-4.0",
+      "license_requires_attribution": true,
+      "local_path": null
+    }
+  ]
+}

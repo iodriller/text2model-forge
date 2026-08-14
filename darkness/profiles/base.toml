@@ -74,7 +74,11 @@ maximum_bone_influences = 4
 
 [stages.D7]                           # DOCUMENTED -- motion
 timeout_seconds = 3600
-donor_motion_id = ""                  # empty means procedural/synthesized motion; see [[motion_library]]
+# Empty means procedural/synthesized motion. A non-empty value must name a
+# clip_id in motion_library/catalog.json (copy catalog.example.json to get
+# started) resolved via darkness.motion_library.resolve_donor_motion_path,
+# then passed as --source to adapters/retarget_humanoid_motion.py.
+donor_motion_id = ""
 
 [stages.D8]                           # DOCUMENTED -- surface painting
 seed = 7132026
