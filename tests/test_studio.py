@@ -21,8 +21,10 @@ from darkness.studio_models import (
     STAGE_DEFINITIONS,
     StudioAssetSpec,
     StudioCharacterSpec,
+    StudioComponent,
     StudioEquipment,
     StudioQwenReview,
+    StudioRun,
 )
 from darkness.studio_pipeline import (
     StudioCoordinator,
@@ -366,6 +368,124 @@ def test_generic_static_asset_contract_accepts_wall_without_character_fields() -
     )
     assert wall.asset_kind == "architecture"
     assert wall.behavior == "static"
+
+
+class _SpecQwen:
+    """Minimal fake Qwen that returns a caller-supplied spec, for testing D0's
+    asset_kind/behavior-driven stage-skip logic without needing D1-D10 to
+    actually work for a non-character asset."""
+
+    def __init__(self, spec: StudioAssetSpec) -> None:
+        self._spec = spec
+
+    def compile_spec(self, description):
+        return self._spec
+
+
+def _run_d0_only(spec: StudioAssetSpec, run_id: str, tmp_path: Path) -> StudioRun:
+    store = StudioStore(tmp_path)
+    run = store.create(run_id, spec.description)
+    coordinator = StudioCoordinator(store, qwen_factory=lambda run: _SpecQwen(spec))
+    coordinator._run_d0(run)
+    store.save(run)
+    return store.load(run_id)
+
+
+def test_static_prop_skips_only_rig_and_motion_stages(tmp_path: Path) -> None:
+    chair = StudioAssetSpec(
+        asset_id="oak_chair",
+        title="Original Oak Chair",
+        description="A simple original sturdy wooden dining chair with a straight back.",
+        creative_direction="Readable original cottage-style furniture, no franchise motifs.",
+        asset_kind="prop",
+        behavior="static",
+        anatomy_family=None,
+        height_m=0.9,
+        dimensions_m=[0.45, 0.9, 0.45],
+        silhouette=["straight back", "four legs"],
+        materials=["oak wood"],
+        animations=[],
+        locked_features=["four legs", "straight back"],
+        negative_constraints=["no copied franchise motifs"],
+        gameplay_readability=["silhouette reads at prop scale"],
+    )
+    run = _run_d0_only(chair, "chair-v1", tmp_path)
+    assert run.stage("D0").state == "approved"
+    # a static prop still needs geometry, cleanup, surface, sprites, and validation
+    for stage_id in ("D2", "D3", "D8", "D9", "D10"):
+        assert run.stage(stage_id).state != "skipped", stage_id
+        assert run.stage(stage_id).applicable is True, stage_id
+    # but no skeleton, rig, deforming weights, or motion
+    for stage_id in ("D4", "D5", "D6", "D7"):
+        stage = run.stage(stage_id)
+        assert stage.state == "skipped", stage_id
+        assert stage.applicable is False, stage_id
+        assert stage.progress == 1
+
+
+def test_material_asset_skips_every_geometry_and_articulation_stage(tmp_path: Path) -> None:
+    rust_iron = StudioAssetSpec(
+        asset_id="rust_iron_material",
+        title="Weathered Rust Iron",
+        description="An original weathered rust-streaked iron surface material.",
+        creative_direction="Readable original grunge metal, tileable at gameplay scale.",
+        asset_kind="material",
+        behavior="static",
+        anatomy_family=None,
+        height_m=None,
+        silhouette=["flat tileable swatch"],
+        materials=["rust", "iron"],
+        animations=[],
+        locked_features=["rust streak pattern"],
+        negative_constraints=["no copied franchise motifs"],
+        gameplay_readability=["reads at tile scale"],
+    )
+    run = _run_d0_only(rust_iron, "material-v1", tmp_path)
+    assert run.stage("D0").state == "approved"
+    for stage_id in ("D2", "D3", "D4", "D5", "D6", "D7"):
+        stage = run.stage(stage_id)
+        assert stage.state == "skipped", stage_id
+        assert stage.applicable is False, stage_id
+    # a material still goes through concept, surface, sprites, and validation
+    for stage_id in ("D1", "D8", "D9", "D10"):
+        assert run.stage(stage_id).state != "skipped", stage_id
+
+
+def test_rigid_articulated_asset_skips_skinning_and_motion_without_clips(tmp_path: Path) -> None:
+    gate = StudioAssetSpec(
+        asset_id="iron_gate",
+        title="Original Hinged Iron Gate",
+        description="An original hinged iron gate with a single swinging door.",
+        creative_direction="Readable original ironwork, open/close states.",
+        asset_kind="architecture",
+        behavior="rigid_articulated",
+        anatomy_family=None,
+        height_m=2.4,
+        dimensions_m=[1.6, 2.4, 0.2],
+        silhouette=["vertical iron bars"],
+        materials=["iron"],
+        components=[
+            StudioComponent(
+                component_id="door",
+                role="movable_part",
+                connection="hinge to frame",
+                motion="rigid",
+                description="Single swinging door leaf.",
+            )
+        ],
+        animations=[],
+        locked_features=["single door leaf"],
+        negative_constraints=["no copied franchise motifs"],
+        gameplay_readability=["open/close states readable"],
+    )
+    run = _run_d0_only(gate, "gate-v1", tmp_path)
+    assert run.stage("D6").state == "skipped"
+    assert run.stage("D6").message == "Rigid articulated assets do not require deforming skin weights."
+    assert run.stage("D7").state == "skipped"
+    assert run.stage("D7").message == "No rigid motion clips were requested."
+    # rigid articulation still needs a skeleton/rig for its hinge, unlike a static prop
+    assert run.stage("D4").state != "skipped"
+    assert run.stage("D5").state != "skipped"
 
 
 def test_rigid_structure_contract_normalizes_bounds_and_limits() -> None:
