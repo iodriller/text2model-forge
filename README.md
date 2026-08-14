@@ -96,6 +96,12 @@ Every decision hash-binds the evidence it saw and is recorded in an append-only
 history -- nothing is silently overwritten, and evidence from an invalidated
 attempt stays in the run's event log even after a stage resets.
 
+**Scope note on override values:** all six actions work at every gated stage,
+but the JSON *override values* carried by retry/edit are currently consumed
+only by D1 (Concept), where `{"seed": N}` pins the first concept seed. The
+other stage runners accept and record overrides but do not yet read them --
+see "Known gaps" below.
+
 ## The LLM optimizer is optional
 
 `darkness/optimizer.py` is a constrained diagnostic loop: given evidence and a
@@ -115,6 +121,31 @@ cycle from a separate CC0 pack) onto a newly generated rig, producing a
 rest-relative retarget with numeric proof, an LLM critic review, and an
 independent mediator. `[stages.D7].donor_motion_id` in the config is the hook
 for selecting a specific donor clip at that gate.
+
+## Known gaps
+
+Stated plainly so nobody discovers these the hard way:
+
+- **Config coverage is uneven.** `darkness/profiles/base.toml` documents the
+  full parameter surface, but only the `[studio]` section is actually read by
+  the pipeline today. The 12 `[stages.*]` / `[quality.*]` sections are marked
+  `DOCUMENTED` rather than `WIRED` in that file's own comments, and their
+  values currently mirror the adapters' hardcoded CLI defaults. Changing one
+  will not change behavior until that stage is threaded through the resolver.
+- **Retry/edit override values reach D1 only** (see the scope note above).
+- **The D0-D10 chain is not proven end to end for a non-character asset.**
+  The stage-skip logic for props, materials, and rigid-articulated assets is
+  implemented and tested, but no chair has actually been produced. Expect the
+  concept stage in particular to need work for non-character subjects.
+- **A human retry is not subject to the automatic iteration budget.** D1 stops
+  Qwen's own correction loop after six iterations, but an explicit human retry
+  resets the stage to `pending` and bypasses that ceiling. This is deliberate
+  -- a person clicking retry should not be rate-limited by a guard meant for a
+  runaway model -- but it does mean retry is unbounded by design.
+- **Half the system cannot be verified in CI.** Anything touching Blender,
+  ComfyUI, Ollama/LocalDeploy, WSL2, or Unity needs those tools running
+  locally. `pytest tests` and `darkness demo` cover the orchestration
+  substrate, contracts, gates, config, and lineage -- not the generators.
 
 ## Repository layout
 
