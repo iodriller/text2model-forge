@@ -27,7 +27,7 @@ def main(argv: list[str] | None = None) -> int:
 
     config = load_local_config()
     if config is None:
-        raise SystemExit("Darkness config.local.json is required")
+        raise SystemExit("Darkness config.local.toml is required")
     workspace = Path(config.workspace_root).resolve()
     artifact = args.artifact.resolve()
     output = args.out.resolve()

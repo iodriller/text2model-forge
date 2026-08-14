@@ -1,0 +1,19 @@
+# Advanced profile: every stage parameter is expected to be hand-tuned.
+# Select with `forge studio --profile advanced`. Copy this file under a new
+# name (e.g. profiles/my-project.toml) to keep a project-specific set of
+# overrides -- any file in profiles/ is a valid --profile argument.
+
+[asset]
+quality = "high"
+
+[optimizer]
+enabled = true
+mode = "advise"                       # still proposes only; "auto" applies without a human look
+
+[stages.D2b]
+target_quads = 40000
+minimum_quad_fraction = 0.995
+
+[stages.D9]
+lod_levels = 3
+atlas_size = 4096

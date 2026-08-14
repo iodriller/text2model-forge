@@ -1,0 +1,88 @@
+# Asset Forge base configuration.
+#
+# Every setting the tool understands, with its default value and meaning,
+# lives in this file. profiles/simple.toml and profiles/advanced.toml (or a
+# profile you add) overlay this file; config.local.toml's [studio_defaults]
+# table can override machine-wide; a run's own settings win last. Run
+# `forge config show --profile <name>` to see the fully resolved values and
+# which layer set each one.
+#
+# Sections marked WIRED are read by darkness/studio_pipeline.py today.
+# Sections marked DOCUMENTED are the agreed parameter surface for a stage
+# but are not yet read from this file at every adapter call site -- those
+# adapters still carry their own hardcoded argparse defaults, which this
+# file's values currently mirror. Wiring each remaining call site through
+# this resolver is real, tracked follow-up work, not done blind against
+# adapters that need a live Blender/ComfyUI/GPU worker to verify safely.
+
+[studio]                              # WIRED -- StudioRun construction
+model = "qwen3_6_27b"                 # LocalDeploy/Ollama model id for Qwen review and the optimizer
+comfy_url = "http://127.0.0.1:8188"
+localdeploy_url = "http://127.0.0.1:8000/v1"
+concept_backend = "auto"              # auto | qwen_image_2512 | qwen_image_edit_2511 | sdxl
+checkpoint = "dreamshaper_xl_v2_turbo.safetensors"
+style_lora = "Warcraft style.safetensors"
+style_lora_strength = 0.8
+style_lora_trigger = "World of Warcraft cinematic style"
+prop_lora = ""
+prop_lora_strength = 0.6
+
+[optimizer]                           # DOCUMENTED -- see adapters/optimize_short_biped_rig.py
+# The LLM optimizer (darkness/optimizer.py) is a separate, explicitly
+# invoked research loop today, not an automatic step inside D0-D10. Its
+# first six-attempt episode retained the baseline rather than improving
+# it, so "enabled" here documents intent for when/if it is wired into the
+# main flow; it does not currently gate anything in studio_pipeline.py.
+enabled = false
+mode = "advise"                       # advise (propose only) | auto (apply without a human look)
+max_attempts = 2                      # matches LocalDeployOptimizer's structured-output retry budget
+
+[asset]                               # DOCUMENTED -- simple-tier request shape
+asset_kind = "character"              # character | creature | prop | architecture | environment | material | vfx
+behavior = "deformable_animated"      # static | rigid_articulated | deformable_animated | simulated
+animated = true
+animations = []                       # clip ids; empty means "use the asset kind's defaults"
+quality = "standard"                  # draft | standard | high -- see [quality.*] below
+
+[quality.draft]                       # DOCUMENTED -- fast, rough iteration
+concept_steps = 20
+concept_cfg = 6.0
+sprite_views = 4
+
+[quality.standard]                    # DOCUMENTED -- default
+concept_steps = 30
+concept_cfg = 7.0
+sprite_views = 4
+
+[quality.high]                        # DOCUMENTED -- slow, maximum fidelity
+concept_steps = 45
+concept_cfg = 7.5
+sprite_views = 8
+
+[stages.D2]                           # DOCUMENTED -- 3D generation
+worker_id = "canonical.short_biped"
+seed = 7132026
+timeout_seconds = 1800
+
+[stages.D2b]                          # DOCUMENTED -- retopology
+worker_id = "autoremesher"
+target_quads = 20000
+minimum_quad_fraction = 0.99
+
+[stages.D6]                           # DOCUMENTED -- skinning
+maximum_bone_influences = 4
+
+[stages.D7]                           # DOCUMENTED -- motion
+timeout_seconds = 3600
+donor_motion_id = ""                  # empty means procedural/synthesized motion; see [[motion_library]]
+
+[stages.D8]                           # DOCUMENTED -- surface painting
+seed = 7132026
+timeout_seconds = 1200
+
+[stages.D9]                           # DOCUMENTED -- sprite rendering / LODs / atlases
+lod_levels = 2
+atlas_size = 2048
+
+[stages.D10]                          # DOCUMENTED -- runtime validation
+unity_version = "6000.5.1f1"

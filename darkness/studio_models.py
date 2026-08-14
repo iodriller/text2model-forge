@@ -191,8 +191,14 @@ class StudioRun(StrictModel):
         raise KeyError(stage_id)
 
 
-def new_studio_run(run_id: str, description: str) -> StudioRun:
+def new_studio_run(
+    run_id: str, description: str, overrides: dict[str, object] | None = None
+) -> StudioRun:
+    """Create a run. `overrides` (see darkness.settings.studio_overrides) may set
+    any of StudioRun's own configuration fields; run_id/description/stages are
+    always computed here and cannot be overridden this way."""
     return StudioRun(
+        **(overrides or {}),
         run_id=run_id,
         description=description.strip(),
         stages=[

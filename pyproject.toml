@@ -28,5 +28,8 @@ assetforge = "assetforge.cli:main"
 where = ["."]
 include = ["darkness*", "assetforge*"]
 
+[tool.setuptools.package-data]
+darkness = ["profiles/*.toml"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]

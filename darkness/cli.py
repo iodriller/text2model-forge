@@ -14,6 +14,7 @@ from .manifests import load_manifests, preflight
 from .mesh_evidence import build_mesh_evidence
 from .packaging import build_delivery_package
 from .regression import evaluate_candidate
+from .settings import resolve_settings
 from .schemas import (
     AssetBrief,
     AssetComponent,
@@ -146,6 +147,17 @@ def _parser() -> argparse.ArgumentParser:
     component_audit.add_argument("--minimum-structural-faces", type=int, default=100)
     component_audit.add_argument("--minimum-structural-fraction", type=float, default=0.001)
 
+    config_cmd = subparsers.add_parser("config", help="inspect the resolved layered configuration")
+    config_sub = config_cmd.add_subparsers(dest="config_command", required=True)
+    config_show = config_sub.add_parser(
+        "show", help="print the fully resolved configuration and which layer set each value"
+    )
+    config_show.add_argument("--profile", default="simple")
+    config_show.add_argument("--machine-path", type=Path, default=None)
+    config_show.add_argument(
+        "--values-only", action="store_true", help="print only the merged values, without per-key origin"
+    )
+
     package = subparsers.add_parser("package", help="build a digest-pinned research or release delivery")
     package.add_argument("--package-id", required=True)
     package.add_argument("--candidate-id", required=True)
@@ -164,7 +176,7 @@ def main(argv: list[str] | None = None) -> int:
         config = load_local_config()
         workspace = args.workspace or (Path(config.workspace_root) if config else None)
         if workspace is None:
-            raise SystemExit("--workspace is required when config.local.json is missing")
+            raise SystemExit("--workspace is required when config.local.toml is missing")
         serve(workspace, host=args.host, port=args.port, open_browser=args.open_browser)
         return 0
     if args.command == "workers":
@@ -199,6 +211,17 @@ def main(argv: list[str] | None = None) -> int:
         )
         response = adapter.execute(request, timeout_seconds=args.timeout)
         print(response.model_dump_json(indent=2))
+        return 0
+    if args.command == "config":
+        resolved = resolve_settings(profile=args.profile, machine_path=args.machine_path)
+        if args.values_only:
+            print(json.dumps(resolved.values, indent=2, sort_keys=True))
+        else:
+            report = {
+                key: {"value": value, "set_by": resolved.origin.get(key, "base")}
+                for key, value in sorted(resolved.flat().items())
+            }
+            print(json.dumps(report, indent=2, sort_keys=True))
         return 0
     if args.command == "package":
         registry_path = Path(__file__).resolve().parents[1] / "registry" / "candidates.json"

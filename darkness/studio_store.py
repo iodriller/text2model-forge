@@ -30,8 +30,10 @@ class StudioStore:
             raise ValueError("invalid run id")
         return self.runs_root / run_id
 
-    def create(self, run_id: str, description: str) -> StudioRun:
-        run = new_studio_run(run_id, description)
+    def create(
+        self, run_id: str, description: str, overrides: dict[str, Any] | None = None
+    ) -> StudioRun:
+        run = new_studio_run(run_id, description, overrides)
         root = self.run_root(run_id)
         with self._lock:
             if root.exists():

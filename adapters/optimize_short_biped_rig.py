@@ -449,7 +449,7 @@ def run_episode(args: argparse.Namespace) -> dict[str, object]:
 
     config = load_local_config()
     if config is None:
-        raise RuntimeError("Darkness config.local.json is required")
+        raise RuntimeError("Darkness config.local.toml is required")
     workspace = Path(config.workspace_root).resolve()
     if output_root != workspace and workspace not in output_root.parents:
         raise ValueError("optimization output directory must be inside the Darkness workspace")

@@ -33,7 +33,7 @@ def test_builtin_worker_preflight_is_ready() -> None:
 
 
 def test_example_local_config_is_strict() -> None:
-    path = Path(__file__).resolve().parents[1] / "config.example.json"
+    path = Path(__file__).resolve().parents[1] / "machine.example.toml"
     config = load_local_config(path)
     assert config is not None
     assert config.workers["triposg.1.5b"].command_prefix

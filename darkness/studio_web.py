@@ -15,6 +15,7 @@ import uuid
 import webbrowser
 
 from .config import load_local_config
+from .settings import profiles_dir, resolve_settings, studio_overrides
 from .studio_pipeline import StudioCoordinator
 from .studio_store import StudioStore
 
@@ -292,7 +293,21 @@ def _dashboard(store: StudioStore) -> str:
     return '<section class="card hero"><h1>Asset production runs</h1><p class=muted>One description in. Qwen acts, critiques, and mediates bounded corrections; deterministic gates preserve evidence and explicit human decisions.</p></section><div class=grid style="margin-top:16px">' + cards + "</div>"
 
 
+def _available_profiles() -> list[str]:
+    directory = profiles_dir()
+    if not directory.is_dir():
+        return ["simple"]
+    names = sorted(p.stem for p in directory.glob("*.toml") if p.stem != "base")
+    return names or ["simple"]
+
+
 def _new_form(csrf: str) -> str:
+    profiles = _available_profiles()
+    default = "simple" if "simple" in profiles else profiles[0]
+    options = "".join(
+        f'<option value="{html.escape(name)}"{" selected" if name == default else ""}>{html.escape(name)}</option>'
+        for name in profiles
+    )
     return (
         '<section class="card hero"><h1>Describe one original asset</h1>'
         '<p>This is the only production input. It may be a character, creature, door, wall, prop, environment, material, or VFX. Include handedness, moving pieces, and required states when they matter; Qwen compiles the rest.</p>'
@@ -300,6 +315,7 @@ def _new_form(csrf: str) -> str:
         f'<input type=hidden name=csrf value="{csrf}">'
         '<label>Description</label><textarea name=description minlength=20 required '
         'placeholder="Examples: an original armored footman with a right-hand sword and left shield; or a worn stone gate with two hinged iron doors and open/close states..."></textarea>'
+        f'<label>Configuration profile</label><select name=profile>{options}</select>'
         '<button class=primary type=submit>Compile asset and start</button></form></section>'
     )
 
@@ -405,8 +421,10 @@ def serve(
                     description = values.get("description", "").strip()
                     if len(description) < 20:
                         raise ValueError("description must contain at least 20 characters")
+                    profile = values.get("profile", "simple").strip() or "simple"
+                    resolved = resolve_settings(profile=profile)
                     run_id = _slug()
-                    store.create(run_id, description)
+                    store.create(run_id, description, studio_overrides(resolved))
                     coordinator.submit(run_id)
                     self.redirect("/run/" + quote(run_id))
                 elif path.startswith("/run/") and path.endswith("/decision"):

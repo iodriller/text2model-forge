@@ -1528,7 +1528,7 @@ class StudioCoordinator:
     def _artifact_for_path(run: StudioRun, path: Path, *, artifact_id: str) -> ArtifactRecord:
         config = load_local_config()
         if config is None:
-            raise RuntimeError("Darkness config.local.json is required")
+            raise RuntimeError("Darkness config.local.toml is required")
         workspace = Path(config.workspace_root).resolve()
         resolved = path.resolve()
         digest = sha256_file(resolved)
@@ -1562,7 +1562,7 @@ class StudioCoordinator:
     ):
         config = load_local_config()
         if config is None:
-            raise RuntimeError("Darkness config.local.json is required")
+            raise RuntimeError("Darkness config.local.toml is required")
         binding = worker_binding(config, worker_id)
         if binding is None:
             raise RuntimeError(f"Darkness worker has no machine binding: {worker_id}")
@@ -2097,7 +2097,7 @@ class StudioCoordinator:
             raise RuntimeError("the motion chain requires an asset specification")
         config = load_local_config()
         if config is None:
-            raise RuntimeError("Darkness config.local.json is required")
+            raise RuntimeError("Darkness config.local.toml is required")
         binding = worker_binding(config, "blender")
         if binding is None or not binding.command_prefix:
             raise RuntimeError("the Blender worker binding is required")
@@ -2253,7 +2253,7 @@ class StudioCoordinator:
     def _configured_blender(self) -> Path:
         config = load_local_config()
         if config is None:
-            raise RuntimeError("Darkness config.local.json is required")
+            raise RuntimeError("Darkness config.local.toml is required")
         binding = worker_binding(config, "blender")
         if binding is None or not binding.command_prefix:
             raise RuntimeError("the Blender worker binding is required")

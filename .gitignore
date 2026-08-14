@@ -1,0 +1,24 @@
+# Machine-local config: real binary paths and env vars, never portable.
+config.local.toml
+config.local.json
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+.pytest_cache/
+*.egg-info/
+build/
+dist/
+
+# Vendored/generated ComfyUI-style runtime and downloaded model weights, if
+# a worker environment is ever set up alongside the repo instead of outside it.
+runtime/
+workspaces/
+*.safetensors
+*.ckpt
+*.pt
+*.onnx
+
+# Local run output, never checked in.
+/AssetForgeRuns/

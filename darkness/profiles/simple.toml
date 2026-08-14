@@ -1,0 +1,15 @@
+# Simple profile: the ~10 knobs someone actually turns for a one-off asset.
+# Everything else comes from profiles/base.toml unchanged. Select with
+# `forge studio --profile simple` (the default) or `forge config show
+# --profile simple`.
+#
+# The simple-tier surface is: prompt text (given per-run, not here), asset
+# kind, animated yes/no and which clips, style preset, quality preset, and
+# whether the LLM optimizer runs. This file pins sensible values for the
+# ones worth a named default; a run can still override any of them.
+
+[asset]
+quality = "standard"
+
+[optimizer]
+enabled = false
