@@ -184,6 +184,23 @@ class StudioStore:
         self.save(run)
         return item
 
+    _DECISIONS = {"approve", "reject", "retry", "edit", "skip", "rollback"}
+
+    @staticmethod
+    def _invalidate_from(run: StudioRun, index: int, reason: str) -> None:
+        """Reset every stage from `index` onward to pending, preserving each
+        stage's own human_decisions (an append-only audit trail) but
+        discarding evidence, reviews, and any stale pending_overrides built
+        on what is now invalidated work."""
+        for downstream in run.stages[index:]:
+            downstream.state = "pending"
+            downstream.progress = 0
+            downstream.message = reason
+            downstream.evidence = []
+            downstream.qwen_reviews = []
+            downstream.pending_overrides = {}
+            downstream.error = None
+
     def decide(
         self,
         run_id: str,
@@ -191,11 +208,34 @@ class StudioStore:
         decision: str,
         comment: str,
         selected_evidence_id: str | None,
+        *,
+        overrides: dict[str, Any] | None = None,
+        target_stage_id: str | None = None,
     ) -> StudioRun:
-        if decision not in {"approve", "reject"}:
-            raise ValueError("decision must be approve or reject")
+        """Record one human decision at a stage gate.
+
+        approve: pick a candidate and unlock the next stage.
+        reject: comment required; Qwen's next attempt sees it.
+        retry: reroll the same stage, no comment required, no quality
+            judgement implied. `overrides` (if given) become the stage's
+            pending_overrides for its next attempt.
+        edit: like reject, but the correction is concrete: comment,
+            `overrides`, or both are required.
+        skip: mark this stage not applicable; comment required as the
+            reason; does not invalidate anything downstream.
+        rollback: reopen an earlier stage named by `target_stage_id` and
+            invalidate everything from there forward, including this stage.
+        """
+        if decision not in self._DECISIONS:
+            raise ValueError(f"decision must be one of {sorted(self._DECISIONS)}")
         if decision == "reject" and not comment.strip():
             raise ValueError("a rejection comment is required so Qwen knows what to improve")
+        if decision == "edit" and not comment.strip() and not overrides:
+            raise ValueError("an edit needs a comment, override values, or both")
+        if decision == "skip" and not comment.strip():
+            raise ValueError("a skip reason is required so the record explains why the stage was bypassed")
+        if decision == "rollback" and not target_stage_id:
+            raise ValueError("rollback requires target_stage_id")
         with self._lock:
             run = self.load(run_id)
             stage = run.stage(stage_id)
@@ -216,33 +256,68 @@ class StudioStore:
                 if recommended_item is None or recommended_item.metrics.get("selectable") is not True:
                     raise ValueError("select one candidate before approving")
                 selected_evidence_id = recommended
+            target_index: int | None = None
+            if decision == "rollback":
+                stage_ids = [item.stage_id for item in run.stages]
+                if target_stage_id not in stage_ids:
+                    raise ValueError(f"unknown stage: {target_stage_id}")
+                target_index = stage_ids.index(target_stage_id)
+                current_index = stage_ids.index(stage_id)
+                if target_index >= current_index:
+                    raise ValueError(
+                        "rollback target must be an earlier stage than the stage the decision is recorded against"
+                    )
+                if run.stages[target_index].state not in {"approved", "skipped", "rejected", "failed"}:
+                    raise ValueError(f"{target_stage_id} has no prior decision to roll back to")
             record = StudioHumanDecision(
                 decision_id=f"{stage_id.lower()}.{uuid.uuid4().hex[:12]}",
                 decision=decision,
                 comment=comment.strip(),
                 selected_evidence_id=selected_evidence_id,
                 evidence_hashes={item.evidence_id: item.sha256 for item in stage.evidence},
+                overrides=overrides or {},
+                target_stage_id=target_stage_id if decision == "rollback" else None,
             )
             stage.human_decisions.append(record)
-            stage.state = "approved" if decision == "approve" else "rejected"
-            stage.message = (
-                "Approved. The next deterministic stage may run."
-                if decision == "approve"
-                else "Rejected. Qwen will use the comment and complete history for the next attempt."
-            )
+            if decision != "rollback":
+                # rollback's state/message for every affected stage, including
+                # this one when it falls in range, is set by _invalidate_from below.
+                state_by_decision = {
+                    "approve": "approved",
+                    "reject": "rejected",
+                    "retry": "pending",
+                    "edit": "rejected",
+                    "skip": "skipped",
+                }
+                message_by_decision = {
+                    "approve": "Approved. The next deterministic stage may run.",
+                    "reject": "Rejected. Qwen will use the comment and complete history for the next attempt.",
+                    "retry": "Retrying with a fresh attempt.",
+                    "edit": "Correction recorded. The next attempt will apply it.",
+                    "skip": "Skipped: " + comment.strip(),
+                }
+                stage.state = state_by_decision[decision]
+                stage.message = message_by_decision[decision]
+            if decision in {"retry", "edit"}:
+                stage.pending_overrides = overrides or {}
             run.state = "running"
-            event_type = "gate_approved" if decision == "approve" else "gate_rejected"
-            self.event(run, event_type, record.model_dump(mode="json"))
-            if decision == "reject":
+            event_type_by_decision = {
+                "approve": "gate_approved",
+                "reject": "gate_rejected",
+                "retry": "gate_retried",
+                "edit": "gate_edited",
+                "skip": "gate_skipped",
+                "rollback": "gate_rolled_back",
+            }
+            self.event(run, event_type_by_decision[decision], record.model_dump(mode="json"))
+            if decision in {"reject", "retry", "edit"}:
                 index = next(i for i, item in enumerate(run.stages) if item.stage_id == stage_id)
-                for downstream in run.stages[index + 1 :]:
-                    downstream.state = "pending"
-                    downstream.progress = 0
-                    downstream.message = "Invalidated by an upstream rejection."
-                    downstream.evidence = []
-                    downstream.qwen_reviews = []
-                    downstream.error = None
+                self._invalidate_from(run, index + 1, "Invalidated by an upstream " + decision + ".")
                 run.current_stage = stage_id
+            elif decision == "rollback":
+                assert target_index is not None
+                self._invalidate_from(run, target_index, f"Reopened by a rollback from {stage_id}.")
+                run.current_stage = target_stage_id
             self.save(run)
             return run
 

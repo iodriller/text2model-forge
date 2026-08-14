@@ -640,6 +640,95 @@ def test_rejection_requires_comment_and_hash_binds_evidence(tmp_path: Path) -> N
     assert decided.stage("D1").human_decisions[-1].evidence_hashes == {"candidate-1": item.sha256}
 
 
+def _awaiting_stage_with_one_candidate(store: StudioStore, run_id: str, stage_id: str):
+    run = store.create(run_id, DESCRIPTION) if run_id not in {item.run_id for item in store.list()} else store.load(run_id)
+    stage = run.stage(stage_id)
+    stage.state = "awaiting_review"
+    image = store.run_root(run.run_id) / f"{stage_id}_stage" / "candidate.png"
+    image.parent.mkdir(parents=True, exist_ok=True)
+    Image.new("RGB", (8, 8), "blue").save(image)
+    item = store.evidence(
+        run,
+        stage_id,
+        image,
+        evidence_id=f"{stage_id.lower()}-candidate-1",
+        label="Candidate",
+        media_type="image/png",
+        metrics={"selectable": True},
+    )
+    store.save(run)
+    return run, item
+
+
+def test_retry_requires_no_comment_and_carries_overrides_into_pending_overrides(tmp_path: Path) -> None:
+    store = StudioStore(tmp_path)
+    run, item = _awaiting_stage_with_one_candidate(store, "retry-v1", "D1")
+    decided = store.decide(
+        run.run_id, "D1", "retry", "", item.evidence_id, overrides={"seed": 42}
+    )
+    stage = decided.stage("D1")
+    assert stage.state == "pending"
+    assert stage.pending_overrides == {"seed": 42}
+    assert stage.human_decisions[-1].decision == "retry"
+    event_types = [entry["event_type"] for entry in store.read_events(run.run_id)]
+    assert "gate_retried" in event_types
+
+
+def test_edit_requires_comment_or_overrides(tmp_path: Path) -> None:
+    store = StudioStore(tmp_path)
+    run, item = _awaiting_stage_with_one_candidate(store, "edit-v1", "D1")
+    with pytest.raises(ValueError, match="comment, override values, or both"):
+        store.decide(run.run_id, "D1", "edit", "", item.evidence_id)
+    decided = store.decide(
+        run.run_id, "D1", "edit", "", item.evidence_id, overrides={"prompt_suffix": "bigger shield"}
+    )
+    stage = decided.stage("D1")
+    assert stage.state == "rejected"
+    assert stage.pending_overrides == {"prompt_suffix": "bigger shield"}
+
+
+def test_skip_requires_a_reason_and_does_not_invalidate_downstream(tmp_path: Path) -> None:
+    store = StudioStore(tmp_path)
+    run, item = _awaiting_stage_with_one_candidate(store, "skip-v1", "D1")
+    with pytest.raises(ValueError, match="skip reason"):
+        store.decide(run.run_id, "D1", "skip", "", item.evidence_id)
+    decided = store.decide(run.run_id, "D1", "skip", "material asset, no concept needed", item.evidence_id)
+    stage = decided.stage("D1")
+    assert stage.state == "skipped"
+    # skip does not wipe evidence or state on later stages the way reject/retry/edit do
+    assert decided.stage("D4").state == "pending"
+    assert decided.stage("D4").message == "Waiting for the preceding stage."
+
+
+def test_rollback_reopens_an_earlier_stage_and_invalidates_everything_after_it(tmp_path: Path) -> None:
+    store = StudioStore(tmp_path)
+    run = store.create("rollback-v1", DESCRIPTION)
+    run.stage("D1").state = "approved"
+    store.save(run)
+    run, later_item = _awaiting_stage_with_one_candidate(store, "rollback-v1", "D4")
+    with pytest.raises(ValueError, match="earlier stage"):
+        store.decide(run.run_id, "D4", "rollback", "actually the concept was wrong", later_item.evidence_id, target_stage_id="D7")
+    decided = store.decide(
+        run.run_id, "D4", "rollback", "actually the concept was wrong", None, target_stage_id="D1"
+    )
+    assert decided.current_stage == "D1"
+    assert decided.stage("D1").state == "pending"
+    assert decided.stage("D4").state == "pending"
+    assert decided.stage("D4").evidence == []
+    # the rollback decision itself is recorded against the stage the human was standing at
+    assert decided.stage("D4").human_decisions[-1].decision == "rollback"
+    assert decided.stage("D4").human_decisions[-1].target_stage_id == "D1"
+    event_types = [entry["event_type"] for entry in store.read_events(run.run_id)]
+    assert "gate_rolled_back" in event_types
+
+
+def test_rollback_target_must_have_a_prior_decision(tmp_path: Path) -> None:
+    store = StudioStore(tmp_path)
+    run, item = _awaiting_stage_with_one_candidate(store, "rollback-v2", "D4")
+    with pytest.raises(ValueError, match="no prior decision"):
+        store.decide(run.run_id, "D4", "rollback", "go back", item.evidence_id, target_stage_id="D1")
+
+
 def test_artifact_paths_cannot_escape_run(tmp_path: Path) -> None:
     store = StudioStore(tmp_path)
     store.create("footman-v3", DESCRIPTION)

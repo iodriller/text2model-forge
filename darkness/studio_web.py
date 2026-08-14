@@ -161,15 +161,44 @@ def _evidence(run, stage) -> tuple[str, list[str]]:
 def _decision_form(run, stage, csrf: str, choices: list[str]) -> str:
     if stage.state != "awaiting_review":
         return ""
+    stage_index = next(i for i, item in enumerate(run.stages) if item.stage_id == stage.stage_id)
+    rollback_targets = [
+        item
+        for item in run.stages[:stage_index]
+        if item.state in {"approved", "skipped", "rejected", "failed"}
+    ]
+    rollback_options = "".join(
+        f'<option value="{item.stage_id}">{html.escape(item.stage_id)} -- {html.escape(item.label)}</option>'
+        for item in rollback_targets
+    )
+    rollback_block = (
+        f'<label>Roll back to</label><select name=target_stage_id><option value="">(not a rollback)</option>{rollback_options}</select>'
+        if rollback_targets
+        else '<input type=hidden name=target_stage_id value="">'
+    )
     return (
-        '<section class="card"><h2>Your decision</h2><p>Approve a selected candidate, or reject with a concrete '
-        'comment. A rejection is passed to Qwen with all prior images, measurements, and decisions.</p>'
+        '<section class="card"><h2>Your decision</h2><p>Approve a selected candidate, reject with a comment for '
+        "Qwen's next attempt, retry the same stage fresh, edit with a concrete correction, skip this stage, or "
+        'roll back to an earlier stage. Full history is preserved either way.</p>'
         f'<form method=post action="/run/{html.escape(run.run_id)}/decision">'
         f'<input type=hidden name=csrf value="{csrf}"><input type=hidden name=stage_id value="{stage.stage_id}">'
         + "".join(choices)
-        + '<label>Comment</label><textarea name=comment placeholder="What should Qwen preserve or change? A comment is required for rejection."></textarea>'
+        + '<label>Comment</label><textarea name=comment placeholder="Required for reject and skip; optional otherwise."></textarea>'
+        '<label>Overrides (JSON, optional -- used by retry and edit)</label>'
+        '<textarea name=overrides placeholder=\'e.g. {"seed": 42}\'></textarea>'
+        + rollback_block
+        + '<div class=actions>'
         '<button class=primary name=decision value=approve type=submit>Approve and continue</button>'
-        '<button class=reject name=decision value=reject type=submit>Reject and iterate</button></form></section>'
+        '<button class=reject name=decision value=reject type=submit>Reject and iterate</button>'
+        '<button class=secondary name=decision value=retry type=submit>Retry this stage</button>'
+        '<button class=secondary name=decision value=edit type=submit>Edit and retry</button>'
+        '<button class=secondary name=decision value=skip type=submit>Skip this stage</button>'
+        + (
+            '<button class=danger name=decision value=rollback type=submit>Roll back</button>'
+            if rollback_targets
+            else ""
+        )
+        + '</div></form></section>'
     )
 
 
@@ -429,12 +458,16 @@ def serve(
                     self.redirect("/run/" + quote(run_id))
                 elif path.startswith("/run/") and path.endswith("/decision"):
                     run_id = unquote(path.split("/")[2])
+                    overrides_raw = values.get("overrides", "").strip()
+                    overrides = json.loads(overrides_raw) if overrides_raw else None
                     store.decide(
                         run_id,
                         values["stage_id"],
                         values["decision"],
                         values.get("comment", ""),
                         values.get("selected_evidence_id") or None,
+                        overrides=overrides,
+                        target_stage_id=values.get("target_stage_id") or None,
                     )
                     coordinator.submit(run_id)
                     self.redirect("/run/" + quote(run_id))

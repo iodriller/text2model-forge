@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 import re
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import Field, model_validator
 
@@ -122,10 +122,18 @@ class StudioQwenReview(StrictModel):
 class StudioHumanDecision(StrictModel):
     decision_id: str = Field(min_length=1)
     created_at: datetime = Field(default_factory=utc_now)
-    decision: Literal["approve", "reject"]
+    # approve/reject are the original two verdicts. retry re-runs the same
+    # stage with no implied quality judgement (a reroll). edit is a reject
+    # that carries a concrete correction in `overrides` for the next attempt.
+    # skip marks a stage not applicable without invalidating anything after
+    # it. rollback reopens an earlier, already-decided stage and invalidates
+    # everything from there forward -- see StudioStore.decide().
+    decision: Literal["approve", "reject", "retry", "edit", "skip", "rollback"]
     comment: str = ""
     selected_evidence_id: str | None = None
     evidence_hashes: dict[str, str] = Field(default_factory=dict)
+    overrides: dict[str, Any] = Field(default_factory=dict)
+    target_stage_id: str | None = None
 
 
 class StudioStageState(StrictModel):
@@ -154,6 +162,9 @@ class StudioStageState(StrictModel):
     qwen_reviews: list[StudioQwenReview] = Field(default_factory=list)
     human_decisions: list[StudioHumanDecision] = Field(default_factory=list)
     error: str | None = None
+    # Set by a retry or edit decision; consumed and cleared by the next run
+    # of this stage. Empty for an ordinary approve/reject-driven attempt.
+    pending_overrides: dict[str, Any] = Field(default_factory=dict)
 
 
 class StudioRun(StrictModel):
