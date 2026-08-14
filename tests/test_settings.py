@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from darkness.settings import resolve_settings, studio_overrides
+from darkness.settings import quality_overrides, resolve_settings, studio_overrides
 from darkness.studio_models import new_studio_run
 
 
@@ -96,7 +96,47 @@ def test_studio_overrides_extracts_only_known_studio_run_fields():
     overrides = studio_overrides(resolved)
     assert overrides["checkpoint"] == "dreamshaper_xl_v2_turbo.safetensors"
     assert "asset_kind" not in overrides  # [asset] table is not a StudioRun field
-    assert "quality" not in overrides
+    assert "quality" not in overrides  # the tier NAME is not a field; its resolved values are
+
+
+def test_quality_overrides_resolves_asset_quality_to_its_tier_section():
+    standard = resolve_settings(profile="simple")  # simple.toml pins quality="standard"
+    assert quality_overrides(standard) == {"concept_steps": 30, "concept_cfg": 6.0}
+
+    high = resolve_settings(profile="advanced")  # advanced.toml pins quality="high"
+    assert quality_overrides(high) == {"concept_steps": 45, "concept_cfg": 7.0}
+
+
+def test_quality_overrides_excludes_sprite_views_since_it_is_not_a_studio_run_field():
+    resolved = resolve_settings(profile="advanced")
+    assert "sprite_views" not in quality_overrides(resolved)
+
+
+def test_quality_overrides_is_empty_for_an_unknown_tier():
+    resolved = resolve_settings(
+        profile="simple", run_overrides={"asset": {"quality": "ultra-does-not-exist"}}
+    )
+    assert quality_overrides(resolved) == {}
+
+
+def test_studio_overrides_includes_the_resolved_quality_tiers_values():
+    resolved = resolve_settings(profile="advanced")
+    overrides = studio_overrides(resolved)
+    assert overrides["concept_steps"] == 45
+    assert overrides["concept_cfg"] == 7.0
+
+
+def test_standard_quality_matches_studio_runs_own_field_defaults_exactly():
+    """The whole point of pinning standard to concept_workflow()'s real
+    defaults in base.toml: a run built from the resolved base/simple
+    overrides must be pixel-for-pixel identical to one built with none."""
+    from darkness.studio_models import new_studio_run
+
+    default_run = new_studio_run("run.a", "a run with absolutely no overrides")
+    resolved = resolve_settings(profile="simple")
+    resolved_run = new_studio_run("run.b", "a run built from resolved simple-profile overrides", studio_overrides(resolved))
+    assert resolved_run.concept_steps == default_run.concept_steps == 30
+    assert resolved_run.concept_cfg == default_run.concept_cfg == 6.0
 
 
 def test_studio_overrides_translates_empty_string_to_none_for_optional_fields():

@@ -181,9 +181,34 @@ _STUDIO_RUN_FIELDS = (
 
 _OPTIONAL_STRING_FIELDS = ("style_lora", "prop_lora")
 
+# [quality.<tier>] keys that map onto a StudioRun field of the same name.
+# sprite_views is deliberately excluded: it is still DOCUMENTED, not WIRED
+# (see profiles/base.toml) -- StudioRun has no field for it yet.
+_QUALITY_STUDIO_RUN_FIELDS = ("concept_steps", "concept_cfg")
+
+
+def quality_overrides(resolved: ResolvedSettings) -> dict[str, Any]:
+    """Resolve [asset].quality to its [quality.<tier>] section and extract
+    just the keys that map onto a StudioRun field.
+
+    Returns {} (not an error) for an unknown or missing tier -- an invalid
+    quality name is a StudioAssetSpec validation concern, not this
+    resolver's; falling through to StudioRun's own field defaults is the
+    correct fail-safe here, not a raise.
+    """
+    quality_name = resolved.values.get("asset", {}).get("quality")
+    if not isinstance(quality_name, str):
+        return {}
+    tier = resolved.values.get("quality", {}).get(quality_name)
+    if not isinstance(tier, dict):
+        return {}
+    return {key: tier[key] for key in _QUALITY_STUDIO_RUN_FIELDS if key in tier}
+
 
 def studio_overrides(resolved: ResolvedSettings) -> dict[str, Any]:
-    """Extract the subset of resolved [studio] values StudioRun accepts.
+    """Extract the subset of resolved values StudioRun's constructor accepts:
+    the [studio] table plus, via quality_overrides(), the [quality.<tier>]
+    section [asset].quality currently names.
 
     TOML has no null literal, so an optional string field (style_lora,
     prop_lora) is written as "" in profiles/*.toml to mean "not set"; that
@@ -191,9 +216,10 @@ def studio_overrides(resolved: ResolvedSettings) -> dict[str, Any]:
     """
     studio = resolved.values.get("studio", {})
     if not isinstance(studio, dict):
-        return {}
+        studio = {}
     result = {key: studio[key] for key in _STUDIO_RUN_FIELDS if key in studio}
     for key in _OPTIONAL_STRING_FIELDS:
         if result.get(key) == "":
             result[key] = None
+    result.update(quality_overrides(resolved))
     return result

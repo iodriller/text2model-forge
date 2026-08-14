@@ -219,6 +219,13 @@ class StudioRun(StrictModel):
     style_lora_trigger: str | None = "World of Warcraft cinematic style"
     prop_lora: str | None = None
     prop_lora_strength: float = Field(default=0.6, ge=0.0, le=1.5)
+    # Defaults match concept_workflow()'s own long-standing steps/cfg defaults
+    # in studio_comfy.py exactly, so a run created with no quality override
+    # behaves identically to before these fields existed. See
+    # darkness/settings.py's quality_overrides() for how [asset].quality
+    # picks a [quality.<tier>] section that can change these two.
+    concept_steps: int = Field(default=30, ge=1, le=150)
+    concept_cfg: float = Field(default=6.0, gt=0, le=30)
     spec: StudioAssetSpec | None = None
     stages: list[StudioStageState]
     event_count: int = 0

@@ -1348,6 +1348,8 @@ class StudioCoordinator:
                     prefix=f"DarknessStudio/{run.run_id}/concept/i{stage.iteration:02d}_{index}",
                     loras=applied_loras,
                     control_guides=control_guides,
+                    steps=run.concept_steps,
+                    cfg=run.concept_cfg,
                 )
             outputs = comfy.generate(
                 workflow=workflow,
@@ -1623,6 +1625,8 @@ class StudioCoordinator:
             negative=plan.negative_prompt,
             seed=plan.seed,
             prefix=f"DarknessStudio/{run.run_id}/geometry/i{stage.iteration:02d}",
+            steps=run.concept_steps,
+            cfg=run.concept_cfg,
         )
         raw_seed = comfy.generate(workflow=workflow, destination=attempt_root / "seed")[0]
         rgba_seed = attempt_root / "geometry_seed_rgba.png"

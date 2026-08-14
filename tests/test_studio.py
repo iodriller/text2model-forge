@@ -123,6 +123,9 @@ class FakeQwen:
 
 
 class FakeComfy:
+    def __init__(self) -> None:
+        self.workflows: list[dict] = []
+
     def checkpoints(self):
         return ["dreamshaper_xl_v2_turbo.safetensors"]
 
@@ -136,6 +139,7 @@ class FakeComfy:
         return f"{subfolder}/{name}"
 
     def generate(self, *, workflow, destination: Path, timeout_seconds=900):
+        self.workflows.append(workflow)
         destination.mkdir(parents=True, exist_ok=True)
         target = destination / "concept.png"
         Image.new("RGB", (64, 96), (70, 90, 120)).save(target)
@@ -154,9 +158,8 @@ class QwenImageFakeComfy(FakeComfy):
         }
         return values.get(kind, [])
 
-    def generate(self, *, workflow, destination: Path, timeout_seconds=900):
-        self.workflows.append(workflow)
-        return super().generate(workflow=workflow, destination=destination, timeout_seconds=timeout_seconds)
+    # generate() is inherited from FakeComfy, which already records into
+    # self.workflows -- do not also append here, or every call double-counts.
 
 
 class ControlFakeComfy(QwenImageFakeComfy):
@@ -243,6 +246,21 @@ def test_inpaint_workflow_uses_bounded_core_mask() -> None:
     assert workflow["6"]["inputs"]["grow_mask_by"] == 12
     assert workflow["7"]["class_type"] == "DifferentialDiffusion"
     assert workflow["8"]["inputs"]["denoise"] == 0.7
+
+
+def test_concept_workflow_passes_steps_and_cfg_through_to_the_sampler() -> None:
+    workflow = concept_workflow(
+        checkpoint="model.safetensors",
+        positive="original footman",
+        negative="copied design",
+        seed=42,
+        prefix="DarknessStudio/test",
+        steps=45,
+        cfg=7.0,
+    )
+    samplers = [item for item in workflow.values() if item["class_type"] == "KSampler"]
+    assert samplers[0]["inputs"]["steps"] == 45
+    assert samplers[0]["inputs"]["cfg"] == 7.0
 
 
 def test_qwen_image_edit_workflow_uses_native_dual_image_conditioning() -> None:
@@ -873,12 +891,13 @@ class _CorrectionRecordingQwen(FakeQwen):
         )
 
 
-def _drive_to_first_d1_review(store: StudioStore, run_id: str, qwen, executor):
-    store.create(run_id, DESCRIPTION)
+def _drive_to_first_d1_review(store: StudioStore, run_id: str, qwen, executor, *, comfy=None, overrides=None):
+    comfy = comfy or FakeComfy()
+    store.create(run_id, DESCRIPTION, overrides)
     coordinator = StudioCoordinator(
         store,
         qwen_factory=lambda run: qwen,
-        comfy_factory=lambda run: FakeComfy(),
+        comfy_factory=lambda run: comfy,
         executor=executor,
     )
     assert coordinator.submit(run_id) is True
@@ -976,6 +995,66 @@ def test_retry_overrides_pin_the_seed_for_exactly_one_attempt(tmp_path: Path) ->
     ]
     assert len(applied) == 1
     assert applied[0]["payload"]["overrides"] == {"seed": 4242}
+
+
+def test_a_run_configured_with_high_quality_actually_submits_high_quality_workflows(
+    tmp_path: Path,
+) -> None:
+    """End-to-end proof that [quality.high]'s concept_steps/concept_cfg reach
+    the real KSampler node ComfyUI would receive, not just that the numbers
+    parse. FakeComfy.generate() never touches a GPU; it only records what
+    was submitted, exactly like the seed-override regression test above."""
+    store = StudioStore(tmp_path)
+    comfy = FakeComfy()
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        _drive_to_first_d1_review(
+            store,
+            "quality-high-v1",
+            FakeQwen(),
+            executor,
+            comfy=comfy,
+            overrides={"concept_steps": 45, "concept_cfg": 7.0},
+        )
+    assert comfy.workflows, "D1 must have submitted at least one workflow"
+    # Only concept_workflow() outputs carry quality-tier steps/cfg; the
+    # footman spec's deferred shield repair also submits an inpaint_workflow()
+    # KSampler with its own fixed steps/cfg, distinguishable by EmptyLatentImage
+    # (concept_workflow always creates a fresh latent; inpaint never does).
+    concept_workflows = [
+        workflow
+        for workflow in comfy.workflows
+        if any(node["class_type"] == "EmptyLatentImage" for node in workflow.values())
+    ]
+    assert concept_workflows, "no concept_workflow() output was submitted"
+    samplers = [
+        node for workflow in concept_workflows for node in workflow.values() if node["class_type"] == "KSampler"
+    ]
+    assert samplers, "no KSampler node was submitted"
+    assert all(node["inputs"]["steps"] == 45 for node in samplers)
+    assert all(node["inputs"]["cfg"] == 7.0 for node in samplers)
+
+
+def test_a_run_with_no_quality_override_submits_todays_real_default_workflow(tmp_path: Path) -> None:
+    """Companion to the test above: a run with no quality override at all
+    must submit exactly the steps=30/cfg=6.0 that concept_workflow() has
+    always defaulted to -- proving the new quality-tier wiring introduced
+    no behavior change for the common case."""
+    store = StudioStore(tmp_path)
+    comfy = FakeComfy()
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        _drive_to_first_d1_review(store, "quality-default-v1", FakeQwen(), executor, comfy=comfy)
+    concept_workflows = [
+        workflow
+        for workflow in comfy.workflows
+        if any(node["class_type"] == "EmptyLatentImage" for node in workflow.values())
+    ]
+    assert concept_workflows, "no concept_workflow() output was submitted"
+    samplers = [
+        node for workflow in concept_workflows for node in workflow.values() if node["class_type"] == "KSampler"
+    ]
+    assert samplers
+    assert all(node["inputs"]["steps"] == 30 for node in samplers)
+    assert all(node["inputs"]["cfg"] == 6.0 for node in samplers)
 
 
 def test_artifact_paths_cannot_escape_run(tmp_path: Path) -> None:

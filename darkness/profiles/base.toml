@@ -14,6 +14,11 @@
 # file's values currently mirror. Wiring each remaining call site through
 # this resolver is real, tracked follow-up work, not done blind against
 # adapters that need a live Blender/ComfyUI/GPU worker to verify safely.
+#
+# [quality.*] is WIRED only for concept_steps/concept_cfg (they reach
+# concept_workflow() in studio_pipeline.py's D1/D2 calls); sprite_views in
+# the same sections is still DOCUMENTED -- D9's sprite renderer is a Blender
+# subprocess this environment cannot verify against.
 
 [studio]                              # WIRED -- StudioRun construction
 model = "qwen3_6_27b"                 # LocalDeploy/Ollama model id for Qwen review and the optimizer
@@ -44,19 +49,23 @@ animated = true
 animations = []                       # clip ids; empty means "use the asset kind's defaults"
 quality = "standard"                  # draft | standard | high -- see [quality.*] below
 
-[quality.draft]                       # DOCUMENTED -- fast, rough iteration
+[quality.draft]                       # WIRED -- concept_steps/concept_cfg feed concept_workflow()
 concept_steps = 20
+concept_cfg = 5.0
+sprite_views = 4
+
+# concept_steps/concept_cfg here are darkness/studio_comfy.py concept_workflow()'s
+# own long-standing defaults (steps=30, cfg=6.0), not new values -- "standard"
+# quality must reproduce today's real generation behavior exactly, since a
+# different number here is a visual change nobody in this environment can see.
+[quality.standard]                    # WIRED -- concept_steps/concept_cfg feed concept_workflow()
+concept_steps = 30
 concept_cfg = 6.0
 sprite_views = 4
 
-[quality.standard]                    # DOCUMENTED -- default
-concept_steps = 30
-concept_cfg = 7.0
-sprite_views = 4
-
-[quality.high]                        # DOCUMENTED -- slow, maximum fidelity
+[quality.high]                        # WIRED -- concept_steps/concept_cfg feed concept_workflow()
 concept_steps = 45
-concept_cfg = 7.5
+concept_cfg = 7.0
 sprite_views = 8
 
 [stages.D2]                           # DOCUMENTED -- 3D generation
