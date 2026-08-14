@@ -1,9 +1,14 @@
-# Asset Forge Darkness
+# Darkness worker guide
 
-This is the Darkness implementation described by `DESIGN/asset_forge_darkness_master_plan.md`. Its orchestration,
-contracts, optimizer, workers, and QA remain independent. The qualified D8 adapter deliberately reuses the small,
-tested `tools/asset_forge` ComfyUI multiview client and Blender view baker; Darkness wraps those components with its
-own provenance, selected-master re-render, black-atlas rejection, Qwen/referee, and downstream hash gates.
+Detailed, historical worker-by-worker reference for the `darkness` compiler package. For an overview of the whole
+tool, start with the repo root [README](../README.md). This document predates the repo's extraction from a game
+project and preserves the original R&D log of qualifying each worker; some referenced design documents from that
+project are not included here.
+
+Darkness's orchestration, contracts, optimizer, workers, and QA are independent of any particular asset. The
+qualified D8 adapter deliberately reuses the small, tested `assetforge` ComfyUI multiview client and Blender view
+baker; Darkness wraps those components with its own provenance, selected-master re-render, black-atlas rejection,
+Qwen/referee, and downstream hash gates.
 
 The implemented foundation provides:
 
@@ -65,36 +70,35 @@ validates 144 sprites/16 clips in a standalone Unity project. It is still a huma
 canonical landmark approval, corrective shoulder deformation, D0–D6 orchestration, and owner sign-off remain open.
 The optional live-3D PBR/FBX prefab adapter is also not implemented.
 
-Useful commands (from the EmberDefense root):
+Useful commands (from the repo root, package installed via `pip install -e .`):
 
 ```powershell
-$env:PYTHONPATH = (Resolve-Path tools/asset_forge_darkness).Path
 python -m darkness workers
 python -m darkness demo --workspace C:/AssetForgeDarknessRuns/demo
 python -m darkness run-worker --worker-id canonical.short_biped --request C:/path/request.json
 python -m darkness mesh-check --input C:/path/triangular.obj --output C:/path/new-evidence-directory
 python -m darkness glb-component-audit --input C:/path/candidate.glb --output C:/path/new-audit-directory
-python tools/asset_forge_darkness/adapters/build_blender_request.py `
+python adapters/build_blender_request.py `
   --input C:/path/candidate.glb --output-directory C:/path/blender-evidence `
   --out C:/path/blender-request.json --job-id blender.example.v1 --operation-id blender.repair
 python -m darkness run-worker --worker-id blender --request C:/path/blender-request.json
-python tools/asset_forge_darkness/adapters/build_blender_request.py `
+python adapters/build_blender_request.py `
   --input C:/path/autoremesher-candidate.obj --output-directory C:/path/repaired-evidence `
   --out C:/path/repair-request.json --job-id blender.retopology.repair.v1 `
   --operation-id blender.repair_retopology --minimum-quad-fraction 0.99
 python -m darkness run-worker --worker-id blender --request C:/path/repair-request.json
-python tools/asset_forge_darkness/adapters/build_retopology_request.py `
+python adapters/build_retopology_request.py `
   --input C:/path/normalized-source.obj --output-directory C:/path/retopology-evidence `
   --out C:/path/retopology-request.json --job-id autoremesher.example.v1 --target-quads 50000
 python -m darkness run-worker --worker-id autoremesher --request C:/path/retopology-request.json
-python tools/asset_forge_darkness/adapters/build_instant_meshes_request.py `
+python adapters/build_instant_meshes_request.py `
   --input C:/path/normalized-source.obj --output-directory C:/path/instant-meshes-evidence `
   --out C:/path/instant-meshes-request.json --job-id instant.meshes.example.v1 --field-faces 12500
 python -m darkness run-worker --worker-id instant_meshes.retopology --request C:/path/instant-meshes-request.json
 python -m darkness package --package-id goblin.v1 --candidate-id darkness-canonical-short-biped-v1 `
   --source C:/path/validated-output --output C:/path/package `
-  --qualification tools/asset_forge_darkness/qualifications/canonical-short-biped-v1.json --mode research
-python tools/asset_forge_darkness/adapters/run_motion_candidate_pipeline.py `
+  --qualification qualifications/canonical-short-biped-v1.json --mode research
+python adapters/run_motion_candidate_pipeline.py `
   --target C:/path/approved-rig.blend --motion-source C:/path/UAL1_Standard.glb `
   --output-root C:/AssetForgeDarknessRuns/goblin-painted-review `
   --blender C:/path/blender.exe --unity C:/path/Unity.exe
@@ -125,8 +129,8 @@ approval remain open; this operation does not promote the generated topology.
 
 Machine-specific worker commands belong in ignored `config.local.json`; use `config.example.json` as the template.
 
-Run tests from the EmberDefense root with a Python environment containing the project dependencies:
+Run tests from the repo root with a Python environment containing the project dependencies:
 
 ```powershell
-python -m pytest tools/asset_forge_darkness/tests -q
+python -m pytest tests -q
 ```

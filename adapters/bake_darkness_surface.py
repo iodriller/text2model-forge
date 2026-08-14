@@ -6,14 +6,16 @@ import hashlib
 import json
 from pathlib import Path
 import subprocess
-import sys
 from typing import Any
 
 from PIL import Image, ImageChops, ImageDraw, ImageStat
 
+from assetforge.bake import _run_blender as run_bake_blender
+from assetforge.bake import bake_texture_master
+
 
 def _arguments(argv: list[str] | None = None) -> argparse.Namespace:
-    repo = Path(__file__).resolve().parents[3]
+    repo = Path(__file__).resolve().parents[1]
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--master", type=Path, required=True)
     parser.add_argument(
@@ -268,7 +270,7 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
             "--python-exit-code",
             "1",
             "--python",
-            str(repo / "tools/asset_forge_darkness/adapters/prepare_semantic_surface_baseline.py"),
+            str(repo / "adapters/prepare_semantic_surface_baseline.py"),
             "--",
             "--source",
             str(master),
@@ -290,11 +292,6 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
     config_path.write_text(
         json.dumps(_config(args, output, baseline, baked, spec), indent=2) + "\n", encoding="utf-8"
     )
-
-    asset_forge = repo / "tools" / "asset_forge"
-    sys.path.insert(0, str(asset_forge))
-    from assetforge.bake import _run_blender as run_bake_blender  # noqa: PLC0415
-    from assetforge.bake import bake_texture_master  # noqa: PLC0415
 
     provenance_path = output / "surface_provenance.json"
     painted_metadata = output / "work" / "views.json"
@@ -330,7 +327,7 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
             "--python-exit-code",
             "1",
             "--python",
-            str(repo / "tools/asset_forge_darkness/adapters/project_painted_vertex_surface.py"),
+            str(repo / "adapters/project_painted_vertex_surface.py"),
             "--",
             "--metadata",
             str(output / "work" / "views.json"),

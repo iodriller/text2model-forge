@@ -5,7 +5,7 @@
     "instant_meshes.retopology": {
       "command_prefix": [
         "C:/path/to/python.exe",
-        "C:/path/to/EmberDefense/tools/asset_forge_darkness/adapters/instant_meshes_retopology_worker.py"
+        "C:/path/to/asset-forge/adapters/instant_meshes_retopology_worker.py"
       ],
       "environment": {
         "DARKNESS_INSTANT_MESHES_EXE": "C:/path/to/Instant Meshes.exe"
@@ -14,7 +14,7 @@
     "autoremesher": {
       "command_prefix": [
         "C:/path/to/python.exe",
-        "C:/path/to/EmberDefense/tools/asset_forge_darkness/adapters/autoremesher_worker.py"
+        "C:/path/to/asset-forge/adapters/autoremesher_worker.py"
       ],
       "environment": {
         "DARKNESS_AUTOREMESHER_EXE": "C:/path/to/autoremesher-1.0.0/autoremesher.exe"
@@ -27,7 +27,7 @@
         "--factory-startup",
         "--offline-mode",
         "--python-exit-code", "23",
-        "--python", "C:/path/to/EmberDefense/tools/asset_forge_darkness/adapters/blender_worker.py",
+        "--python", "C:/path/to/asset-forge/adapters/blender_worker.py",
         "--"
       ],
       "environment": {}
@@ -35,28 +35,28 @@
     "triposg.1.5b": {
       "command_prefix": [
         "C:/path/to/TripoSG/.venv/Scripts/python.exe",
-        "C:/path/to/EmberDefense/tools/asset_forge_darkness/adapters/triposg_worker.py"
+        "C:/path/to/asset-forge/adapters/triposg_worker.py"
       ],
       "environment": {
         "DARKNESS_TRIPOSG_SOURCE": "C:/path/to/TripoSG",
         "DARKNESS_TRIPOSG_WEIGHTS": "C:/path/to/TripoSG/pretrained_weights/TripoSG",
-        "DARKNESS_TRIPOSG_COMPAT": "C:/path/to/EmberDefense/tools/asset_forge_darkness/compat/diso"
+        "DARKNESS_TRIPOSG_COMPAT": "C:/path/to/asset-forge/compat/diso"
       }
     },
     "canonical.short_biped": {
       "command_prefix": [
         "C:/path/to/python.exe",
-        "C:/path/to/EmberDefense/tools/asset_forge_darkness/adapters/canonical_short_biped_worker.py"
+        "C:/path/to/asset-forge/adapters/canonical_short_biped_worker.py"
       ],
       "environment": {}
     },
     "trellis2.4b": {
       "command_prefix": [
         "C:/path/to/python.exe",
-        "C:/path/to/EmberDefense/tools/asset_forge_darkness/adapters/wsl_launch.py",
+        "C:/path/to/asset-forge/adapters/wsl_launch.py",
         "--distro", "Ubuntu-24.04",
         "--wsl-python", "/home/<user>/miniconda3/envs/trellis2/bin/python",
-        "--wsl-script", "/mnt/c/path/to/EmberDefense/tools/asset_forge_darkness/adapters/trellis2_worker.py",
+        "--wsl-script", "/mnt/c/path/to/asset-forge/adapters/trellis2_worker.py",
         "--env", "DARKNESS_TRELLIS2_WEIGHTS=microsoft/TRELLIS.2-4B",
         "--env", "DARKNESS_TRELLIS2_SOURCE=/home/<user>/AssetForgeDarknessWorkers/TRELLIS.2",
         "--env", "DARKNESS_TRELLIS2_SOURCE_REVISION=<git-rev-parse-HEAD-of-cloned-TRELLIS.2>",
@@ -69,10 +69,10 @@
     "instantmesh.large": {
       "command_prefix": [
         "C:/path/to/python.exe",
-        "C:/path/to/EmberDefense/tools/asset_forge_darkness/adapters/wsl_launch.py",
+        "C:/path/to/asset-forge/adapters/wsl_launch.py",
         "--distro", "Ubuntu-24.04",
         "--wsl-python", "/home/<user>/miniconda3/envs/instantmesh/bin/python",
-        "--wsl-script", "/mnt/c/path/to/EmberDefense/tools/asset_forge_darkness/adapters/instantmesh_worker.py",
+        "--wsl-script", "/mnt/c/path/to/asset-forge/adapters/instantmesh_worker.py",
         "--env", "DARKNESS_INSTANTMESH_SOURCE=/home/<user>/AssetForgeDarknessWorkers/InstantMesh",
         "--env", "DARKNESS_INSTANTMESH_SOURCE_REVISION=<git-rev-parse-HEAD-of-cloned-InstantMesh>",
         "--env", "PATH=/usr/local/cuda-12.4/bin:/usr/bin:/bin",

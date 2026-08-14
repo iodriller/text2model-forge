@@ -25,7 +25,7 @@ STAGES = (
 
 
 def _arguments(argv: list[str] | None = None) -> argparse.Namespace:
-    repo = Path(__file__).resolve().parents[3]
+    repo = Path(__file__).resolve().parents[1]
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--target", type=Path, required=True)
     parser.add_argument("--motion-source", type=Path, required=True)
@@ -239,8 +239,8 @@ def _write_review_index(root: Path, *, unity_state: str) -> Path:
                 "",
                 "- [Four-motion key-pose sheet](retarget/human_review/all_motion_front_keyposes.png)",
                 "- [Motion critic and mediator summary](retarget/human_review/human_review.md)",
-                "- [Editable retargeted Blender master](retarget/quaternius_retargeted_goblin.blend)",
-                "- [GLB with idle, walk, attack, and death](retarget/quaternius_retargeted_goblin.glb)",
+                "- [Editable retargeted Blender master](retarget/quaternius_retargeted_candidate.blend)",
+                "- [GLB with idle, walk, attack, and death](retarget/quaternius_retargeted_candidate.glb)",
                 "",
                 "## Persistent painted surface",
                 "",
@@ -264,7 +264,7 @@ def _write_review_index(root: Path, *, unity_state: str) -> Path:
                     else "- Standalone Unity smoke bundle is ready: [instructions](unity_smoke_bundle/README.md), "
                     "[transfer ZIP](unity_smoke_bundle.zip), and [ZIP hash](unity_smoke_bundle.zip.json). "
                     "Run it on the licensed Unity computer, return its `result` folder, then resume with "
-                    "`--unity-result <result-folder>`. No EmberDefense project import is required."
+                    "`--unity-result <result-folder>`. No game project import is required."
                 ),
                 interactive_review,
                 "",
@@ -322,10 +322,10 @@ def run(args: argparse.Namespace) -> dict[str, object]:
         for name in STAGES:
             stages.setdefault(name, {"state": "pending", "detail": ""})
 
-    adapters = repo / "tools/asset_forge_darkness/adapters"
+    adapters = repo / "adapters"
     retarget = root / "retarget"
     retarget_report = retarget / "retarget_validation.json"
-    retarget_glb = retarget / "quaternius_retargeted_goblin.glb"
+    retarget_glb = retarget / "quaternius_retargeted_candidate.glb"
     retarget_error = retarget / "retarget_error.txt"
     if not retarget_glb.is_file():
         blender = _require_executable(blender, "retarget")
@@ -426,7 +426,7 @@ def run(args: argparse.Namespace) -> dict[str, object]:
                     sys.executable,
                     str(adapters / "bake_darkness_surface.py"),
                     "--master",
-                    str(retarget / "quaternius_retargeted_goblin.blend"),
+                    str(retarget / "quaternius_retargeted_candidate.blend"),
                     "--output-directory",
                     str(surface),
                     "--blender",
@@ -518,10 +518,10 @@ def run(args: argparse.Namespace) -> dict[str, object]:
                 "--python-exit-code",
                 "23",
                 "--python",
-                str(repo / "tools/asset_forge/blender/render_sprites.py"),
+                str(repo / "blender/render_sprites.py"),
                 "--",
                 "--config",
-                str(repo / "tools/asset_forge_darkness/configs/short_biped_sprite_render.json"),
+                str(repo / "configs/short_biped_sprite_render.json"),
                 "--repo-root",
                 str(repo),
                 "--frames-root",

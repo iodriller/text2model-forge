@@ -4,7 +4,7 @@
   "display_name": "Example Biped",
   "source_kind": "owned_blender_master",
   "master_license": "CC0-1.0 example fixture",
-  "source": "tools/asset_forge/sources/example_biped.blend",
+  "source": "sources/example_biped.blend",
   "max_polygons": 40000,
   "animation_object": "CharacterArmature",
   "cell_size": [256, 256],
@@ -27,9 +27,9 @@
   "pivot_y": 0.297,
   "prefab_scale": 1.62,
   "health_bar_y": 0.80,
-  "morphology_profile": "tools/asset_forge/creatures/example_biped.morphology.json",
+  "morphology_profile": "creatures/example_biped.morphology.json",
   "provenance_inputs": [
-    "tools/asset_forge/creatures/example_biped.morphology.json"
+    "creatures/example_biped.morphology.json"
   ],
   "animations": {
     "idle": {

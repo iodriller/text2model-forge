@@ -3,8 +3,8 @@
   "id": "example_biped_v1",
   "species": "example_creature",
   "family": "biped_humanoid_v1",
-  "family_contract": "tools/asset_forge/creatures/families/biped_humanoid.family.json",
-  "implementation": "tools/asset_forge/blender/build_creature_master.py",
+  "family_contract": "creatures/families/biped_humanoid.family.json",
+  "implementation": "blender/build_creature_master.py",
   "scale": 0.82,
   "animation_actions": [
     "Idle_Weapon",

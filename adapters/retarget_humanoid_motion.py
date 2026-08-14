@@ -1364,10 +1364,10 @@ def main() -> int:
     bpy.context.scene.frame_set(1)
     worker._clear_pose(target)
     worker._remove_diagnostic_objects()
-    checkpoint = output_root / "quaternius_retargeted_goblin.blend"
+    checkpoint = output_root / "quaternius_retargeted_candidate.blend"
     bpy.ops.wm.save_as_mainfile(filepath=str(checkpoint))
     worker._triangulate_scene_for_export()
-    exported = output_root / "quaternius_retargeted_goblin.glb"
+    exported = output_root / "quaternius_retargeted_candidate.glb"
     bpy.ops.export_scene.gltf(
         filepath=str(exported),
         export_format="GLB",

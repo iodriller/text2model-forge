@@ -58,7 +58,7 @@
       "candidate_id": "darkness-canonical-short-biped-v1",
       "display_name": "Darkness Canonical Short Biped v1",
       "capability": "canonical_topology_rig_skin_motion",
-      "source_url": "repo://tools/asset_forge_darkness/adapters/canonical_short_biped_worker.py",
+      "source_url": "repo://adapters/canonical_short_biped_worker.py",
       "license_id": "Project-Owned",
       "license_url": null,
       "priority": "open_source_first",

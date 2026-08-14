@@ -224,8 +224,8 @@ load();buttons();requestAnimationFrame(draw);
 def _readme_text() -> str:
     return f"""# Darkness standalone Unity smoke check
 
-This bundle checks the candidate in an isolated Unity project. It does not import anything into EmberDefense or modify
-another game project.
+This bundle checks the candidate in an isolated Unity project. It does not import anything into your game project or
+modify one.
 
 ## Human motion review
 

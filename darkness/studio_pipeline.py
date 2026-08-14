@@ -2137,7 +2137,7 @@ class StudioCoordinator:
             "--blender",
             str(blender),
             "--repo-root",
-            str(Path(__file__).resolve().parents[3]),
+            str(Path(__file__).resolve().parents[1]),
             "--model",
             run.model,
             "--comfy-url",
@@ -2269,7 +2269,7 @@ class StudioCoordinator:
         stage = run.stage("D8")
         attempt_root = self.store.run_root(run.run_id) / "D8_surface" / f"iteration-{stage.iteration:02d}"
         if run.spec.behavior == "deformable_animated":
-            master = self.store.run_root(run.run_id) / "D7_D10_chain" / "retarget" / "quaternius_retargeted_goblin.blend"
+            master = self.store.run_root(run.run_id) / "D7_D10_chain" / "retarget" / "quaternius_retargeted_candidate.blend"
             surface = self.store.run_root(run.run_id) / "D7_D10_chain" / "surface"
         elif run.spec.behavior == "rigid_articulated":
             master = self._latest_evidence_path(
@@ -2324,7 +2324,7 @@ class StudioCoordinator:
             "--blender",
             str(blender),
             "--repo-root",
-            str(Path(__file__).resolve().parents[3]),
+            str(Path(__file__).resolve().parents[1]),
             "--comfy-url",
             run.comfy_url,
             "--checkpoint",

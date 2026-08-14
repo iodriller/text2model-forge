@@ -1,6 +1,11 @@
-# Ember Defense Asset Forge
+# Legacy sprite pipeline (assetforge)
 
-Asset Forge turns owned Blender masters into deterministic sprites for the portrait 2.5D battlefield. A character rig
+This is the original directional-sprite renderer this repo grew from, predating the `darkness` compiler. It is still
+used by the D8/D9 surface and sprite stages. For an overview of the whole tool, start with the repo root
+[README](../README.md). Examples below use the generic `example_biped` fixture shipped in this repo; swap in your
+own character configs and Blender masters under `sources/`.
+
+Asset Forge turns owned Blender masters into deterministic sprites for a 2.5D battlefield. A character rig
 locks identity and motion across animation frames; the same renderer also handles unrigged buildings, equipment, and
 props. Blender fixes camera, light, scale, and baseline. AI image tools are optional concept/texture helpers, never the
 animation source of truth.
@@ -11,10 +16,10 @@ The reusable product layer is game-neutral. Create a workspace and an asset card
 
 ```powershell
 .\scripts\setup_asset_forge.ps1
-.\scripts\forge.ps1 init --workspace tools/asset_forge/workspaces/my-game --project-id my_game --name "My Game"
-.\scripts\forge.ps1 new --workspace tools/asset_forge/workspaces/my-game --asset-id iron_guard --name "Iron Guard" --kind character --role "shield tank readable at phone size"
-.\scripts\forge.ps1 prompt --workspace tools/asset_forge/workspaces/my-game --asset-id iron_guard
-.\scripts\forge.ps1 serve --workspace tools/asset_forge/workspaces/my-game
+.\scripts\forge.ps1 init --workspace workspaces/my-game --project-id my_game --name "My Game"
+.\scripts\forge.ps1 new --workspace workspaces/my-game --asset-id iron_guard --name "Iron Guard" --kind character --role "shield tank readable at phone size"
+.\scripts\forge.ps1 prompt --workspace workspaces/my-game --asset-id iron_guard
+.\scripts\forge.ps1 serve --workspace workspaces/my-game
 ```
 
 Studio opens at `http://127.0.0.1:8765`. It binds only to loopback, queues one GPU job at a time, and uses the same
@@ -28,13 +33,13 @@ Set up the isolated local concept engine after reviewing the model license:
 .\scripts\setup_local_ai.ps1 download-sdxl -AcceptSdxlLicense
 .\scripts\start_asset_forge_comfyui.ps1
 .\scripts\forge.ps1 doctor
-.\scripts\forge.ps1 register-model --workspace tools/asset_forge/workspaces/my-game --model-id sdxl-base-1.0 --file tools/asset_forge/runtime/comfyui/models/checkpoints/sd_xl_base_1.0.safetensors --reviewer <name>
+.\scripts\forge.ps1 register-model --workspace workspaces/my-game --model-id sdxl-base-1.0 --file runtime/comfyui/models/checkpoints/sd_xl_base_1.0.safetensors --reviewer <name>
 ```
 
 Generate a provenance-tracked candidate:
 
 ```powershell
-.\scripts\forge.ps1 generate --workspace tools/asset_forge/workspaces/my-game --asset-id iron_guard --mode turnaround --seed 1001
+.\scripts\forge.ps1 generate --workspace workspaces/my-game --asset-id iron_guard --mode turnaround --seed 1001
 ```
 
 The core workflow uses only built-in ComfyUI nodes. Custom nodes are optional and may not enter a production workflow
@@ -43,9 +48,9 @@ until their source, version, license, and dependency snapshot are recorded.
 Approve a selected concept by hash, optionally create a mesh seed, then audit/render the owned Blender master:
 
 ```powershell
-.\scripts\forge.ps1 approve --workspace tools/asset_forge/workspaces/my-game --asset-id iron_guard --stage concept --artifact <selected.png> --reviewer <name>
+.\scripts\forge.ps1 approve --workspace workspaces/my-game --asset-id iron_guard --stage concept --artifact <selected.png> --reviewer <name>
 .\scripts\setup_local_ai.ps1 install-triposr -AcceptTripoSrLicense
-.\scripts\forge.ps1 mesh-seed --workspace tools/asset_forge/workspaces/my-game --asset-id iron_guard --input <selected.png>
+.\scripts\forge.ps1 mesh-seed --workspace workspaces/my-game --asset-id iron_guard --input <selected.png>
 .\scripts\forge.ps1 audit-master --config <character-config.json> --report <master-audit.json>
 .\scripts\asset_forge.ps1 render -CharacterConfig <character-config.json>
 .\scripts\forge.ps1 qa-sheets --config <character-config.json> --report <sheet-qa.json> --contact-sheet <review.png>
@@ -65,7 +70,7 @@ versioned Blender input and must pass a geometry-only proof before texture bakin
 
 ```powershell
 .\scripts\create_creature_proof.ps1 `
-  -CharacterConfig tools/asset_forge/characters/goblin.character.json
+  -CharacterConfig characters/example_biped.character.json
 ```
 
 The command builds a disposable master under `artifacts/asset-forge-morphology/`,
@@ -77,7 +82,7 @@ After a full build, rerender a tuned action without discarding all other frames:
 
 ```powershell
 .\scripts\asset_forge.ps1 render `
-  -CharacterConfig tools/asset_forge/characters/goblin.character.json `
+  -CharacterConfig characters/example_biped.character.json `
   -Actions attack
 ```
 
@@ -85,8 +90,8 @@ The incremental path deletes and replaces only the named action folders, then
 repacks and validates the complete sheet set.  A normal render without `-Actions`
 still performs a clean deterministic rebuild.
 
-Species profiles live in `tools/asset_forge/creatures/`; family contracts live in
-`tools/asset_forge/creatures/families/`.  Ogre-like bipeds reuse
+Species profiles live in `creatures/`; family contracts live in
+`creatures/families/`.  Ogre-like bipeds reuse
 `biped_humanoid_v1` with different proportions.  Dragons must use the separate
 `winged_quadruped_v1` contract and cannot publish while that family remains marked
 `contract_only`.  See `DESIGN/creature_dna_pipeline.md`.
@@ -99,7 +104,7 @@ mesh from being mistaken for production topology:
 
 ```powershell
 .\scripts\asset_forge.ps1 genesis-target `
-  -GenesisSpec tools/asset_forge/genesis/goblin_short_biped.genesis.json
+  -GenesisSpec genesis/families/short_biped_v1.family.json
 ```
 
 The command validates the spec, fuses its volumes in Blender, writes a preview and a
@@ -113,10 +118,10 @@ family with the same command:
 
 ```powershell
 .\scripts\asset_forge.ps1 genesis-build `
-  -GenesisSpec tools/asset_forge/genesis/goblin_short_biped.genesis.json
+  -GenesisSpec genesis/families/short_biped_v1.family.json
 
 .\scripts\asset_forge.ps1 genesis-build `
-  -GenesisSpec tools/asset_forge/genesis/dragon_winged_quadruped.genesis.json
+  -GenesisSpec genesis/families/winged_quadruped_v1.family.json
 ```
 
 This adds a family contract, watertight UV master, semantic rig, normalized weights,
@@ -137,9 +142,9 @@ See `DESIGN/asset_forge_animation_plan.md` for the failure record and production
 
 ```powershell
 .\scripts\setup_local_ai.ps1 download-animation-models -AcceptSdxlLicense
-.\scripts\forge.ps1 register-model --workspace <ws> --model-id dreamshaper-xl-v2-turbo --file tools/asset_forge/runtime/comfyui/models/checkpoints/dreamshaper_xl_v2_turbo.safetensors --reviewer <name>
-.\scripts\forge.ps1 register-model --workspace <ws> --model-id controlnet-openpose-sdxl-xinsir --file tools/asset_forge/runtime/comfyui/models/controlnet/controlnet_openpose_sdxl_xinsir.safetensors --reviewer <name>
-.\scripts\forge.ps1 register-model --workspace <ws> --model-id controlnet-depth-sdxl-xinsir --file tools/asset_forge/runtime/comfyui/models/controlnet/controlnet_depth_sdxl_xinsir.safetensors --reviewer <name>
+.\scripts\forge.ps1 register-model --workspace <ws> --model-id dreamshaper-xl-v2-turbo --file runtime/comfyui/models/checkpoints/dreamshaper_xl_v2_turbo.safetensors --reviewer <name>
+.\scripts\forge.ps1 register-model --workspace <ws> --model-id controlnet-openpose-sdxl-xinsir --file runtime/comfyui/models/controlnet/controlnet_openpose_sdxl_xinsir.safetensors --reviewer <name>
+.\scripts\forge.ps1 register-model --workspace <ws> --model-id controlnet-depth-sdxl-xinsir --file runtime/comfyui/models/controlnet/controlnet_depth_sdxl_xinsir.safetensors --reviewer <name>
 .\scripts\forge.ps1 poses --workspace <ws> --preview          # editable pose pack + control-image previews
 .\scripts\forge.ps1 animate --workspace <ws> --asset-id footman --actions idle,walk,attack,hit,death --reference <approved-concept.png> --seed 3001
 .\scripts\forge.ps1 pack-sheets --workspace <ws> --asset-id footman   # prototype review only
@@ -160,7 +165,7 @@ From the repository root:
 .\scripts\asset_forge.ps1 doctor
 ```
 
-The setup creates `tools/asset_forge/.venv` and installs only Pillow. Blender 5.x is discovered from `PATH` or the
+The setup creates `.venv` and installs only Pillow. Blender 5.x is discovered from `PATH` or the
 standard Windows install folders. ComfyUI is optional and is not installed by this script.
 
 ## One-command production character
@@ -169,7 +174,7 @@ Copy a `.factory.json` and `.character.json`, adjust proportions, palette, equip
 sample frames, contact phases, and output paths, then run:
 
 ```powershell
-.\scripts\asset_forge.ps1 build -CharacterConfig tools/asset_forge/characters/goblin.character.json
+.\scripts\asset_forge.ps1 build -CharacterConfig characters/example_biped.character.json
 ```
 
 The command creates the original rigged `.blend`, renders every configured action in genuine
@@ -181,7 +186,7 @@ After the owner visually accepts the generated board/GIF, bind approval to those
 
 ```powershell
 .\scripts\forge.ps1 approve --workspace asset_sources/ember-defense --asset-id footman --stage sheets --artifact asset_sources/ember-defense/assets/footman/reports/production-review/footman_acceptance_board.png --reviewer <name>
-.\scripts\asset_forge.ps1 publish -CharacterConfig tools/asset_forge/characters/footman.character.json
+.\scripts\asset_forge.ps1 publish -CharacterConfig characters/example_biped.character.json
 ```
 
 `publish` refuses stale approvals by checking the acceptance-board SHA-256. The editor preparation workflow applies
@@ -229,8 +234,8 @@ Consistency this way is mathematical, not statistical, and a full 4-direction re
 makes automated iteration (below) affordable.
 
 ```powershell
-.\scripts\asset_forge.ps1 bake -CharacterConfig tools/asset_forge/characters/footman.character.json   # force rebake
-.\scripts\asset_forge.ps1 build -CharacterConfig tools/asset_forge/characters/footman.character.json  # bake if stale + full chain
+.\scripts\asset_forge.ps1 bake -CharacterConfig characters/example_biped.character.json   # force rebake
+.\scripts\asset_forge.ps1 build -CharacterConfig characters/example_biped.character.json  # bake if stale + full chain
 ```
 
 ### Automated art direction (critic)
@@ -238,7 +243,7 @@ makes automated iteration (below) affordable.
 Every `build` must pass `assetforge critique` after mechanical QA: masked tone inside the dark-fantasy band, muted
 saturation, interior edge energy at 96 px gameplay size, hue coherence between consecutive frames, and palette
 identity of every sheet against idle/south. Thresholds live in `assetforge/critic.py` (override per unit via a
-`critic` block). The judgment half of the standard lives in `tools/asset_forge/RUBRIC.md`; the reviewing agent
+`critic` block). The judgment half of the standard lives in `RUBRIC.md`; the reviewing agent
 applies it to each acceptance board before the owner ever sees a candidate, and every owner rejection is appended
 there as a permanent rule.
 
@@ -265,13 +270,13 @@ an animation-safe continuous/skinned canonical topology. Do not use it as the Ge
 
 ## Render a real character
 
-1. Put a rigged `.blend`, `.fbx`, or `.glb` under `tools/asset_forge/sources/`.
-2. Copy `characters/footman.character.json` and set `source`, `animation_object`, and the action aliases.
+1. Put a rigged `.blend`, `.fbx`, or `.glb` under `sources/`.
+2. Copy `characters/example_biped.character.json` and set `source`, `animation_object`, and the action aliases.
 3. Confirm the actions exist in Blender: idle, walk, attack/shoot, hit, and death.
 4. Run:
 
 ```powershell
-.\scripts\asset_forge.ps1 render -CharacterConfig tools/asset_forge/characters/footman.character.json
+.\scripts\asset_forge.ps1 render -CharacterConfig characters/example_biped.character.json
 ```
 
 The command renders intermediate frames, packs Unity-ready horizontal strips, and validates dimensions, alpha,
