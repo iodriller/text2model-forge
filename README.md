@@ -126,13 +126,24 @@ for selecting a specific donor clip at that gate.
 
 Stated plainly so nobody discovers these the hard way:
 
-- **Config coverage is uneven.** `darkness/profiles/base.toml` documents the
-  full parameter surface, but only the `[studio]` section is actually read by
-  the pipeline today. The 12 `[stages.*]` / `[quality.*]` sections are marked
-  `DOCUMENTED` rather than `WIRED` in that file's own comments, and their
-  values currently mirror the adapters' hardcoded CLI defaults. Changing one
-  will not change behavior until that stage is threaded through the resolver.
-- **Retry/edit override values reach D1 only** (see the scope note above).
+- **Config coverage is uneven.** `[studio]` and `[quality.*]`'s
+  `concept_steps`/`concept_cfg` are WIRED -- they reach the real KSampler node
+  at D1 and D2. The rest of `[stages.*]` (D2b, D6, D7, D8, D9, D10) is still
+  DOCUMENTED only: those values mirror the adapters' hardcoded CLI defaults
+  but nothing reads them from here yet.
+- **Wiring further stages is blocked on test infrastructure, not effort.**
+  `tests/test_studio.py` only fakes Qwen and ComfyUI. D1 and D2 are the only
+  two stages whose real work is "call ComfyUI with a workflow dict," so they
+  are the only two a fake can safely exercise. D3 onward call out to real
+  Blender/worker subprocesses (`WorkerManager`/`SubprocessWorkerAdapter`) with
+  no fake equivalent today -- wiring their config or extending override
+  consumption to them needs either a fake worker-subprocess layer built first,
+  or live Blender/GPU to verify against.
+- **D2 has no human gate**, so retry/edit override values can never reach it
+  through the documented review flow even though its `steps`/`cfg` are wired
+  -- only a caller driving the coordinator directly could set them.
+- **Retry/edit override values otherwise reach D1 only** (see the scope note
+  above).
 - **The D0-D10 chain is not proven end to end for a non-character asset.**
   The stage-skip logic for props, materials, and rigid-articulated assets is
   implemented and tested, but no chair has actually been produced. Expect the
