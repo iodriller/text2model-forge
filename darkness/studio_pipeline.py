@@ -26,7 +26,13 @@ from .studio_comfy import (
     make_humanoid_openpose_guide,
     qwen_image_2512_workflow,
 )
-from .studio_models import StudioQwenReview, StudioRun, utc_now
+from .studio_models import (
+    StudioQwenReview,
+    StudioRun,
+    awaiting_correction,
+    latest_correction,
+    utc_now,
+)
 from .studio_qwen import ConceptCorrectionPlan, ConceptPlan, StudioQwen
 from .studio_store import StudioStore
 from .workers import WorkerManager
@@ -77,10 +83,7 @@ def _concept_comparison_board(
     output: Path,
 ) -> Path:
     records: list[tuple[str, Path]] = []
-    latest_rejection = next(
-        (item for item in reversed(stage.human_decisions) if item.decision == "reject"),
-        None,
-    )
+    latest_rejection = latest_correction(stage)
     if latest_rejection and latest_rejection.selected_evidence_id:
         prior = next(
             (
@@ -587,7 +590,14 @@ class StudioCoordinator:
         run.current_stage = "D10"
         return None
 
-    def _begin(self, run: StudioRun, stage_id: str, message: str) -> None:
+    def _begin(self, run: StudioRun, stage_id: str, message: str) -> dict[str, Any]:
+        """Start one attempt of a stage and return the human-supplied parameter
+        overrides that apply to *this* attempt.
+
+        A retry/edit decision parks its overrides on the stage; they are
+        consumed here (exactly once, then cleared) so a later automatic
+        iteration does not silently keep re-applying a one-off correction.
+        """
         stage = run.stage(stage_id)
         retrying_pre_output_failure = stage.state == "failed" and not any(
             item.metrics.get("iteration") == stage.iteration for item in stage.evidence
@@ -602,11 +612,20 @@ class StudioCoordinator:
         stage.message = message
         run.state = "running"
         run.current_stage = stage_id
+        overrides = dict(stage.pending_overrides)
+        stage.pending_overrides = {}
         self.store.event(
             run,
             "stage_started",
             {"stage_id": stage_id, "iteration": stage.iteration, "message": message},
         )
+        if overrides:
+            self.store.event(
+                run,
+                "stage_overrides_applied",
+                {"stage_id": stage_id, "iteration": stage.iteration, "overrides": overrides},
+            )
+        return overrides
 
     def _progress(self, run: StudioRun, stage_id: str, value: float, message: str) -> None:
         stage = run.stage(stage_id)
@@ -980,14 +999,14 @@ class StudioCoordinator:
                 },
             )
             return
-        self._begin(run, "D1", "Qwen is planning the next two concept candidates from the full history.")
+        stage_overrides = self._begin(
+            run, "D1", "Qwen is planning the next two concept candidates from the full history."
+        )
         if run.spec is None:
             raise RuntimeError("D1 requires the compiled D0 specification")
         qwen = self._qwen_factory(run)
         correction: ConceptCorrectionPlan | None = None
-        is_rejected_retry = bool(
-            stage.human_decisions and stage.human_decisions[-1].decision == "reject"
-        )
+        is_rejected_retry = awaiting_correction(stage)
         if is_rejected_retry:
             all_selectable = [
                 item
@@ -1005,10 +1024,7 @@ class StudioCoordinator:
                 for item in all_selectable
                 if int(item.metrics.get("iteration", 0)) == latest_evidence_iteration
             ]
-            latest_rejection = next(
-                (item for item in reversed(stage.human_decisions) if item.decision == "reject"),
-                None,
-            )
+            latest_rejection = latest_correction(stage)
             visible_ids = {item.evidence_id for item in visible_candidates}
             if latest_rejection and latest_rejection.selected_evidence_id:
                 visible_ids.add(latest_rejection.selected_evidence_id)
@@ -1052,6 +1068,16 @@ class StudioCoordinator:
             plan: ConceptPlan | ConceptCorrectionPlan = correction
         else:
             plan = qwen.concept_plan(run.spec, stage)
+        # A human "retry"/"edit" may pin the first seed for this one attempt, so
+        # a candidate they liked can be re-rolled deterministically instead of
+        # accepting whatever Qwen proposes next. The second seed stays Qwen's so
+        # the attempt still offers a genuine alternative to compare against.
+        pinned_seed = stage_overrides.get("seed")
+        if pinned_seed is not None:
+            if not isinstance(pinned_seed, int) or isinstance(pinned_seed, bool) or pinned_seed < 0:
+                raise ValueError("the 'seed' stage override must be a non-negative whole number")
+            other = next((item for item in plan.seeds if item != pinned_seed), pinned_seed + 1)
+            plan.seeds = [pinned_seed, other]
         attempt_root = self.store.run_root(run.run_id) / "D1_concept" / f"iteration-{stage.iteration:02d}"
         _write_json(
             attempt_root / "qwen_plan.json",
@@ -2291,10 +2317,7 @@ class StudioCoordinator:
             raise RuntimeError(f"D8 source master is missing: {master}")
         original_spec = self._latest_evidence_path(run, "D0", media_type="application/json")
         spec_value = json.loads(original_spec.read_text(encoding="utf-8"))
-        latest_rejection = next(
-            (item for item in reversed(stage.human_decisions) if item.decision == "reject"),
-            None,
-        )
+        latest_rejection = latest_correction(stage)
         if latest_rejection is not None:
             qwen = self._qwen_factory(run)
             revision = qwen.revision_plan(run.spec, stage)

@@ -92,6 +92,17 @@ gitignored; copy `machine.example.toml` to get one.
 - Do not add a new decision type without updating `_DECISIONS`,
   `_invalidate_from`'s callers, the CLI/web layer, and a test that exercises
   its state-machine effect end to end.
+- Never filter human decisions on a literal `decision == "reject"`. Use
+  `CORRECTION_DECISIONS` / `latest_correction()` / `awaiting_correction()`
+  from `darkness/studio_models.py`, so `edit` keeps behaving like `reject`
+  everywhere. Getting this wrong does not fail loudly -- it silently drops
+  the human's correction and re-runs the stage as an unrelated fresh
+  generation. There are eight such lookups across `studio_pipeline.py` and
+  `studio_qwen.py`; all eight must agree.
+- A parameter override parked on a stage by a retry/edit is consumed once by
+  `_begin()`, which returns it and clears it. A stage runner that wants
+  overrides must use `_begin()`'s return value; anything that stores an
+  override without a reader is dead code.
 
 ## Change Style
 

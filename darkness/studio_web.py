@@ -459,7 +459,18 @@ def serve(
                 elif path.startswith("/run/") and path.endswith("/decision"):
                     run_id = unquote(path.split("/")[2])
                     overrides_raw = values.get("overrides", "").strip()
-                    overrides = json.loads(overrides_raw) if overrides_raw else None
+                    overrides = None
+                    if overrides_raw:
+                        try:
+                            overrides = json.loads(overrides_raw)
+                        except json.JSONDecodeError as exc:
+                            raise ValueError(
+                                f"Overrides must be valid JSON (for example {{\"seed\": 42}}): {exc.msg}"
+                            ) from exc
+                        if not isinstance(overrides, dict):
+                            raise ValueError(
+                                'Overrides must be a JSON object, for example {"seed": 42}.'
+                            )
                     store.decide(
                         run_id,
                         values["stage_id"],

@@ -19,6 +19,19 @@ from typing import Any
 
 from pydantic import BaseModel
 
+from .config import default_config_path
+
+
+def _default_machine_path() -> Path:
+    """Where config.local.toml lives when the caller does not say.
+
+    Must agree with darkness.config.default_config_path(): the worker
+    bindings and the [studio_defaults] table live in the SAME
+    config.local.toml, so resolving them from two different directories
+    silently drops whichever half the caller did not expect.
+    """
+    return default_config_path()
+
 
 def bundled_profiles_dir() -> Path:
     """Default profiles shipped inside the installed package (package data),
@@ -103,8 +116,9 @@ def resolve_settings(
     profiles/base.toml is read from ./profiles (relative to repo_root, or
     the current working directory if repo_root is not given) when present,
     falling back to the profiles bundled with the installed package -- see
-    profiles_dir(). config.local.toml is read from the same working
-    directory by default; it is normal for it not to exist.
+    profiles_dir(). config.local.toml is read from the same place
+    darkness.config reads worker bindings from, so both halves of that file
+    resolve consistently; it is normal for it not to exist.
     """
     profiles = profiles_dir(repo_root)
 
@@ -120,11 +134,12 @@ def resolve_settings(
             for key in _flatten(overlay):
                 origin[key] = f"profile:{profile}"
 
-    machine_target = (
-        Path(machine_path)
-        if machine_path
-        else (repo_root or Path.cwd()) / "config.local.toml"
-    )
+    if machine_path:
+        machine_target = Path(machine_path)
+    elif repo_root is not None:
+        machine_target = repo_root / "config.local.toml"
+    else:
+        machine_target = _default_machine_path()
     if machine_target.is_file():
         machine_data = _load_toml(machine_target)
         overlay = machine_data.get("studio_defaults")

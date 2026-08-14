@@ -136,6 +136,34 @@ class StudioHumanDecision(StrictModel):
     target_stage_id: str | None = None
 
 
+# Decisions whose comment and overrides are a correction that the next attempt
+# of the same stage must consume. "reject" is the original verdict; "edit" is
+# the same thing with an explicit correction attached. Anything that reads "the
+# human's latest correction" must treat both identically -- filtering on
+# "reject" alone silently discards an edit's comment and overrides.
+CORRECTION_DECISIONS = frozenset({"reject", "edit"})
+
+
+def latest_correction(stage: "StudioStageState") -> "StudioHumanDecision | None":
+    """The most recent decision carrying a correction for the next attempt."""
+    return next(
+        (
+            item
+            for item in reversed(stage.human_decisions)
+            if item.decision in CORRECTION_DECISIONS
+        ),
+        None,
+    )
+
+
+def awaiting_correction(stage: "StudioStageState") -> bool:
+    """True when this stage's most recent decision asked for another attempt
+    with a correction, rather than approving, skipping, or plain-retrying."""
+    return bool(
+        stage.human_decisions and stage.human_decisions[-1].decision in CORRECTION_DECISIONS
+    )
+
+
 class StudioStageState(StrictModel):
     stage_id: str = Field(pattern=r"^D(?:10|[0-9])$")
     label: str = Field(min_length=1)

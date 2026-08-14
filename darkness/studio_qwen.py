@@ -12,7 +12,13 @@ from pydantic import Field, model_validator
 
 from .localdeploy import LocalDeployStructuredClient
 from .schemas import StrictModel
-from .studio_models import StudioAssetSpec, StudioQwenReview, StudioStageState, utc_now
+from .studio_models import (
+    CORRECTION_DECISIONS,
+    StudioAssetSpec,
+    StudioQwenReview,
+    StudioStageState,
+    utc_now,
+)
 
 
 class ConceptPlan(StrictModel):
@@ -339,7 +345,9 @@ USER_DESCRIPTION={description}
 
     def concept_plan(self, spec: StudioAssetSpec, stage: StudioStageState) -> ConceptPlan:
         rejected = [
-            item.comment for item in stage.human_decisions if item.decision == "reject" and item.comment
+            item.comment
+            for item in stage.human_decisions
+            if item.decision in CORRECTION_DECISIONS and item.comment
         ]
         failed_seeds = (
             sorted(
@@ -418,7 +426,7 @@ DRAFT={draft.model_dump_json()}
     ) -> QwenImageEditInstruction:
         """Rewrite a generic concept plan into one instruction appropriate for Qwen Image Edit."""
         latest_rejection = next(
-            (item.comment for item in reversed(stage.human_decisions) if item.decision == "reject"),
+            (item.comment for item in reversed(stage.human_decisions) if item.decision in CORRECTION_DECISIONS),
             "none",
         )
         source_rule = (
@@ -520,7 +528,7 @@ NUMERICAL_AND_DECISION_HISTORY={_history(stage)}
         comparison_board: Path | None = None,
     ) -> ConceptCorrectionPlan:
         latest_rejection = next(
-            (item.comment for item in reversed(stage.human_decisions) if item.decision == "reject"),
+            (item.comment for item in reversed(stage.human_decisions) if item.decision in CORRECTION_DECISIONS),
             "",
         )
         failed_seeds = sorted(
@@ -660,7 +668,7 @@ DRAFT={draft.model_dump_json()}
         if not 1 <= len(images) <= 2:
             raise ValueError("the qualified Qwen profile accepts one or two concept images")
         latest_rejection = next(
-            (item.comment for item in reversed(stage.human_decisions) if item.decision == "reject"),
+            (item.comment for item in reversed(stage.human_decisions) if item.decision in CORRECTION_DECISIONS),
             "none",
         )
         content: list[dict[str, object]] = [

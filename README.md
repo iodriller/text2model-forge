@@ -87,8 +87,8 @@ Every gated stage stops and waits. At a gate you can:
 |---|---|
 | **Approve** | Pick a candidate; the next stage may run. |
 | **Reject** | Comment required. The next attempt sees your comment and the full history. |
-| **Retry** | Reroll the same stage fresh -- no comment, no quality judgement implied. Pass override values (JSON) to change parameters for the next attempt. |
-| **Edit** | Like reject, but the correction is concrete: a comment, override values, or both. |
+| **Retry** | Reroll the same stage fresh -- no comment, no quality judgement implied, and no targeted correction. Pass override values (JSON) to change parameters for the next attempt; at D1, `{"seed": 4242}` pins the first seed so you can re-roll a candidate deterministically. |
+| **Edit** | Like reject, but the correction is concrete: a comment, override values, or both. Your comment reaches the model exactly as a rejection's would, and drives the same targeted-correction path. |
 | **Skip** | Mark a stage not applicable, with a required reason. Unlike the others, this does not invalidate anything downstream. |
 | **Roll back** | Reopen an earlier, already-decided stage and invalidate everything from there forward. |
 

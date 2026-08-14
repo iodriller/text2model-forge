@@ -72,6 +72,17 @@ def test_missing_base_toml_in_an_explicit_repo_root_fails_closed(tmp_path):
         resolve_settings(profile="base", repo_root=tmp_path)
 
 
+def test_studio_defaults_are_read_from_the_same_file_as_worker_bindings():
+    """Regression: resolve_settings() defaulted to CWD/config.local.toml while
+    darkness.config read worker bindings from the package root, so the
+    documented 'copy machine.example.toml to config.local.toml' workflow
+    silently dropped [studio_defaults] unless CWD happened to match."""
+    from darkness.config import default_config_path
+    from darkness.settings import _default_machine_path
+
+    assert _default_machine_path() == default_config_path()
+
+
 def test_project_profiles_directory_wins_over_bundled_defaults(tmp_path):
     profiles = tmp_path / "profiles"
     profiles.mkdir()

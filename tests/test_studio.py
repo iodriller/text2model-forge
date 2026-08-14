@@ -849,6 +849,135 @@ def test_rollback_target_must_have_a_prior_decision(tmp_path: Path) -> None:
         store.decide(run.run_id, "D4", "rollback", "go back", item.evidence_id, target_stage_id="D1")
 
 
+class _CorrectionRecordingQwen(FakeQwen):
+    """FakeQwen without the fixed-comment assertion, so a test can drive any
+    correction-carrying decision and inspect what actually reached Qwen."""
+
+    def __init__(self) -> None:
+        self.correction_calls = 0
+        self.seen_comments: list[str] = []
+
+    def concept_correction_plan(self, spec, stage, candidate_ids, comparison_board=None):
+        self.correction_calls += 1
+        self.seen_comments.append(stage.human_decisions[-1].comment)
+        return ConceptCorrectionPlan(
+            operation_id="regenerate_complete_asset",
+            base_evidence_id=candidate_ids[0],
+            edit_box_normalized=[0.0, 0.0, 1.0, 1.0],
+            positive_prompt="A " * 45 + "corrected original footman.",
+            negative_prompt="missing shield, missing sword, wrong hands",
+            seeds=[303, 404],
+            denoise=0.8,
+            diagnosis="Applying the human correction.",
+            preserve=["Right-hand sword."],
+        )
+
+
+def _drive_to_first_d1_review(store: StudioStore, run_id: str, qwen, executor):
+    store.create(run_id, DESCRIPTION)
+    coordinator = StudioCoordinator(
+        store,
+        qwen_factory=lambda run: qwen,
+        comfy_factory=lambda run: FakeComfy(),
+        executor=executor,
+    )
+    assert coordinator.submit(run_id) is True
+    wait_for(store, run_id, "awaiting_review")
+    return coordinator
+
+
+def test_edit_decision_reaches_the_correction_path_like_a_rejection(tmp_path: Path) -> None:
+    """Regression: every 'latest human correction' lookup used to filter on
+    decision == "reject" alone, so an edit's comment was silently discarded
+    and the stage re-ran as an unrelated fresh generation."""
+    store = StudioStore(tmp_path)
+    qwen = _CorrectionRecordingQwen()
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        coordinator = _drive_to_first_d1_review(store, "edit-path-v1", qwen, executor)
+        first = store.load("edit-path-v1")
+        candidate = next(
+            item
+            for item in first.stage("D1").evidence
+            if item.metrics.get("selectable") is True
+        )
+        store.decide(
+            "edit-path-v1",
+            "D1",
+            "edit",
+            "Widen the shield boss.",
+            candidate.evidence_id,
+        )
+        coordinator.submit("edit-path-v1")
+        second = wait_for(store, "edit-path-v1", "awaiting_review")
+    assert qwen.correction_calls == 1, "an edit must drive the targeted correction path"
+    assert qwen.seen_comments == ["Widen the shield boss."]
+    assert second.stage("D1").iteration == 2
+    event_types = [item["event_type"] for item in store.read_events("edit-path-v1")]
+    assert "gate_edited" in event_types
+
+
+def test_plain_retry_does_not_use_the_correction_path(tmp_path: Path) -> None:
+    """A retry is an explicit 'no judgement, just roll again', so unlike an
+    edit it must NOT be turned into a targeted correction."""
+    store = StudioStore(tmp_path)
+    qwen = _CorrectionRecordingQwen()
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        coordinator = _drive_to_first_d1_review(store, "retry-path-v1", qwen, executor)
+        first = store.load("retry-path-v1")
+        candidate = next(
+            item
+            for item in first.stage("D1").evidence
+            if item.metrics.get("selectable") is True
+        )
+        store.decide("retry-path-v1", "D1", "retry", "", candidate.evidence_id)
+        coordinator.submit("retry-path-v1")
+        wait_for(store, "retry-path-v1", "awaiting_review")
+    assert qwen.correction_calls == 0
+
+
+def test_retry_overrides_pin_the_seed_for_exactly_one_attempt(tmp_path: Path) -> None:
+    """Regression: pending_overrides was written by decide() and cleared by
+    _invalidate_from(), but nothing ever read it -- a retry with {"seed": N}
+    silently did nothing."""
+    store = StudioStore(tmp_path)
+    qwen = _CorrectionRecordingQwen()
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        coordinator = _drive_to_first_d1_review(store, "seed-override-v1", qwen, executor)
+        first = store.load("seed-override-v1")
+        candidate = next(
+            item
+            for item in first.stage("D1").evidence
+            if item.metrics.get("selectable") is True
+        )
+        store.decide(
+            "seed-override-v1",
+            "D1",
+            "retry",
+            "",
+            candidate.evidence_id,
+            overrides={"seed": 4242},
+        )
+        coordinator.submit("seed-override-v1")
+        second = wait_for(store, "seed-override-v1", "awaiting_review")
+
+    stage = second.stage("D1")
+    second_attempt_seeds = {
+        item.metrics.get("seed")
+        for item in stage.evidence
+        if int(item.metrics.get("iteration", 0)) == 2 and item.metrics.get("seed") is not None
+    }
+    assert 4242 in second_attempt_seeds, "the pinned seed must actually reach the render"
+    # consumed exactly once, so a later automatic iteration is not silently re-pinned
+    assert stage.pending_overrides == {}
+    applied = [
+        item
+        for item in store.read_events("seed-override-v1")
+        if item["event_type"] == "stage_overrides_applied"
+    ]
+    assert len(applied) == 1
+    assert applied[0]["payload"]["overrides"] == {"seed": 4242}
+
+
 def test_artifact_paths_cannot_escape_run(tmp_path: Path) -> None:
     store = StudioStore(tmp_path)
     store.create("footman-v3", DESCRIPTION)
