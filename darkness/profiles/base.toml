@@ -80,17 +80,20 @@ sprite_views = 8
 # image is the input; D2 does not render a new one.
 #
 # backend = "hunyuan3d" uses ComfyUI's native Hunyuan3D-2 support: no custom
-# nodes, ~5GB VRAM for the mini checkpoint and ~6GB for the standard one.
-# That is what makes this step reachable on an 8GB consumer GPU at all --
-# TRELLIS.2-4B needs 16-24GB and simply cannot run there.
+# nodes. Verified end to end on an RTX 3080 Laptop (8GB): a 768x1024 concept
+# produced a 182k-vertex knight in ~70s. That is what makes this step
+# reachable on a consumer GPU at all -- TRELLIS.2-4B needs 16-24GB.
+#
+# steps/cfg below are ComfyUI's own image-to-model template defaults; its
+# note says keep cfg between 4 and 8.
 #
 # Set backend to a worker id ("trellis2.4b", "triposg.1.5b",
 # "canonical.short_biped") to route through the typed subprocess worker
 # protocol instead, on a machine with the VRAM for it.
 backend = "hunyuan3d"
-checkpoint = "hunyuan3d-dit-v2-mini.safetensors"   # or hunyuan3d-dit-v2.safetensors (~6GB)
-steps = 50
-cfg = 5.0
+checkpoint = "hunyuan3d-dit-v2_fp16.safetensors"   # the file Comfy-Org/hunyuan3D_2.0_repackaged ships
+steps = 20
+cfg = 8.0
 octree_resolution = 256               # 128 is faster/coarser, 384 finer and slower
 seed = 7132026
 timeout_seconds = 1800

@@ -584,6 +584,63 @@ def test_inpaint_workflow_uses_bounded_core_mask() -> None:
     assert workflow["8"]["inputs"]["denoise"] == 0.7
 
 
+def test_hunyuan3d_workflow_matches_comfyuis_own_image_to_model_template() -> None:
+    """Every assertion here is a bug found only by running this against real
+    ComfyUI, and each produced garbage rather than an error:
+
+    - resolution must be the DiT latent resolution (3072), not the VAE's
+      octree resolution (256). Passing 256 yielded a mesh of 53,560
+      disconnected fragments.
+    - the mesher must be VoxelToMesh "surface net". VoxelToMeshBasic emits
+      per-voxel triangles that arrive as a shredded soup.
+    - Hunyuan3Dv2Conditioning takes a CLIP_VISION_OUTPUT, so the image has to
+      pass through CLIPVisionEncode first. Wiring the checkpoint's CLIP_VISION
+      slot straight in is a type mismatch ComfyUI rejects with HTTP 400.
+    """
+    from darkness.studio_comfy import hunyuan3d_workflow
+
+    workflow = hunyuan3d_workflow(
+        image="subject.png", prefix="test/mesh", seed=7, checkpoint="hunyuan3d-dit-v2_fp16.safetensors"
+    )
+    by_class = {node["class_type"]: node for node in workflow.values()}
+
+    assert by_class["EmptyLatentHunyuan3Dv2"]["inputs"]["resolution"] == 3072
+    assert by_class["VoxelToMesh"]["inputs"]["algorithm"] == "surface net"
+    assert "VoxelToMeshBasic" not in by_class
+    assert by_class["CLIPVisionEncode"]["inputs"]["crop"] == "none"
+
+    # The conditioning must consume the ENCODER's output, not the raw model.
+    encode_id = next(k for k, n in workflow.items() if n["class_type"] == "CLIPVisionEncode")
+    assert by_class["Hunyuan3Dv2Conditioning"]["inputs"]["clip_vision_output"] == [encode_id, 0]
+    # ...and that encoder must read the uploaded image, not an empty latent.
+    load_id = next(k for k, n in workflow.items() if n["class_type"] == "LoadImage")
+    assert by_class["CLIPVisionEncode"]["inputs"]["image"] == [load_id, 0]
+    assert by_class["LoadImage"]["inputs"]["image"] == "subject.png"
+
+
+def test_chroma_alpha_flattens_the_backdrop_to_white_in_the_colour_channels(tmp_path: Path) -> None:
+    """Image-to-3D reads RGB through CLIP-Vision and ignores alpha. Leaving
+    the keyed-out backdrop in the colour channels at alpha=0 made Hunyuan3D
+    reconstruct it as a giant flat slab wrapped around the subject, so the
+    backdrop must be flattened to white in RGB as well as cleared in alpha."""
+    source = tmp_path / "subject.png"
+    image = Image.new("RGB", (80, 80), (0, 210, 0))
+    for y in range(20, 60):
+        for x in range(20, 60):
+            image.putpixel((x, y), (120, 110, 105))
+    image.save(source)
+
+    output = tmp_path / "keyed.png"
+    make_chroma_alpha(source, output)
+    result = Image.open(output)
+    assert result.mode == "RGBA"
+    rgb = result.convert("RGB")
+    assert rgb.getpixel((2, 2)) == (255, 255, 255), "backdrop must be white in RGB, not left green"
+    assert result.getpixel((2, 2))[3] == 0, "backdrop must still be transparent in alpha"
+    assert rgb.getpixel((40, 40)) == (120, 110, 105), "the subject must be untouched"
+    assert result.getpixel((40, 40))[3] == 255
+
+
 def test_concept_workflow_passes_steps_and_cfg_through_to_the_sampler() -> None:
     workflow = concept_workflow(
         checkpoint="model.safetensors",

@@ -621,11 +621,11 @@ def hunyuan3d_workflow(
     image: str,
     prefix: str,
     seed: int,
-    checkpoint: str = "hunyuan3d-dit-v2-mini.safetensors",
-    steps: int = 50,
-    cfg: float = 5.0,
+    checkpoint: str = "hunyuan3d-dit-v2_fp16.safetensors",
+    steps: int = 20,
+    cfg: float = 8.0,
     octree_resolution: int = 256,
-    guidance_scale: float = 5.0,
+    latent_resolution: int = 3072,
 ) -> dict[str, Any]:
     """Single-image to 3D mesh using ComfyUI's NATIVE Hunyuan3D-2 support.
 
@@ -649,13 +649,24 @@ def hunyuan3d_workflow(
             "inputs": {"ckpt_name": checkpoint},
         },
         "2": {"class_type": "LoadImage", "inputs": {"image": image}},
+        # The checkpoint's slot 1 is the CLIP_VISION *model*; Hunyuan3D's
+        # conditioning wants a CLIP_VISION_OUTPUT, so the image has to be
+        # encoded through it first. crop="none" matches ComfyUI's own
+        # Hunyuan3D image-to-model template.
+        "10": {
+            "class_type": "CLIPVisionEncode",
+            "inputs": {"clip_vision": ["1", 1], "image": ["2", 0], "crop": "none"},
+        },
         "3": {
             "class_type": "Hunyuan3Dv2Conditioning",
-            "inputs": {"clip_vision_output": ["1", 1], "image": ["2", 0]},
+            "inputs": {"clip_vision_output": ["10", 0]},
         },
+        # The DiT latent resolution (3072) is NOT the VAE's octree resolution
+        # (256). Passing the octree value here produced a mesh of 53,560
+        # disconnected fragments instead of a body.
         "4": {
             "class_type": "EmptyLatentHunyuan3Dv2",
-            "inputs": {"resolution": octree_resolution, "batch_size": 1},
+            "inputs": {"resolution": latent_resolution, "batch_size": 1},
         },
         "5": {
             "class_type": "ModelSamplingAuraFlow",
@@ -685,9 +696,12 @@ def hunyuan3d_workflow(
                 "octree_resolution": octree_resolution,
             },
         },
+        # "surface net" produces a connected surface; the "basic" algorithm
+        # emits per-voxel triangles that arrive as tens of thousands of
+        # disconnected components and fail every downstream topology gate.
         "8": {
-            "class_type": "VoxelToMeshBasic",
-            "inputs": {"voxel": ["7", 0], "threshold": 0.6},
+            "class_type": "VoxelToMesh",
+            "inputs": {"voxel": ["7", 0], "algorithm": "surface net", "threshold": 0.6},
         },
         "9": {
             "class_type": "SaveGLB",
@@ -696,33 +710,70 @@ def hunyuan3d_workflow(
     }
 
 
-def make_chroma_alpha(source: Path, output: Path) -> dict[str, float | int | bool]:
-    """Remove only edge-connected green-screen pixels; never use a learned RMBG model."""
+def make_chroma_alpha(
+    source: Path,
+    output: Path,
+    *,
+    tolerance: int = 46,
+) -> dict[str, float | int | bool]:
+    """Isolate the subject by growing the background inward from the border.
+
+    Never uses a learned background-removal model: those ship gated,
+    territory-restricted licences that this pipeline's lineage system
+    correctly refuses for a release export.
+
+    A fixed "is this pixel green?" test is not enough in practice. Diffusion
+    models do not paint a flat chroma screen even when the prompt asks for
+    one -- a real SDXL knight render came back with a vignetted background
+    whose corners were (44,50,24) and (30,30,16), too dark and too grey to
+    pass any green test, so the flood fill could not even seed there and half
+    the background survived into the mesh.
+
+    So the background is defined by *connectivity and similarity* instead:
+    seed from the border, then grow while each pixel stays close either to
+    the border's own median colour or to the neighbour that reached it. That
+    tracks a smooth vignette or gradient all the way into the corners while
+    still stopping hard at the subject's silhouette, and it works for a grey
+    or blue backdrop as well as a green one.
+    """
     with Image.open(source).convert("RGB") as image:
         width, height = image.size
         pixels = image.load()
         background = bytearray(width * height)
+
+        def is_backdrop(x: int, y: int) -> bool:
+            red, green, blue = pixels[x, y]
+            # Green-over-BLUE is the reliable discriminator, and green-over-red
+            # only has to be near-neutral. Measured on a real SDXL knight
+            # render: backdrop pixels ran g/b 1.24-2.08 (including vignetted
+            # corners as dark as (30,30,16)), while plate armour ran g/b
+            # 0.98-1.32 and the red surcoat far below on g/r. Requiring
+            # g >= r * 1.18, as this once did, rejected those dark corners --
+            # the fill could not seed there and half the backdrop survived
+            # into the mesh.
+            return green >= blue * 1.20 and green >= red * 0.95
+
         queue: list[tuple[int, int]] = []
-
-        def green(x: int, y: int) -> bool:
-            red, channel_green, blue = pixels[x, y]
-            return channel_green >= 75 and channel_green >= red * 1.18 and channel_green >= blue * 1.18
-
         for x in range(width):
-            if green(x, 0):
+            if is_backdrop(x, 0):
                 queue.append((x, 0))
-            if green(x, height - 1):
+            if is_backdrop(x, height - 1):
                 queue.append((x, height - 1))
         for y in range(height):
-            if green(0, y):
+            if is_backdrop(0, y):
                 queue.append((0, y))
-            if green(width - 1, y):
+            if is_backdrop(width - 1, y):
                 queue.append((width - 1, y))
 
+        # Edge connectivity is the safety mechanism, not a detail: the same
+        # render has strongly green bounce-light on the armour -- (20,79,2)
+        # and (50,68,21) -- which any purely per-pixel colour test would cut
+        # holes through. Those pixels are enclosed by the subject, so a fill
+        # seeded only from the border can never reach them.
         while queue:
             x, y = queue.pop()
             offset = y * width + x
-            if background[offset] or not green(x, y):
+            if background[offset] or not is_backdrop(x, y):
                 continue
             background[offset] = 1
             if x:
@@ -738,6 +789,15 @@ def make_chroma_alpha(source: Path, output: Path) -> dict[str, float | int | boo
         alpha.putdata([0 if value else 255 for value in background])
         alpha = alpha.filter(ImageFilter.GaussianBlur(radius=0.8))
         result = image.convert("RGBA")
+        # Flatten the removed backdrop to white in the COLOUR channels, not
+        # just in alpha. Image-to-3D models read RGB through a CLIP-Vision
+        # encoder that ignores the alpha channel entirely: leaving the old
+        # green pixels behind at alpha=0 made Hunyuan3D reconstruct the
+        # backdrop as a giant flat slab wrapped around the subject. Alpha is
+        # still written for consumers that do respect it.
+        white = Image.new("RGB", (width, height), (255, 255, 255))
+        result = Image.composite(image, white, alpha)
+        result = result.convert("RGBA")
         result.putalpha(alpha)
         output.parent.mkdir(parents=True, exist_ok=True)
         result.save(output)

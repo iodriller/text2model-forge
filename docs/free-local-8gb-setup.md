@@ -39,11 +39,23 @@ The default expects `dreamshaper_xl_v2_turbo.safetensors`; change
 `[studio].checkpoint` in a profile if you use another.
 
 **Image-to-3D (D2)** — Hunyuan3D-2, also into
-`ComfyUI/models/checkpoints/`:
+`ComfyUI/models/checkpoints/`. Take it from
+[`Comfy-Org/hunyuan3D_2.0_repackaged`](https://huggingface.co/Comfy-Org/hunyuan3D_2.0_repackaged),
+which packages the DiT, CLIP-Vision and VAE into the single file ComfyUI's
+`ImageOnlyCheckpointLoader` expects — the `tencent/*` repos ship those parts
+separately and will not load:
 
-- `hunyuan3d-dit-v2-mini.safetensors` — ~5 GB, the default here
-- `hunyuan3d-dit-v2.safetensors` — ~6 GB, better shapes, used by the
-  `advanced` profile
+```powershell
+curl -L -o ComfyUI/models/checkpoints/hunyuan3d-dit-v2_fp16.safetensors `
+  https://huggingface.co/Comfy-Org/hunyuan3D_2.0_repackaged/resolve/main/split_files/hunyuan3d-dit-v2_fp16.safetensors
+```
+
+That is 4.9 GB. Note the lowercase `D` in `hunyuan3D_2.0_repackaged`; the
+capitalised spelling is a different, gated repo that returns 401.
+
+**Verified on this hardware:** RTX 3080 Laptop, 8.6 GB. A 768x1024 concept
+became a 182,019-vertex knight in about 70 seconds, with the SDXL concept
+render taking a further ~26 seconds.
 
 ComfyUI supports these natively. There is no custom node to install, and no
 `--extra-model-paths` juggling. Meshes land in `ComfyUI/output/mesh` and the
@@ -99,7 +111,15 @@ Describe your asset, then:
   happens at D8 instead, which is where this pipeline already does it.
 - **8 GB is the real ceiling.** The concept model and the 3D model do not fit
   in VRAM simultaneously. Use the run page's memory-release control between
-  stages if ComfyUI starts swapping.
+  stages if ComfyUI starts swapping. Start ComfyUI with `--lowvram`.
+- **The mesh is dense and unwelded.** A real run produced 182k vertices /
+  469k faces across many components, because "surface net" emits an
+  unmerged surface. That is expected and is exactly what D3's cleanup stage
+  exists to fix; it is not a sign the generation failed.
+- **Your concept must sit on a plain backdrop.** D2 isolates the subject by
+  growing the background inward from the image border, then flattens it to
+  white. A busy or cluttered background leaves fragments that the 3D model
+  will faithfully reconstruct as slabs around your asset.
 - **Language-model stages want a bigger model than 8 GB fits.** The qualified
   reviewer is a 27B model. Smaller local models fail the typed contracts
   loudly rather than silently — which is correct, but it means D0 and the
