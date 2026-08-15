@@ -453,7 +453,11 @@ def serve(
                     profile = values.get("profile", "simple").strip() or "simple"
                     resolved = resolve_settings(profile=profile)
                     run_id = _slug()
-                    store.create(run_id, description, studio_overrides(resolved))
+                    store.create(
+                        run_id,
+                        description,
+                        {**studio_overrides(resolved), "profile": profile},
+                    )
                     coordinator.submit(run_id)
                     self.redirect("/run/" + quote(run_id))
                 elif path.startswith("/run/") and path.endswith("/decision"):

@@ -262,6 +262,10 @@ class StudioRun(StrictModel):
     # picks a [quality.<tier>] section that can change these two.
     concept_steps: int = Field(default=30, ge=1, le=150)
     concept_cfg: float = Field(default=6.0, gt=0, le=30)
+    # Which profiles/<name>.toml this run resolves its per-stage settings
+    # from. Stored so a resumed run keeps the configuration it started with
+    # rather than silently adopting whatever the profile says today.
+    profile: str = Field(default="simple", pattern=r"^[a-z0-9][a-z0-9_.-]*$")
     spec: StudioAssetSpec | None = None
     stages: list[StudioStageState]
     event_count: int = 0

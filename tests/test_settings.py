@@ -28,11 +28,30 @@ def test_simple_profile_overlays_without_losing_base_values():
 
 def test_advanced_profile_overrides_stage_parameters():
     resolved = resolve_settings(profile="advanced")
-    assert resolved.get("stages.D2b.target_quads") == 40000
-    assert resolved.origin["stages.D2b.target_quads"] == "profile:advanced"
+    assert resolved.get("stages.D2.texture_size") == 4096
+    assert resolved.origin["stages.D2.texture_size"] == "profile:advanced"
     # A key advanced.toml does not touch still resolves from base.
-    assert resolved.get("stages.D2.worker_id") == "canonical.short_biped"
+    assert resolved.get("stages.D2.worker_id") == "trellis2.4b"
     assert resolved.origin["stages.D2.worker_id"] == "base"
+
+
+def test_base_profile_names_the_worker_d2_actually_calls():
+    """Regression: base.toml claimed [stages.D2].worker_id was
+    canonical.short_biped (the deterministic procedural fallback used by
+    `darkness run-worker`), while _run_d2 has always called trellis2.4b.
+    The documented default must name the worker the stage really uses."""
+    assert resolve_settings(profile="base").get("stages.D2.worker_id") == "trellis2.4b"
+
+
+def test_adapter_defaults_are_separate_from_live_stage_config():
+    """Values that only mirror a standalone script's argparse defaults live
+    under [adapter_defaults], not [stages.*], so nobody mistakes them for
+    settings the pipeline reads."""
+    resolved = resolve_settings(profile="base")
+    assert resolved.get("adapter_defaults.retopology.target_quads") == 20000
+    assert resolved.get("stages.D2b") is None  # D2b is not a pipeline stage at all
+    assert resolved.get("stages.D6") is None  # D6 adopts D4 output; runs no worker
+    assert resolved.get("stages.D10") is None  # D10 adopts D9 output; runs no worker
 
 
 def test_unknown_profile_falls_back_to_base_only():
@@ -172,7 +191,7 @@ def test_cli_config_show_prints_value_and_origin_for_every_key():
         check=True,
     )
     report = json.loads(result.stdout)
-    assert report["stages.D2b.target_quads"] == {"value": 40000, "set_by": "profile:advanced"}
+    assert report["stages.D2.texture_size"] == {"value": 4096, "set_by": "profile:advanced"}
     assert report["studio.model"] == {"value": "qwen3_6_27b", "set_by": "base"}
 
 

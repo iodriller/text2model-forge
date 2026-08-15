@@ -26,6 +26,7 @@ from .studio_comfy import (
     make_humanoid_openpose_guide,
     qwen_image_2512_workflow,
 )
+from .settings import resolve_settings
 from .studio_models import (
     StudioQwenReview,
     StudioRun,
@@ -1570,6 +1571,21 @@ class StudioCoordinator:
             return self.store.artifact_path(run.run_id, item.relative_path)
         raise RuntimeError(f"{stage_id} has no evidence matching media_type={media_type!r}, role={role!r}")
 
+    def _stage_settings(self, run: StudioRun, stage_id: str) -> dict[str, Any]:
+        """Resolved [stages.<id>] configuration for this run's profile.
+
+        Resolved per call rather than cached on the run so a profile edit
+        takes effect on the next attempt; the run pins only WHICH profile
+        (run.profile), not a frozen copy of its values. Returns {} if the
+        profile or section is missing, so a stage always falls back to its
+        own documented default rather than failing on configuration."""
+        try:
+            resolved = resolve_settings(profile=run.profile)
+        except FileNotFoundError:
+            return {}
+        section = resolved.values.get("stages", {}).get(stage_id)
+        return section if isinstance(section, dict) else {}
+
     def _run_script(self, command: list[str], *, timeout: float):
         """Run one adapters/ helper script. Goes through the injected
         script_runner when there is one, so a test can substitute the
@@ -1702,6 +1718,7 @@ class StudioCoordinator:
             metadata={"meaningful_alpha": True, "studio_run_id": run.run_id},
         )
         output_root = attempt_root / "trellis2"
+        settings = self._stage_settings(run, "D2")
         request = ExternalWorkerRequest(
             job_id=f"studio.{run.run_id}.d2.i{stage.iteration:02d}",
             run_id=run.run_id,
@@ -1711,13 +1728,17 @@ class StudioCoordinator:
             input_paths={artifact_id: str(rgba_seed)},
             parameters={
                 "seed": plan.seed,
-                "decimation_target": 300000,
-                "texture_size": 2048,
+                "decimation_target": settings.get("decimation_target", 300000),
+                "texture_size": settings.get("texture_size", 2048),
                 "remesh": True,
             },
             output_directory=str(output_root),
         )
-        response = self._execute_worker("trellis2.4b", request, timeout_seconds=1800)
+        response = self._execute_worker(
+            settings.get("worker_id", "trellis2.4b"),
+            request,
+            timeout_seconds=settings.get("timeout_seconds", 1800),
+        )
         geometry_output = next(
             (Path(item.path) for item in response.outputs if item.media_type == "model/gltf-binary"),
             None,
@@ -1813,6 +1834,7 @@ class StudioCoordinator:
         artifact = self._artifact_for_path(run, source, artifact_id=artifact_id)
         deformable = run.spec.behavior == "deformable_animated"
         maximum_components = 1 if deformable else max(1, len(run.spec.components) * 4, 32)
+        settings = self._stage_settings(run, "D3")
         request = ExternalWorkerRequest(
             job_id=f"studio.{run.run_id}.d3.i{stage.iteration:02d}",
             run_id=run.run_id,
@@ -1822,15 +1844,21 @@ class StudioCoordinator:
             input_paths={artifact_id: str(source)},
             parameters={
                 "component_policy": "keep_largest" if deformable else "none",
-                "weld_distance": 0.00005 if deformable else 0.0,
-                "render_size": 512,
-                "maximum_material_change_fraction": 0.03,
+                "weld_distance": (
+                    settings.get("weld_distance", 0.00005) if deformable else 0.0
+                ),
+                "render_size": settings.get("render_size", 512),
+                "maximum_material_change_fraction": settings.get(
+                    "maximum_material_change_fraction", 0.03
+                ),
                 "minimum_connected_components": 1,
                 "maximum_connected_components": maximum_components,
             },
             output_directory=str(attempt_root / "blender"),
         )
-        response = self._execute_worker("blender", request, timeout_seconds=900)
+        response = self._execute_worker(
+            "blender", request, timeout_seconds=settings.get("timeout_seconds", 900)
+        )
         image_records: list[tuple[str, Path]] = []
         for output in response.outputs:
             path = Path(output.path)
@@ -1925,6 +1953,7 @@ class StudioCoordinator:
         self._begin(run, "D4", "Building the typed canonical structure and its review evidence.")
         stage = run.stage("D4")
         attempt_root = self.store.run_root(run.run_id) / "D4_structure" / f"iteration-{stage.iteration:02d}"
+        d4_settings = self._stage_settings(run, "D4")
         qwen = self._qwen_factory(run)
         if run.spec.behavior == "rigid_articulated":
             diagnostic = self._latest_evidence_path(run, "D3", role="candidate_front")
@@ -1981,14 +2010,19 @@ class StudioCoordinator:
                 inputs=[artifact],
                 input_paths={artifact_id: str(source)},
                 parameters={
-                    "render_size": 512,
-                    "maximum_material_change_fraction": 0.03,
+                    "render_size": d4_settings.get("render_size", 512),
+                    "maximum_material_change_fraction": d4_settings.get(
+                        "maximum_material_change_fraction", 0.03
+                    ),
+                    "maximum_bone_influences": d4_settings.get("maximum_bone_influences", 4),
                     "landmark_adjustments": {},
                     "weight_adjustments": [],
                 },
                 output_directory=str(attempt_root / "blender"),
             )
-            response = self._execute_worker("blender", request, timeout_seconds=1200)
+            response = self._execute_worker(
+                "blender", request, timeout_seconds=d4_settings.get("timeout_seconds", 1200)
+            )
             stress_records: list[tuple[str, Path]] = []
             for output in response.outputs:
                 path = Path(output.path)
@@ -2256,7 +2290,11 @@ class StudioCoordinator:
             stage.metrics = dict(run.stage("D5").metrics)
         else:
             self._progress(run, "D7", 0.08, "Retargeting qualified CC0 humanoid motions onto the Darkness rig.")
-            chain = self._run_motion_chain(run, stop_after="retarget_qwen_review")
+            chain = self._run_motion_chain(
+                run,
+                stop_after="retarget_qwen_review",
+                timeout_seconds=self._stage_settings(run, "D7").get("timeout_seconds", 3600),
+            )
             evidence_root = chain / "retarget" / "human_review"
             board = evidence_root / "all_motion_front_keyposes.png"
             mediator_path = evidence_root / "qwen_retarget_mediator.json"
@@ -2533,6 +2571,7 @@ class StudioCoordinator:
                 role="surface_master",
             )
             attempt_root = self.store.run_root(run.run_id) / "D9_delivery" / f"iteration-{stage.iteration:02d}"
+            d9_settings = self._stage_settings(run, "D9")
             artifact_id = f"{run.spec.asset_id}.d9.input.i{stage.iteration:02d}"
             artifact = self._artifact_for_path(run, source, artifact_id=artifact_id)
             request = ExternalWorkerRequest(
@@ -2542,10 +2581,12 @@ class StudioCoordinator:
                 stage=AssetStage.optimization,
                 inputs=[artifact],
                 input_paths={artifact_id: str(source)},
-                parameters={"render_size": 768},
+                parameters={"render_size": d9_settings.get("render_size", 768)},
                 output_directory=str(attempt_root / "blender"),
             )
-            response = self._execute_worker("blender", request, timeout_seconds=900)
+            response = self._execute_worker(
+                "blender", request, timeout_seconds=d9_settings.get("timeout_seconds", 900)
+            )
             records = [
                 (output.role, Path(output.path))
                 for output in response.outputs

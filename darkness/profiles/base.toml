@@ -68,34 +68,60 @@ concept_steps = 45
 concept_cfg = 7.0
 sprite_views = 8
 
-[stages.D2]                           # DOCUMENTED -- 3D generation
-worker_id = "canonical.short_biped"
-seed = 7132026
+# -- Per-stage settings, read by StudioCoordinator._stage_settings(). --------
+# A run pins WHICH profile it uses (StudioRun.profile), not a frozen copy of
+# these values, so editing one takes effect on that run's next attempt.
+# Every key below is read by the stage it names; anything not genuinely
+# consumed lives in [adapter_defaults] at the bottom instead of pretending
+# to be pipeline configuration.
+
+[stages.D2]                           # WIRED -- 3D generation
+# The worker that turns the RGBA concept seed into geometry. This is
+# trellis2.4b, NOT canonical.short_biped -- the latter is the deterministic
+# procedural fallback worker, used by `darkness run-worker`, never by D2.
+worker_id = "trellis2.4b"
+decimation_target = 300000
+texture_size = 2048
 timeout_seconds = 1800
 
-[stages.D2b]                          # DOCUMENTED -- retopology
+[stages.D3]                           # WIRED -- Blender cleanup
+render_size = 512
+maximum_material_change_fraction = 0.03
+weld_distance = 0.00005               # deformable assets only; static uses 0.0
+timeout_seconds = 900
+
+[stages.D4]                           # WIRED -- canonical structure / rig probe
+render_size = 512
+maximum_material_change_fraction = 0.03
+maximum_bone_influences = 4
+timeout_seconds = 1200
+
+[stages.D7]                           # WIRED -- motion (timeout only)
+timeout_seconds = 3600
+# NOT YET WIRED. darkness/motion_library.py can resolve a clip_id to a local
+# file, but _run_motion_chain still hardcodes one qualified CC0 clip path
+# under workspace_root and never consults this value. Setting it has no
+# effect today -- see the README's Known gaps.
+donor_motion_id = ""
+
+[stages.D9]                           # WIRED -- delivery render (static/prop path)
+render_size = 768
+timeout_seconds = 900
+
+# -- Adapter CLI defaults ----------------------------------------------------
+# These mirror the argparse defaults of standalone scripts under adapters/,
+# invoked by hand (see docs/darkness-worker-guide.md). The D0-D10 pipeline
+# does NOT read them: D2b is not a pipeline stage at all, and D6/D10 adopt
+# hash-bound upstream output rather than running a worker of their own.
+# Kept here as one reference for the numbers, explicitly NOT as live config.
+[adapter_defaults.retopology]         # adapters/build_retopology_request.py
 worker_id = "autoremesher"
 target_quads = 20000
 minimum_quad_fraction = 0.99
 
-[stages.D6]                           # DOCUMENTED -- skinning
-maximum_bone_influences = 4
-
-[stages.D7]                           # DOCUMENTED -- motion
-timeout_seconds = 3600
-# Empty means procedural/synthesized motion. A non-empty value must name a
-# clip_id in motion_library/catalog.json (copy catalog.example.json to get
-# started) resolved via darkness.motion_library.resolve_donor_motion_path,
-# then passed as --source to adapters/retarget_humanoid_motion.py.
-donor_motion_id = ""
-
-[stages.D8]                           # DOCUMENTED -- surface painting
-seed = 7132026
-timeout_seconds = 1200
-
-[stages.D9]                           # DOCUMENTED -- sprite rendering / LODs / atlases
+[adapter_defaults.sprites]            # adapters/package_motion_sprites.py
 lod_levels = 2
 atlas_size = 2048
 
-[stages.D10]                          # DOCUMENTED -- runtime validation
+[adapter_defaults.unity]              # unity_smoke_template/ProjectSettings
 unity_version = "6000.5.1f1"

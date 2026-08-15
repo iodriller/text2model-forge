@@ -1859,6 +1859,61 @@ def test_a_static_prop_runs_the_whole_chain_end_to_end(
     assert any("bake_darkness_surface.py" in " ".join(cmd) for cmd in scripts.commands)
 
 
+def test_stage_config_reaches_the_real_worker_requests(tmp_path: Path) -> None:
+    """Tier-2 wiring proof: [stages.*] values must actually appear in the
+    typed worker requests, not merely resolve. Uses the advanced profile,
+    which raises D2's texture_size and D3/D4's render_size above base."""
+    store = StudioStore(tmp_path)
+    worker = FakeWorkerExecutor()
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        coordinator = StudioCoordinator(
+            store,
+            qwen_factory=lambda run: FakeQwen(),
+            comfy_factory=lambda run: FakeComfy(),
+            worker_executor=worker,
+            executor=executor,
+        )
+        store.create("stage-config-v1", DESCRIPTION, {"profile": "advanced"})
+        coordinator.submit("stage-config-v1")
+        _approve_gate(store, coordinator, "stage-config-v1", "D1")
+        _wait_for_stage_settled(store, "stage-config-v1", "D4")
+
+    by_operation = {item.operation_id: item for item in worker.requests}
+    # base.toml's D2 texture_size is 2048; advanced.toml raises it to 4096.
+    assert by_operation["geometry.generate_from_rgba"].parameters["texture_size"] == 4096
+    assert by_operation["geometry.generate_from_rgba"].parameters["decimation_target"] == 500000
+    # base render_size is 512; advanced raises D3 and D4 to 768.
+    assert by_operation["blender.repair"].parameters["render_size"] == 768
+    assert by_operation["blender.propose_short_biped_rig"].parameters["render_size"] == 768
+    # A key only base.toml sets still flows through.
+    assert by_operation["blender.propose_short_biped_rig"].parameters["maximum_bone_influences"] == 4
+
+
+def test_a_run_keeps_its_own_profile_rather_than_the_current_default(tmp_path: Path) -> None:
+    """StudioRun.profile pins which profile a run resolves from, so two runs
+    with different profiles get different stage parameters concurrently."""
+    store = StudioStore(tmp_path)
+    default_run = store.create("profile-default-v1", DESCRIPTION)
+    advanced_run = store.create("profile-advanced-v1", DESCRIPTION, {"profile": "advanced"})
+    assert default_run.profile == "simple"
+    assert advanced_run.profile == "advanced"
+
+    coordinator = StudioCoordinator(store, qwen_factory=lambda run: FakeQwen())
+    assert coordinator._stage_settings(default_run, "D2")["texture_size"] == 2048
+    assert coordinator._stage_settings(advanced_run, "D2")["texture_size"] == 4096
+
+
+def test_stage_settings_fall_back_to_defaults_for_an_unknown_profile(tmp_path: Path) -> None:
+    """A run naming a profile that no longer exists must fall back to base
+    rather than fail -- configuration should not brick an in-flight run."""
+    store = StudioStore(tmp_path)
+    run = store.create("missing-profile-v1", DESCRIPTION, {"profile": "deleted-profile"})
+    coordinator = StudioCoordinator(store, qwen_factory=lambda run: FakeQwen())
+    settings = coordinator._stage_settings(run, "D2")
+    assert settings["texture_size"] == 2048  # base.toml's value
+    assert coordinator._stage_settings(run, "D99") == {}  # unknown stage is empty, not an error
+
+
 def test_d2_survives_a_studio_workspace_that_differs_from_config_workspace_root(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
