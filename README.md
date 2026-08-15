@@ -131,14 +131,23 @@ Stated plainly so nobody discovers these the hard way:
   at D1 and D2. The rest of `[stages.*]` (D2b, D6, D7, D8, D9, D10) is still
   DOCUMENTED only: those values mirror the adapters' hardcoded CLI defaults
   but nothing reads them from here yet.
-- **Wiring further stages is blocked on test infrastructure, not effort.**
-  `tests/test_studio.py` only fakes Qwen and ComfyUI. D1 and D2 are the only
-  two stages whose real work is "call ComfyUI with a workflow dict," so they
-  are the only two a fake can safely exercise. D3 onward call out to real
-  Blender/worker subprocesses (`WorkerManager`/`SubprocessWorkerAdapter`) with
-  no fake equivalent today -- wiring their config or extending override
-  consumption to them needs either a fake worker-subprocess layer built first,
-  or live Blender/GPU to verify against.
+- **The typed subprocess-worker protocol (D2-D5, D9) now has a fake.**
+  `StudioCoordinator(..., worker_executor=...)` injects a
+  `callable(worker_id, request, *, timeout_seconds) -> ExternalWorkerResponse`
+  in place of the real `config.local.toml` lookup + `WorkerManager` subprocess
+  launch, the same way `qwen_factory`/`comfy_factory` already worked. D2 is
+  proven end to end through it: `tests/test_studio.py`'s `FakeWorkerExecutor`
+  writes a genuinely valid synthetic mesh via `trimesh.creation.icosphere()`
+  (not a placeholder file -- D2's real code parses it and computes real
+  vertex/face/watertightness numbers from it) and the real
+  `render_glb_diagnostic.py` subprocess runs against it unmodified, since that
+  script needs only trimesh/numpy/PIL, not Blender. D3-D5 and D9 route
+  through the same `_execute_worker` chokepoint and are one `FakeQwen` method
+  each away from the same treatment (`review_cleanup` is already faked; D4's
+  `review_deformable_rig`/`rigid_structure_plan` and D5/D9's equivalents are
+  not yet). D7's motion chain is architecturally different -- it shells out
+  to `adapters/run_motion_candidate_pipeline.py` directly via `subprocess.run`
+  rather than through `_execute_worker`, so it needs its own seam.
 - **D2 has no human gate**, so retry/edit override values can never reach it
   through the documented review flow even though its `steps`/`cfg` are wired
   -- only a caller driving the coordinator directly could set them.

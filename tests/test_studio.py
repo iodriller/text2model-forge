@@ -31,7 +31,13 @@ from darkness.studio_pipeline import (
     _composite_inpaint_crop,
     _prepare_inpaint_crop,
 )
-from darkness.studio_qwen import ConceptCorrectionPlan, ConceptPlan, StudioQwen
+from darkness.schemas import (
+    DarknessLocalConfig,
+    ExternalWorkerOutput,
+    ExternalWorkerRequest,
+    ExternalWorkerResponse,
+)
+from darkness.studio_qwen import ConceptCorrectionPlan, ConceptPlan, GeometrySeedPlan, StudioQwen
 from darkness.studio_qwen import RigidPartPlan, RigidStructurePlan, _history
 from darkness.studio_store import StudioStore
 
@@ -121,6 +127,44 @@ class FakeQwen:
             preserve=["Right-hand sword."],
         )
 
+    def geometry_seed_plan(self, spec, stage, selected_concept):
+        return GeometrySeedPlan(
+            positive_prompt="A " * 45 + "unarmed A-pose geometry seed, neutral studio lighting.",
+            negative_prompt="equipment, weapons, cropped limbs, wrong pose",
+            seed=606 + stage.iteration,
+            rationale="Unarmed A-pose isolates body geometry from equipment.",
+        )
+
+    def review_geometry(self, spec, stage, selected_concept, diagnostic, metrics):
+        review = StudioQwenReview(
+            review_id=f"d2-review-{stage.iteration}",
+            stage_id="D2",
+            iteration=stage.iteration,
+            summary="Geometry candidate preserves the approved silhouette and passes numeric gates.",
+            strengths=["watertight", "proportions match the approved concept"],
+            issues=[],
+            candidate_ranking=["geometry-candidate"],
+            recommended_evidence_id="geometry-candidate",
+            confidence=0.85,
+            hard_requirements_satisfied=True,
+        )
+        return review, True
+
+    def review_cleanup(self, spec, stage, selected_concept, diagnostic, metrics):
+        review = StudioQwenReview(
+            review_id=f"d3-review-{stage.iteration}",
+            stage_id="D3",
+            iteration=stage.iteration,
+            summary="Cleanup preserved identity; no floating or missing structural pieces.",
+            strengths=["single connected component", "silhouette unchanged"],
+            issues=[],
+            candidate_ranking=["cleanup-candidate"],
+            recommended_evidence_id="cleanup-candidate",
+            confidence=0.85,
+            hard_requirements_satisfied=True,
+        )
+        return review, True
+
 
 class FakeComfy:
     def __init__(self) -> None:
@@ -142,8 +186,73 @@ class FakeComfy:
         self.workflows.append(workflow)
         destination.mkdir(parents=True, exist_ok=True)
         target = destination / "concept.png"
-        Image.new("RGB", (64, 96), (70, 90, 120)).save(target)
+        # An edge-connected green border around a non-green center, so this
+        # image is also valid input to make_chroma_alpha() (D2's geometry
+        # seed path key it out) -- not just any RGB PNG, exactly like
+        # test_chroma_alpha_removes_only_edge_connected_green's fixture.
+        image = Image.new("RGB", (64, 96), (0, 220, 0))
+        for y in range(16, 80):
+            for x in range(12, 52):
+                image.putpixel((x, y), (70, 90, 120))
+        image.save(target)
         return [target]
+
+
+class FakeWorkerExecutor:
+    """Stands in for _execute_worker's real path (config.local.toml lookup +
+    a real subprocess via WorkerManager/SubprocessWorkerAdapter). Writes a
+    genuinely valid synthetic mesh via trimesh -- D2's real code path loads
+    the GLB it receives and computes real geometric properties from it
+    (vertices, faces, watertightness), so a placeholder file that merely
+    exists is not enough; it has to actually parse."""
+
+    def __init__(self) -> None:
+        self.requests: list[ExternalWorkerRequest] = []
+
+    def __call__(self, worker_id: str, request: ExternalWorkerRequest, *, timeout_seconds: float):
+        self.requests.append(request)
+        output_root = Path(request.output_directory)
+        output_root.mkdir(parents=True, exist_ok=True)
+        if worker_id == "trellis2.4b":
+            import trimesh
+
+            # subdivisions=4 clears D2's hard gate (>=1000 vertices, >=1000 faces)
+            # by a wide margin and is cheap to build/export in a test.
+            mesh = trimesh.creation.icosphere(subdivisions=4)
+            glb_path = output_root / "geometry_candidate.glb"
+            mesh.export(glb_path)
+            return ExternalWorkerResponse(
+                job_id=request.job_id,
+                status="succeeded",
+                outputs=[
+                    ExternalWorkerOutput(
+                        path=str(glb_path), media_type="model/gltf-binary", role="geometry_candidate"
+                    )
+                ],
+                diagnostics={"synthetic": True},
+            )
+        if worker_id == "blender" and request.operation_id == "blender.repair":
+            front = output_root / "candidate_front.png"
+            Image.new("RGB", (64, 64), (90, 100, 80)).save(front)
+            geometry = output_root / "candidate_geometry.glb"
+            # Re-export the same synthetic sphere as the "cleaned" geometry --
+            # D3 does not care whether it changed, only that a valid
+            # model/gltf-binary output with role candidate_geometry exists.
+            import trimesh
+
+            trimesh.creation.icosphere(subdivisions=4).export(geometry)
+            return ExternalWorkerResponse(
+                job_id=request.job_id,
+                status="succeeded",
+                outputs=[
+                    ExternalWorkerOutput(path=str(front), media_type="image/png", role="candidate_front"),
+                    ExternalWorkerOutput(
+                        path=str(geometry), media_type="model/gltf-binary", role="candidate_geometry"
+                    ),
+                ],
+                diagnostics={"synthetic": True, "hard_gate_passed": True},
+            )
+        raise AssertionError(f"FakeWorkerExecutor has no fixture for worker_id={worker_id!r} operation_id={request.operation_id!r}")
 
 
 class QwenImageFakeComfy(FakeComfy):
@@ -1055,6 +1164,169 @@ def test_a_run_with_no_quality_override_submits_todays_real_default_workflow(tmp
     assert samplers
     assert all(node["inputs"]["steps"] == 30 for node in samplers)
     assert all(node["inputs"]["cfg"] == 6.0 for node in samplers)
+
+
+def test_d2_geometry_generation_runs_end_to_end_through_a_fake_worker(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """First real pipeline-level test of D2, which has never been driven
+    through the coordinator before -- it always stopped at D1's gate. Proves
+    the worker_executor injection seam works and that _run_d2's real
+    evidence/gate logic (vertices/faces/watertight from an actually-parsed
+    GLB, hard_gate_passed, Qwen review) reaches 'approved', not just that a
+    canned response satisfies a mock.
+
+    D2 separately calls load_local_config() itself (not through
+    worker_executor) just to learn workspace_root for one blob-path
+    computation; monkeypatched here rather than routed through the new seam,
+    since it is not a worker call.
+    """
+    monkeypatch.setattr(
+        "darkness.studio_pipeline.load_local_config",
+        lambda *a, **k: DarknessLocalConfig(workspace_root=str(tmp_path), workers={}),
+    )
+    store = StudioStore(tmp_path)
+    qwen = FakeQwen()
+    comfy = FakeComfy()
+    worker = FakeWorkerExecutor()
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        coordinator = StudioCoordinator(
+            store,
+            qwen_factory=lambda run: qwen,
+            comfy_factory=lambda run: comfy,
+            worker_executor=worker,
+            executor=executor,
+        )
+        store.create("d2-e2e-v1", DESCRIPTION)
+        assert coordinator.submit("d2-e2e-v1") is True
+        first = wait_for(store, "d2-e2e-v1", "awaiting_review")
+        assert first.current_stage == "D1"
+        candidate = next(
+            item for item in first.stage("D1").evidence if item.metrics.get("selectable") is True
+        )
+        store.decide("d2-e2e-v1", "D1", "approve", "Looks good.", candidate.evidence_id)
+        coordinator.submit("d2-e2e-v1")
+        # D2 has no human gate; it runs straight through to D3 or stops there instead.
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline:
+            run = store.load("d2-e2e-v1")
+            if run.stage("D2").state in {"approved", "rejected", "failed"}:
+                break
+            time.sleep(0.02)
+        else:
+            raise AssertionError(f"D2 never finished: {store.load('d2-e2e-v1').stage('D2').model_dump()}")
+
+    d2 = run.stage("D2")
+    assert d2.state == "approved", d2.message
+    assert d2.metrics["vertices"] == 2562  # trimesh.creation.icosphere(subdivisions=4), computed for real
+    assert d2.metrics["faces"] == 5120
+    assert d2.metrics["watertight"] is True
+    assert d2.metrics["hard_gate_passed"] is True
+    assert worker.requests[0].operation_id == "geometry.generate_from_rgba"
+    glb_evidence = [item for item in d2.evidence if item.media_type == "model/gltf-binary"]
+    assert len(glb_evidence) == 1
+
+
+def test_d2_seed_override_reaches_the_geometry_seed_render(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The seed-pinning mechanism proven for D1 works identically at D2,
+    since both stages call concept_workflow() through the same _begin()
+    override path -- this exercises D2's specific call site."""
+    monkeypatch.setattr(
+        "darkness.studio_pipeline.load_local_config",
+        lambda *a, **k: DarknessLocalConfig(workspace_root=str(tmp_path), workers={}),
+    )
+    store = StudioStore(tmp_path)
+    qwen = FakeQwen()
+    comfy = FakeComfy()
+    worker = FakeWorkerExecutor()
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        coordinator = StudioCoordinator(
+            store,
+            qwen_factory=lambda run: qwen,
+            comfy_factory=lambda run: comfy,
+            worker_executor=worker,
+            executor=executor,
+        )
+        store.create("d2-seed-v1", DESCRIPTION, {"concept_steps": 45, "concept_cfg": 7.0})
+        coordinator.submit("d2-seed-v1")
+        first = wait_for(store, "d2-seed-v1", "awaiting_review")
+        candidate = next(
+            item for item in first.stage("D1").evidence if item.metrics.get("selectable") is True
+        )
+        store.decide("d2-seed-v1", "D1", "approve", "Looks good.", candidate.evidence_id)
+        coordinator.submit("d2-seed-v1")
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline:
+            run = store.load("d2-seed-v1")
+            if run.stage("D2").state in {"approved", "rejected", "failed"}:
+                break
+            time.sleep(0.02)
+
+    geometry_seed_workflows = [
+        workflow
+        for workflow in comfy.workflows
+        if any(node["class_type"] == "EmptyLatentImage" for node in workflow.values())
+    ]
+    samplers = [
+        node
+        for workflow in geometry_seed_workflows
+        for node in workflow.values()
+        if node["class_type"] == "KSampler"
+    ]
+    assert samplers
+    assert all(node["inputs"]["steps"] == 45 for node in samplers)
+    assert all(node["inputs"]["cfg"] == 7.0 for node in samplers)
+
+
+def test_save_retries_a_transient_windows_permission_error_on_replace(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Regression for an intermittently-failing test suite: a real run seen
+    while building the D2 worker-executor seam (test_pipeline_prefers_
+    installed_qwen_image_generation..., no relation to D2 itself) failed with
+    PermissionError: [WinError 5] Access is denied on run.json.tmp -> run.json,
+    then passed cleanly on rerun. Path.replace() is atomic on POSIX but can
+    transiently fail on Windows when another reader briefly has the file
+    open; save() must absorb a few such failures rather than fail the whole
+    stage over a race that clears in milliseconds."""
+    from pathlib import Path as PathType
+
+    store = StudioStore(tmp_path)
+    run = store.create("flaky-save-v1", DESCRIPTION)
+
+    real_replace = PathType.replace
+    calls = {"count": 0}
+
+    def flaky_replace(self, target):
+        calls["count"] += 1
+        if calls["count"] <= 2 and self.name == "run.json.tmp":
+            raise PermissionError(5, "Access is denied")
+        return real_replace(self, target)
+
+    monkeypatch.setattr(PathType, "replace", flaky_replace)
+    store.save(run)  # must not raise, despite the first two attempts failing
+    assert calls["count"] == 3
+    assert store.load("flaky-save-v1").run_id == "flaky-save-v1"
+
+
+def test_save_gives_up_after_persistent_permission_errors(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The retry is bounded -- a real, non-transient lock must still surface
+    as an error rather than hang or silently drop the write."""
+    from pathlib import Path as PathType
+
+    store = StudioStore(tmp_path)
+    run = store.create("stuck-save-v1", DESCRIPTION)
+
+    def always_fails(self, target):
+        raise PermissionError(5, "Access is denied")
+
+    monkeypatch.setattr(PathType, "replace", always_fails)
+    with pytest.raises(PermissionError):
+        store.save(run)
 
 
 def test_artifact_paths_cannot_escape_run(tmp_path: Path) -> None:

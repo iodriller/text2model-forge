@@ -354,6 +354,7 @@ class StudioCoordinator:
         *,
         qwen_factory=None,
         comfy_factory=None,
+        worker_executor=None,
         executor: ThreadPoolExecutor | None = None,
     ) -> None:
         self.store = store
@@ -361,6 +362,13 @@ class StudioCoordinator:
             lambda run: StudioQwen(base_url=run.localdeploy_url, model=run.model)
         )
         self._comfy_factory = comfy_factory or (lambda run: StudioComfyClient(run.comfy_url))
+        # D2-D5/D9's typed subprocess worker protocol (blender, trellis2.4b, ...),
+        # injectable the same way qwen_factory/comfy_factory are. None (the
+        # default) means _execute_worker does what it always has: read
+        # config.local.toml and run a real subprocess via WorkerManager. A
+        # test supplies a callable(worker_id, request, *, timeout_seconds) ->
+        # ExternalWorkerResponse instead, exactly like FakeQwen/FakeComfy.
+        self._worker_executor = worker_executor
         self._executor = executor or ThreadPoolExecutor(max_workers=1, thread_name_prefix="darkness-studio")
         self._owns_executor = executor is None
         self._lock = threading.Lock()
@@ -1588,6 +1596,8 @@ class StudioCoordinator:
         *,
         timeout_seconds: float,
     ):
+        if self._worker_executor is not None:
+            return self._worker_executor(worker_id, request, timeout_seconds=timeout_seconds)
         config = load_local_config()
         if config is None:
             raise RuntimeError("Darkness config.local.toml is required")

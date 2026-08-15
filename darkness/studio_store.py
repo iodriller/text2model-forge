@@ -6,6 +6,7 @@ import hashlib
 import json
 from pathlib import Path
 import threading
+import time
 from typing import Any
 import uuid
 
@@ -56,16 +57,31 @@ class StudioStore:
             path = self.run_root(run.run_id) / "run.json"
             temporary = path.with_suffix(".json.tmp")
             temporary.write_text(run.model_dump_json(indent=2) + "\n", encoding="utf-8")
-            temporary.replace(path)
+            # Path.replace() is atomic on POSIX but can still raise a transient
+            # PermissionError on Windows if another process or thread (real-time
+            # antivirus, an unlocked reader) briefly has run.json open at the
+            # exact moment of the rename. This is not a real conflict -- retry
+            # rather than fail the whole stage over a race that clears in
+            # milliseconds; only propagate if it is still happening after that.
+            attempts = 8
+            for attempt in range(attempts):
+                try:
+                    temporary.replace(path)
+                    return
+                except PermissionError:
+                    if attempt == attempts - 1:
+                        raise
+                    time.sleep(0.05 * (attempt + 1))
 
     def list(self) -> list[StudioRun]:
-        runs = []
-        for path in self.runs_root.glob("*/run.json"):
-            try:
-                runs.append(StudioRun.model_validate_json(path.read_text(encoding="utf-8")))
-            except (OSError, ValueError):
-                continue
-        return sorted(runs, key=lambda item: item.updated_at, reverse=True)
+        with self._lock:
+            runs = []
+            for path in self.runs_root.glob("*/run.json"):
+                try:
+                    runs.append(StudioRun.model_validate_json(path.read_text(encoding="utf-8")))
+                except (OSError, ValueError):
+                    continue
+            return sorted(runs, key=lambda item: item.updated_at, reverse=True)
 
     def recover_interrupted_runs(self) -> list[str]:
         """Release runs left in `running` by a stopped local Studio process."""
