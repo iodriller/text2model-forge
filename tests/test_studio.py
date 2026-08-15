@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor
+import json
 from pathlib import Path
+import subprocess
 import threading
 import time
 
@@ -36,6 +38,7 @@ from darkness.schemas import (
     ExternalWorkerOutput,
     ExternalWorkerRequest,
     ExternalWorkerResponse,
+    WorkerBinding,
 )
 from darkness.studio_qwen import ConceptCorrectionPlan, ConceptPlan, GeometrySeedPlan, StudioQwen
 from darkness.studio_qwen import RigidPartPlan, RigidStructurePlan, _history
@@ -165,6 +168,20 @@ class FakeQwen:
         )
         return review, True
 
+    def review_deformable_rig(self, spec, stage, selected_concept, stress_board, metrics):
+        return StudioQwenReview(
+            review_id=f"d4-review-{stage.iteration}",
+            stage_id="D4",
+            iteration=stage.iteration,
+            summary="Rig landmarks and stress poses are credible for the approved identity.",
+            strengths=["no collapsed shoulder", "bounded influences"],
+            issues=[],
+            candidate_ranking=["rig-stress-board"],
+            recommended_evidence_id="rig-stress-board",
+            confidence=0.8,
+            hard_requirements_satisfied=True,
+        )
+
 
 class FakeComfy:
     def __init__(self) -> None:
@@ -198,13 +215,42 @@ class FakeComfy:
         return [target]
 
 
+def _synthetic_mesh(path: Path) -> Path:
+    """A genuinely valid GLB, not a placeholder file. The stages that consume
+    these actually parse them with trimesh and compute real geometric
+    properties (vertices, faces, watertightness), so an empty file would fail
+    for the wrong reason. subdivisions=4 gives 2562 vertices / 5120 faces,
+    clearing D2's >=1000/>=1000 hard gate by a wide margin, and is cheap."""
+    import trimesh
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    trimesh.creation.icosphere(subdivisions=4).export(path)
+    return path
+
+
+def _synthetic_image(path: Path, color: tuple[int, int, int] = (90, 100, 80)) -> Path:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    Image.new("RGB", (64, 64), color).save(path)
+    return path
+
+
+def _synthetic_report(path: Path, **values) -> Path:
+    """A report JSON whose gate field _adopt_d4_output actually reads."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps({"gate_passed": True, **values}), encoding="utf-8")
+    return path
+
+
 class FakeWorkerExecutor:
     """Stands in for _execute_worker's real path (config.local.toml lookup +
-    a real subprocess via WorkerManager/SubprocessWorkerAdapter). Writes a
-    genuinely valid synthetic mesh via trimesh -- D2's real code path loads
-    the GLB it receives and computes real geometric properties from it
-    (vertices, faces, watertightness), so a placeholder file that merely
-    exists is not enough; it has to actually parse."""
+    a real subprocess via WorkerManager/SubprocessWorkerAdapter), the same way
+    FakeQwen/FakeComfy stand in for their services.
+
+    Each operation_id gets a fixture producing the exact output roles the
+    corresponding stage consumes -- these are contracts, not arbitrary
+    placeholders: D3 requires a role="candidate_geometry" GLB, and
+    _adopt_d4_output requires specific report roles at D5/D6, so getting
+    them wrong fails the stage exactly as a real misbehaving worker would."""
 
     def __init__(self) -> None:
         self.requests: list[ExternalWorkerRequest] = []
@@ -213,46 +259,196 @@ class FakeWorkerExecutor:
         self.requests.append(request)
         output_root = Path(request.output_directory)
         output_root.mkdir(parents=True, exist_ok=True)
-        if worker_id == "trellis2.4b":
-            import trimesh
-
-            # subdivisions=4 clears D2's hard gate (>=1000 vertices, >=1000 faces)
-            # by a wide margin and is cheap to build/export in a test.
-            mesh = trimesh.creation.icosphere(subdivisions=4)
-            glb_path = output_root / "geometry_candidate.glb"
-            mesh.export(glb_path)
-            return ExternalWorkerResponse(
-                job_id=request.job_id,
-                status="succeeded",
-                outputs=[
-                    ExternalWorkerOutput(
-                        path=str(glb_path), media_type="model/gltf-binary", role="geometry_candidate"
-                    )
-                ],
-                diagnostics={"synthetic": True},
+        handler = getattr(self, f"_op_{request.operation_id.replace('.', '_')}", None)
+        if handler is None:
+            raise AssertionError(
+                f"FakeWorkerExecutor has no fixture for worker_id={worker_id!r} "
+                f"operation_id={request.operation_id!r}"
             )
-        if worker_id == "blender" and request.operation_id == "blender.repair":
-            front = output_root / "candidate_front.png"
-            Image.new("RGB", (64, 64), (90, 100, 80)).save(front)
-            geometry = output_root / "candidate_geometry.glb"
-            # Re-export the same synthetic sphere as the "cleaned" geometry --
-            # D3 does not care whether it changed, only that a valid
-            # model/gltf-binary output with role candidate_geometry exists.
-            import trimesh
+        outputs, diagnostics = handler(request, output_root)
+        return ExternalWorkerResponse(
+            job_id=request.job_id,
+            status="succeeded",
+            outputs=outputs,
+            diagnostics={"synthetic": True, **diagnostics},
+        )
 
-            trimesh.creation.icosphere(subdivisions=4).export(geometry)
-            return ExternalWorkerResponse(
-                job_id=request.job_id,
-                status="succeeded",
-                outputs=[
-                    ExternalWorkerOutput(path=str(front), media_type="image/png", role="candidate_front"),
-                    ExternalWorkerOutput(
-                        path=str(geometry), media_type="model/gltf-binary", role="candidate_geometry"
-                    ),
-                ],
-                diagnostics={"synthetic": True, "hard_gate_passed": True},
+    def _op_geometry_generate_from_rgba(self, request, output_root):
+        glb = _synthetic_mesh(output_root / "geometry_candidate.glb")
+        return (
+            [ExternalWorkerOutput(path=str(glb), media_type="model/gltf-binary", role="geometry_candidate")],
+            {},
+        )
+
+    def _op_blender_repair(self, request, output_root):
+        front = _synthetic_image(output_root / "candidate_front.png")
+        geometry = _synthetic_mesh(output_root / "candidate_geometry.glb")
+        checkpoint = output_root / "candidate_checkpoint.blend"
+        checkpoint.write_bytes(b"synthetic-blend-checkpoint")
+        return (
+            [
+                ExternalWorkerOutput(path=str(front), media_type="image/png", role="candidate_front"),
+                ExternalWorkerOutput(
+                    path=str(geometry), media_type="model/gltf-binary", role="candidate_geometry"
+                ),
+                ExternalWorkerOutput(
+                    path=str(checkpoint),
+                    media_type="application/x-blender",
+                    role="candidate_checkpoint",
+                ),
+            ],
+            {"hard_gate_passed": True},
+        )
+
+    def _op_blender_propose_short_biped_rig(self, request, output_root):
+        """D4's rig probe. Must emit every role D4's stress board needs
+        (image/* with a rig_ prefix) plus the report/checkpoint roles that
+        _adopt_d4_output later requires at D5 and D6 -- those two stages
+        run no worker of their own and adopt these directly."""
+        outputs = [
+            ExternalWorkerOutput(
+                path=str(_synthetic_image(output_root / "rig_neutral.png")),
+                media_type="image/png",
+                role="rig_neutral",
+            ),
+            ExternalWorkerOutput(
+                path=str(_synthetic_image(output_root / "rig_shoulder_stress.png")),
+                media_type="image/png",
+                role="rig_shoulder_stress",
+            ),
+            ExternalWorkerOutput(
+                path=str(_synthetic_mesh(output_root / "rigged_candidate.glb")),
+                media_type="model/gltf-binary",
+                role="rigged_candidate",
+            ),
+        ]
+        rigged_checkpoint = output_root / "rigged_candidate_checkpoint.blend"
+        rigged_checkpoint.write_bytes(b"synthetic-rigged-blend")
+        outputs.append(
+            ExternalWorkerOutput(
+                path=str(rigged_checkpoint),
+                media_type="application/x-blender",
+                role="rigged_candidate_checkpoint",
             )
-        raise AssertionError(f"FakeWorkerExecutor has no fixture for worker_id={worker_id!r} operation_id={request.operation_id!r}")
+        )
+        for role in (
+            "rig_contract",
+            "landmarks_contract",
+            "skinning_report",
+            "deformation_report",
+            "neutral_comparison_report",
+            "rigged_export_validation",
+        ):
+            outputs.append(
+                ExternalWorkerOutput(
+                    path=str(_synthetic_report(output_root / f"{role}.json", role=role)),
+                    media_type="application/json",
+                    role=role,
+                )
+            )
+        return outputs, {"maximum_influences": 4, "hard_gate_passed": True}
+
+    def _op_blender_render_diagnostics(self, request, output_root):
+        """D9's static/prop delivery render. Every image output becomes a cell
+        in the delivery board, and the board being non-empty IS D9's automatic
+        gate -- returning zero images fails the stage."""
+        return (
+            [
+                ExternalWorkerOutput(
+                    path=str(_synthetic_image(output_root / f"delivery_{view}.png")),
+                    media_type="image/png",
+                    role=f"delivery_{view}",
+                )
+                for view in ("front", "side", "back", "top")
+            ],
+            {"hard_gate_passed": True},
+        )
+
+
+class FakeScriptRunner:
+    """Stands in for the adapters/ helper scripts invoked via subprocess.run
+    (D8's surface bake and review, D7/D9-deformable's motion chain).
+
+    Deliberately delegates render_glb_diagnostic.py to the REAL subprocess:
+    that script needs only trimesh/numpy/PIL, so a test can and should run it
+    for real rather than pretend. Only the Blender/ComfyUI-dependent scripts
+    are simulated."""
+
+    def __init__(self) -> None:
+        self.commands: list[list[str]] = []
+
+    def __call__(self, command, *, text=True, capture_output=True, timeout=None):
+        self.commands.append(list(command))
+        script = next((part for part in command if str(part).endswith(".py")), "")
+        name = Path(str(script)).name
+        if name == "render_glb_diagnostic.py":
+            return subprocess.run(command, text=True, capture_output=True, timeout=timeout)
+        handler = getattr(self, f"_script_{name[:-3]}", None)
+        if handler is None:
+            raise AssertionError(f"FakeScriptRunner has no fixture for script {name!r}")
+        handler(command)
+        return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
+
+    @staticmethod
+    def _argument(command, flag: str) -> str:
+        return str(command[command.index(flag) + 1])
+
+    def _script_bake_darkness_surface(self, command):
+        surface = Path(self._argument(command, "--output-directory"))
+        surface.mkdir(parents=True, exist_ok=True)
+        _synthetic_image(surface / "surface_review.png")
+        (surface / "darkness_surface_master.blend").write_bytes(b"synthetic-surface-master")
+        (surface / "surface_validation.json").write_text(
+            json.dumps({"automatic_gate_passed": True, "image_metrics": {"visible_luminance": 0.42}}),
+            encoding="utf-8",
+        )
+
+    def _script_review_surface_master(self, command):
+        surface = Path(self._argument(command, "--surface-directory"))
+        surface.mkdir(parents=True, exist_ok=True)
+        (surface / "qwen_surface_mediator.json").write_text(
+            json.dumps({"corrected_overall": "ready_for_final_render"}), encoding="utf-8"
+        )
+
+    def _script_run_motion_candidate_pipeline(self, command):
+        """The resumable D7->D10 chain. --stop-after names how far it should
+        go, and each stage checks for the exact evidence its own step
+        publishes, so this writes progressively more as the stop point
+        advances -- mirroring the real chain's resumable contract."""
+        root = Path(self._argument(command, "--output-root"))
+        stop_after = self._argument(command, "--stop-after")
+        retarget = root / "retarget"
+        review = retarget / "human_review"
+        _synthetic_image(review / "all_motion_front_keyposes.png")
+        for name in ("attack", "walk", "death"):
+            _synthetic_image(review / f"{name}_front_keyposes.png")
+        (retarget / "quaternius_retargeted_candidate.blend").write_bytes(b"synthetic-retargeted")
+        (retarget / "retarget_validation.json").write_text(
+            json.dumps({"automatic_gate_passed": True}), encoding="utf-8"
+        )
+        (review / "qwen_retarget_mediator.json").write_text(
+            json.dumps({"corrected_overall": "ready_for_human_gate", "reason": "Motion is clean."}),
+            encoding="utf-8",
+        )
+        if stop_after == "retarget_qwen_review":
+            return
+        package = root / "sprites" / "package"
+        _synthetic_image(package / "sprite_review.png")
+        (package / "candidate_unit_manifest.json").write_text(
+            json.dumps({"automatic_gate_passed": True, "source_master_sha256": "0" * 64}),
+            encoding="utf-8",
+        )
+        (package / "qwen_sprite_mediator.json").write_text(
+            json.dumps({"corrected_overall": "ready_for_unity_candidate"}), encoding="utf-8"
+        )
+        if stop_after == "sprite_qwen_review":
+            return
+        bundle = root / "unity_smoke_bundle"
+        bundle.mkdir(parents=True, exist_ok=True)
+        (bundle / "review.html").write_text("<h1>synthetic bundle</h1>", encoding="utf-8")
+        (bundle / "bundle_manifest.json").write_text(
+            json.dumps({"human_approved": False}), encoding="utf-8"
+        )
 
 
 class QwenImageFakeComfy(FakeComfy):
@@ -312,14 +508,26 @@ def wait_for(store: StudioStore, run_id: str, state: str, timeout: float = 5):
     raise AssertionError(f"run never reached {state}: {store.load(run_id).model_dump()}")
 
 
+_SETTLED_STAGE_STATES = {
+    "approved",
+    "rejected",
+    "failed",
+    "skipped",
+    "blocked",
+    # A gated stage that finished its work and is waiting on a human is
+    # settled too -- for D10 that is the normal, successful end of a run.
+    "awaiting_review",
+}
+
+
 def _wait_for_stage_settled(store: StudioStore, run_id: str, stage_id: str, timeout: float = 5):
-    """Wait for one stage to reach a terminal state. Unlike wait_for(), which
-    watches run.state, this watches a specific stage -- needed for stages like
-    D2 that have no human gate and so never park the run in awaiting_review."""
+    """Wait for one stage to stop doing work. Unlike wait_for(), which watches
+    run.state, this watches a specific stage -- needed for stages like D2 that
+    have no human gate and so never park the run in awaiting_review."""
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         run = store.load(run_id)
-        if run.stage(stage_id).state in {"approved", "rejected", "failed", "skipped", "blocked"}:
+        if run.stage(stage_id).state in _SETTLED_STAGE_STATES:
             return run
         time.sleep(0.02)
     raise AssertionError(
@@ -1373,6 +1581,282 @@ def test_d3_cleanup_runs_end_to_end_through_the_same_fake_worker(tmp_path: Path)
         item.media_type == "model/gltf-binary" and item.metrics.get("role") == "candidate_geometry"
         for item in d3.evidence
     )
+
+
+def _approve_gate(store: StudioStore, coordinator, run_id: str, stage_id: str, comment: str = "Looks good."):
+    """Approve one human gate, picking the stage's selectable candidate."""
+    run = wait_for(store, run_id, "awaiting_review")
+    assert run.current_stage == stage_id, f"expected {stage_id}, got {run.current_stage}"
+    candidate = next(
+        item for item in run.stage(stage_id).evidence if item.metrics.get("selectable") is True
+    )
+    store.decide(run_id, stage_id, "approve", comment, candidate.evidence_id)
+    coordinator.submit(run_id)
+
+
+def test_d4_through_d6_run_end_to_end_for_a_deformable_character(tmp_path: Path) -> None:
+    """D4 (rig proposal) is a human gate driven by a real Blender-worker
+    request; D5 and D6 run no worker of their own and instead adopt D4's
+    hash-bound outputs via _adopt_d4_output, which reads each adopted report's
+    gate field. That adoption contract is what this proves -- the fake must
+    emit exactly the roles those two stages require, so a missing role fails
+    here the same way a real misbehaving worker would."""
+    store = StudioStore(tmp_path)
+    worker = FakeWorkerExecutor()
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        coordinator = StudioCoordinator(
+            store,
+            qwen_factory=lambda run: FakeQwen(),
+            comfy_factory=lambda run: FakeComfy(),
+            worker_executor=worker,
+            executor=executor,
+        )
+        store.create("d4-e2e-v1", DESCRIPTION)
+        coordinator.submit("d4-e2e-v1")
+        _approve_gate(store, coordinator, "d4-e2e-v1", "D1")
+        _approve_gate(store, coordinator, "d4-e2e-v1", "D4")
+        run = _wait_for_stage_settled(store, "d4-e2e-v1", "D6")
+
+    assert run.stage("D4").state == "approved", run.stage("D4").error
+    assert run.stage("D5").state == "approved", run.stage("D5").error
+    assert run.stage("D6").state == "approved", run.stage("D6").error
+    rig_requests = [
+        item for item in worker.requests if item.operation_id == "blender.propose_short_biped_rig"
+    ]
+    assert len(rig_requests) == 1
+    # D5/D6 adopt from D4 rather than running their own worker.
+    assert run.stage("D5").metrics["source_stage"] == "D4"
+    assert run.stage("D6").metrics["source_stage"] == "D4"
+    assert run.stage("D5").metrics["hard_gate_passed"] is True
+    assert run.stage("D6").metrics["adopted_artifacts"] >= 1
+
+
+def test_d6_adoption_fails_closed_when_an_adopted_report_did_not_pass_its_gate(
+    tmp_path: Path,
+) -> None:
+    """_adopt_d4_output reads gate_passed out of each adopted JSON report and
+    must refuse to approve when one is false -- otherwise a failed skinning
+    check would be silently promoted into an approved stage."""
+
+    class FailedSkinningWorker(FakeWorkerExecutor):
+        def _op_blender_propose_short_biped_rig(self, request, output_root):
+            outputs, diagnostics = super()._op_blender_propose_short_biped_rig(request, output_root)
+            for output in outputs:
+                if output.role == "skinning_report":
+                    Path(output.path).write_text(
+                        json.dumps({"gate_passed": False, "reason": "collapsed shoulder"}),
+                        encoding="utf-8",
+                    )
+            return outputs, diagnostics
+
+    store = StudioStore(tmp_path)
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        coordinator = StudioCoordinator(
+            store,
+            qwen_factory=lambda run: FakeQwen(),
+            comfy_factory=lambda run: FakeComfy(),
+            worker_executor=FailedSkinningWorker(),
+            executor=executor,
+        )
+        store.create("d6-gate-v1", DESCRIPTION)
+        coordinator.submit("d6-gate-v1")
+        _approve_gate(store, coordinator, "d6-gate-v1", "D1")
+        _approve_gate(store, coordinator, "d6-gate-v1", "D4")
+        run = _wait_for_stage_settled(store, "d6-gate-v1", "D6")
+
+    d6 = run.stage("D6")
+    assert d6.state == "failed"
+    assert "hard gate" in (d6.error or "")
+    # D5 adopts a different role set, so it is unaffected by the skinning failure.
+    assert run.stage("D5").state == "approved"
+
+
+def test_a_deformable_character_runs_the_whole_chain_end_to_end(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The full character path, the counterpart to the static-prop chain.
+    Unlike a prop this runs every stage, and D7/D9/D10 all drive the
+    resumable motion chain (adapters/run_motion_candidate_pipeline.py) via
+    the script_runner seam with progressively later --stop-after points.
+
+    Four human gates: D1 concept, D4 rig, D7 motion, D8 surface -- then D10
+    parks awaiting the final ship approval, which is the correct successful
+    end of a run rather than an auto-approval."""
+    monkeypatch.setattr(
+        "darkness.studio_pipeline.load_local_config",
+        lambda *a, **k: _machine_config_with_blender(tmp_path),
+    )
+    store = StudioStore(tmp_path)
+    scripts = FakeScriptRunner()
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        coordinator = StudioCoordinator(
+            store,
+            qwen_factory=lambda run: FakeQwen(),
+            comfy_factory=lambda run: FakeComfy(),
+            worker_executor=FakeWorkerExecutor(),
+            script_runner=scripts,
+            executor=executor,
+        )
+        store.create("character-chain-v1", DESCRIPTION)
+        coordinator.submit("character-chain-v1")
+        for gate in ("D1", "D4", "D7", "D8"):
+            _approve_gate(store, coordinator, "character-chain-v1", gate)
+        run = _wait_for_stage_settled(store, "character-chain-v1", "D10")
+
+    for stage_id in ("D0", "D1", "D2", "D3", "D4", "D5", "D6", "D7", "D8", "D9"):
+        assert run.stage(stage_id).state == "approved", f"{stage_id}: {run.stage(stage_id).error}"
+    assert run.stage("D10").state == "awaiting_review", run.stage("D10").error
+    # Nothing is skipped for a deformable character -- the exact opposite of the prop.
+    assert not any(item.state == "skipped" for item in run.stages)
+    # The motion chain was resumed at progressively later stop points.
+    stop_points = [
+        cmd[cmd.index("--stop-after") + 1]
+        for cmd in scripts.commands
+        if "--stop-after" in cmd
+    ]
+    assert stop_points == ["retarget_qwen_review", "sprite_qwen_review", "unity_smoke_bundle"]
+
+
+CHAIR_DESCRIPTION = (
+    "An original sturdy oak dining chair with a straight slatted back and four tapered legs."
+)
+
+
+def chair_spec() -> StudioAssetSpec:
+    return StudioAssetSpec(
+        asset_id="oak_chair",
+        title="Original Oak Chair",
+        description=CHAIR_DESCRIPTION,
+        creative_direction="Readable original cottage furniture, no franchise motifs.",
+        asset_kind="prop",
+        behavior="static",
+        anatomy_family=None,
+        height_m=0.9,
+        dimensions_m=[0.45, 0.9, 0.45],
+        silhouette=["straight slatted back", "four tapered legs"],
+        materials=["oak wood"],
+        animations=[],
+        locked_features=["four legs", "slatted back"],
+        negative_constraints=["no copied franchise motifs"],
+        gameplay_readability=["silhouette reads at prop scale"],
+    )
+
+
+class ChairQwen(FakeQwen):
+    """FakeQwen for a static prop: compiles the chair spec and reviews its
+    surface, with none of the character-specific equipment handling."""
+
+    def compile_spec(self, description):
+        return chair_spec()
+
+    def concept_plan(self, spec, stage):
+        return ConceptPlan(
+            positive_prompt="A " * 45 + "original oak dining chair, straight slatted back, four legs.",
+            negative_prompt="people, characters, weapons, copied design",
+            seeds=[701 + stage.iteration, 802 + stage.iteration],
+            rationale="Two deterministic seeds for a static prop.",
+        )
+
+    def revision_plan(self, spec, stage):
+        from darkness.studio_qwen import RevisionPlan
+
+        return RevisionPlan(
+            diagnosis="Surface reads acceptably at prop scale.",
+            changes=["No further change required."],
+            preserve=["Leg taper."],
+        )
+
+
+# _run_motion_chain requires this exact CC0 clip under the configured
+# workspace_root before it will retarget anything. The path is hardcoded in
+# studio_pipeline.py rather than resolved through darkness/motion_library.py
+# -- see the motion-library gap noted in the README.
+_MOTION_SOURCE_RELATIVE = Path(
+    "sources"
+) / "quaternius_universal_animation_library_standard" / "Universal Animation Library[Standard]" / "Unreal-Godot" / "UAL1_Standard.glb"
+
+
+def _machine_config_with_blender(tmp_path: Path) -> DarknessLocalConfig:
+    """A realistic machine config for tests that reach D7/D8/D9.
+
+    D8 resolves the configured Blender executable, and D7's motion chain
+    requires the qualified CC0 motion clip to exist. Both checks are correct
+    production behavior and are deliberately NOT bypassed here; the test
+    supplies real (if inert) files so the resolution genuinely succeeds
+    rather than being stubbed out."""
+    blender = tmp_path / "blender.exe"
+    blender.write_bytes(b"inert-blender-stand-in")
+    motion_source = tmp_path / _MOTION_SOURCE_RELATIVE
+    motion_source.parent.mkdir(parents=True, exist_ok=True)
+    _synthetic_mesh(motion_source)
+    return DarknessLocalConfig(
+        workspace_root=str(tmp_path),
+        workers={"blender": WorkerBinding(command_prefix=[str(blender)], environment={})},
+    )
+
+
+def test_a_static_prop_runs_the_whole_chain_end_to_end(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The 'ask for a chair, get a chair' path, as far as it can be driven
+    without a GPU. A static prop skips D4-D7 entirely (no skeleton, rig,
+    skin, or motion), so the real chain is D0 -> D1 -> D2 -> D3 -> D8 -> D9
+    -> D10. This exercises both subprocess boundaries at once: the typed
+    worker protocol (D2/D3/D9) through worker_executor, and the adapters/
+    helper scripts (D8's bake and review) through script_runner.
+
+    Until now the prop path was only proven at D0 -- that its stage-skip
+    logic computed the right states. This proves the stages that remain
+    actually run for a non-character asset."""
+    monkeypatch.setattr(
+        "darkness.studio_pipeline.load_local_config",
+        lambda *a, **k: _machine_config_with_blender(tmp_path),
+    )
+    store = StudioStore(tmp_path)
+    worker = FakeWorkerExecutor()
+    scripts = FakeScriptRunner()
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        coordinator = StudioCoordinator(
+            store,
+            qwen_factory=lambda run: ChairQwen(),
+            comfy_factory=lambda run: FakeComfy(),
+            worker_executor=worker,
+            script_runner=scripts,
+            executor=executor,
+        )
+        store.create("chair-v1", CHAIR_DESCRIPTION)
+        coordinator.submit("chair-v1")
+        _approve_gate(store, coordinator, "chair-v1", "D1")
+        _approve_gate(store, coordinator, "chair-v1", "D8")
+        run = _wait_for_stage_settled(store, "chair-v1", "D10")
+
+    assert run.spec.asset_kind == "prop"
+    # The articulation stages are skipped, not run and not failed.
+    for stage_id in ("D4", "D5", "D6", "D7"):
+        assert run.stage(stage_id).state == "skipped", stage_id
+    # Everything a static prop genuinely needs actually ran.
+    for stage_id in ("D0", "D1", "D2", "D3", "D8", "D9"):
+        assert run.stage(stage_id).state == "approved", f"{stage_id}: {run.stage(stage_id).error}"
+    assert run.stage("D10").state == "awaiting_review", run.stage("D10").error
+
+    # D9 rendered a real delivery board and hash-bound manifest for the prop.
+    assert run.stage("D9").metrics["automatic_gate_passed"] is True
+    assert any(item.metrics.get("role") == "delivery_manifest" for item in run.stage("D9").evidence)
+    # D10 built a runtime manifest that still demands human approval.
+    manifest_item = next(
+        item for item in run.stage("D10").evidence if item.media_type == "application/json"
+    )
+    manifest = json.loads(
+        store.artifact_path("chair-v1", manifest_item.relative_path).read_text(encoding="utf-8")
+    )
+    assert manifest["asset_kind"] == "prop"
+    assert manifest["human_approved"] is False
+    assert manifest["human_approval_required"] is True
+    # The prop never asked for a rig, and D8's bake really did run.
+    assert not any(
+        item.operation_id == "blender.propose_short_biped_rig" for item in worker.requests
+    )
+    assert any("bake_darkness_surface.py" in " ".join(cmd) for cmd in scripts.commands)
 
 
 def test_d2_survives_a_studio_workspace_that_differs_from_config_workspace_root(

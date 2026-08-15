@@ -356,6 +356,7 @@ class StudioCoordinator:
         qwen_factory=None,
         comfy_factory=None,
         worker_executor=None,
+        script_runner=None,
         executor: ThreadPoolExecutor | None = None,
     ) -> None:
         self.store = store
@@ -370,6 +371,12 @@ class StudioCoordinator:
         # test supplies a callable(worker_id, request, *, timeout_seconds) ->
         # ExternalWorkerResponse instead, exactly like FakeQwen/FakeComfy.
         self._worker_executor = worker_executor
+        # The second, separate subprocess boundary: helper scripts under
+        # adapters/ invoked directly (D7's motion chain, D8's surface bake and
+        # review, D2's GLB diagnostic) rather than through the typed worker
+        # protocol. None means the real subprocess.run. A test supplies a
+        # callable(command, *, timeout) -> CompletedProcess-like.
+        self._script_runner = script_runner
         self._executor = executor or ThreadPoolExecutor(max_workers=1, thread_name_prefix="darkness-studio")
         self._owns_executor = executor is None
         self._lock = threading.Lock()
@@ -1563,6 +1570,14 @@ class StudioCoordinator:
             return self.store.artifact_path(run.run_id, item.relative_path)
         raise RuntimeError(f"{stage_id} has no evidence matching media_type={media_type!r}, role={role!r}")
 
+    def _run_script(self, command: list[str], *, timeout: float):
+        """Run one adapters/ helper script. Goes through the injected
+        script_runner when there is one, so a test can substitute the
+        Blender/ComfyUI-dependent scripts without also faking the
+        dependency-light ones it can legitimately run for real."""
+        runner = self._script_runner or subprocess.run
+        return runner(command, text=True, capture_output=True, timeout=timeout)
+
     def _workspace_relative(self, path: Path) -> str:
         """Workspace-relative blob_path for an artifact record.
 
@@ -1712,10 +1727,8 @@ class StudioCoordinator:
         self._progress(run, "D2", 0.78, "Building deterministic four-view geometry evidence.")
         diagnostic = attempt_root / "geometry_diagnostic.png"
         script = Path(__file__).resolve().parents[1] / "adapters" / "render_glb_diagnostic.py"
-        completed = subprocess.run(
+        completed = self._run_script(
             [sys.executable, str(script), "--input", str(geometry_output), "--output", str(diagnostic)],
-            text=True,
-            capture_output=True,
             timeout=300,
         )
         if completed.returncode != 0 or not diagnostic.is_file():
@@ -2205,12 +2218,7 @@ class StudioCoordinator:
             "--stop-after",
             stop_after,
         ]
-        completed = subprocess.run(
-            command,
-            text=True,
-            capture_output=True,
-            timeout=timeout_seconds,
-        )
+        completed = self._run_script(command, timeout=timeout_seconds)
         if completed.returncode != 0:
             raise RuntimeError(
                 f"resumable D7-D10 chain failed at {stop_after}: "
@@ -2387,14 +2395,12 @@ class StudioCoordinator:
         ]
         if latest_rejection is not None:
             command.append("--force")
-        completed = subprocess.run(command, text=True, capture_output=True, timeout=3600)
+        completed = self._run_script(command, timeout=3600)
         if completed.returncode != 0:
             raise RuntimeError(f"D8 surface bake failed: {(completed.stdout + completed.stderr)[-5000:]}")
         review_script = Path(__file__).resolve().parents[1] / "adapters" / "review_surface_master.py"
-        reviewed = subprocess.run(
+        reviewed = self._run_script(
             [sys.executable, str(review_script), "--surface-directory", str(surface), "--model", run.model],
-            text=True,
-            capture_output=True,
             timeout=300,
         )
         if reviewed.returncode != 0:
