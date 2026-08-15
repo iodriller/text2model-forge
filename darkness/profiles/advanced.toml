@@ -15,7 +15,12 @@ enabled = true
 mode = "advise"                       # still proposes only; "auto" applies without a human look
 
 # Higher-fidelity geometry and larger diagnostic renders, at the cost of time.
+# The standard Hunyuan3D checkpoint (~6GB) and a finer octree still fit in 8GB;
+# raise octree_resolution before anything else if the mesh looks blobby.
 [stages.D2]
+checkpoint = "hunyuan3d-dit-v2.safetensors"
+octree_resolution = 384
+steps = 75
 decimation_target = 500000
 texture_size = 4096
 

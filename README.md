@@ -10,12 +10,16 @@ where the `darkness` compiler and the older `assetforge` sprite renderer it reus
 were originally built. It is still used there, now as a pinned dependency rather
 than embedded game code.
 
+**Runs free and local on an 8 GB GPU.** Concept art through SDXL, image-to-3D
+through ComfyUI's native Hunyuan3D-2 (~5 GB), rigging through MIT-licensed
+UniRig. No API keys. See [docs/free-local-8gb-setup.md](docs/free-local-8gb-setup.md).
+
 ## The pipeline
 
 ```
 D0  Brief                    -- your description, compiled to a typed spec
-D1  Concept            [gate] -- 2D turnaround art (text -> 2D)
-D2  3D generation             -- candidate geometry (2D -> 3D)
+D1  Concept            [gate] -- 2D concept art (text -> 2D). Retry/edit here.
+D2  3D generation             -- the image YOU APPROVED becomes the mesh (2D -> 3D)
 D3  Cleanup                   -- topology repair, retopology
 D4  Canonical structure [gate] -- landmarks, skeleton
 D5  Rig / articulation         -- bones, joints

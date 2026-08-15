@@ -582,26 +582,118 @@ class StudioComfyClient:
         destination.mkdir(parents=True, exist_ok=True)
         outputs = []
         for node in history.get("outputs", {}).values():
-            for image in node.get("images", []):
-                query = urllib.parse.urlencode(
-                    {
-                        "filename": image["filename"],
-                        "subfolder": image.get("subfolder", ""),
-                        "type": image.get("type", "output"),
-                    }
-                )
-                target = destination / Path(image["filename"]).name
-                try:
-                    with urllib.request.urlopen(
-                        self.base_url + "/view?" + query, timeout=self.timeout
-                    ) as response:
-                        target.write_bytes(response.read())
-                except (urllib.error.URLError, TimeoutError) as exc:
-                    raise StudioComfyError(f"could not download {image['filename']}: {exc}") from exc
-                outputs.append(target)
+            # Collect every downloadable artifact, not just "images". A 3D node
+            # (Hunyuan3D's SaveGLB) reports its mesh under a different key --
+            # "meshes"/"result"/"3d" depending on the node -- so key off the
+            # shape of the record instead of a hardcoded list. Filtering on
+            # "images" alone silently dropped every mesh ComfyUI produced.
+            for records in node.values():
+                if not isinstance(records, list):
+                    continue
+                for record in records:
+                    if not isinstance(record, dict) or "filename" not in record:
+                        continue
+                    query = urllib.parse.urlencode(
+                        {
+                            "filename": record["filename"],
+                            "subfolder": record.get("subfolder", ""),
+                            "type": record.get("type", "output"),
+                        }
+                    )
+                    target = destination / Path(record["filename"]).name
+                    try:
+                        with urllib.request.urlopen(
+                            self.base_url + "/view?" + query, timeout=self.timeout
+                        ) as response:
+                            target.write_bytes(response.read())
+                    except (urllib.error.URLError, TimeoutError) as exc:
+                        raise StudioComfyError(
+                            f"could not download {record['filename']}: {exc}"
+                        ) from exc
+                    outputs.append(target)
         if not outputs:
-            raise StudioComfyError("ComfyUI completed without images")
+            raise StudioComfyError("ComfyUI completed without any downloadable output")
         return outputs
+
+
+def hunyuan3d_workflow(
+    *,
+    image: str,
+    prefix: str,
+    seed: int,
+    checkpoint: str = "hunyuan3d-dit-v2-mini.safetensors",
+    steps: int = 50,
+    cfg: float = 5.0,
+    octree_resolution: int = 256,
+    guidance_scale: float = 5.0,
+) -> dict[str, Any]:
+    """Single-image to 3D mesh using ComfyUI's NATIVE Hunyuan3D-2 support.
+
+    This is the free, 8GB-class replacement for TRELLIS.2-4B, which needs
+    16-24GB and therefore cannot run on a consumer laptop GPU at all. The
+    mini checkpoint needs roughly 5GB for shape generation; the standard one
+    about 6GB. No custom nodes are required -- ComfyUI ships these classes.
+
+    `image` is the name returned by ComfyClient.upload_image(), so the mesh
+    is generated from an image the human already approved rather than from a
+    fresh render of a text prompt. That is the whole point: the approved 2D
+    concept IS the 3D input.
+
+    Texture generation is deliberately not requested here. ComfyUI's native
+    support covers shape only, and the full shape+texture path needs ~12GB.
+    Surface work stays in D8 where the pipeline already handles it.
+    """
+    return {
+        "1": {
+            "class_type": "ImageOnlyCheckpointLoader",
+            "inputs": {"ckpt_name": checkpoint},
+        },
+        "2": {"class_type": "LoadImage", "inputs": {"image": image}},
+        "3": {
+            "class_type": "Hunyuan3Dv2Conditioning",
+            "inputs": {"clip_vision_output": ["1", 1], "image": ["2", 0]},
+        },
+        "4": {
+            "class_type": "EmptyLatentHunyuan3Dv2",
+            "inputs": {"resolution": octree_resolution, "batch_size": 1},
+        },
+        "5": {
+            "class_type": "ModelSamplingAuraFlow",
+            "inputs": {"model": ["1", 0], "shift": 1.0},
+        },
+        "6": {
+            "class_type": "KSampler",
+            "inputs": {
+                "model": ["5", 0],
+                "positive": ["3", 0],
+                "negative": ["3", 1],
+                "latent_image": ["4", 0],
+                "seed": seed,
+                "steps": steps,
+                "cfg": cfg,
+                "sampler_name": "euler",
+                "scheduler": "normal",
+                "denoise": 1.0,
+            },
+        },
+        "7": {
+            "class_type": "VAEDecodeHunyuan3D",
+            "inputs": {
+                "samples": ["6", 0],
+                "vae": ["1", 2],
+                "num_chunks": 8000,
+                "octree_resolution": octree_resolution,
+            },
+        },
+        "8": {
+            "class_type": "VoxelToMeshBasic",
+            "inputs": {"voxel": ["7", 0], "threshold": 0.6},
+        },
+        "9": {
+            "class_type": "SaveGLB",
+            "inputs": {"mesh": ["8", 0], "filename_prefix": prefix},
+        },
+    }
 
 
 def make_chroma_alpha(source: Path, output: Path) -> dict[str, float | int | bool]:

@@ -75,14 +75,29 @@ sprite_views = 8
 # consumed lives in [adapter_defaults] at the bottom instead of pretending
 # to be pipeline configuration.
 
-[stages.D2]                           # WIRED -- 3D generation
-# The worker that turns the RGBA concept seed into geometry. This is
-# trellis2.4b, NOT canonical.short_biped -- the latter is the deterministic
-# procedural fallback worker, used by `darkness run-worker`, never by D2.
+[stages.D2]                           # WIRED -- image-to-3D
+# D2 turns the concept image YOU APPROVED at D1 into a mesh. The approved
+# image is the input; D2 does not render a new one.
+#
+# backend = "hunyuan3d" uses ComfyUI's native Hunyuan3D-2 support: no custom
+# nodes, ~5GB VRAM for the mini checkpoint and ~6GB for the standard one.
+# That is what makes this step reachable on an 8GB consumer GPU at all --
+# TRELLIS.2-4B needs 16-24GB and simply cannot run there.
+#
+# Set backend to a worker id ("trellis2.4b", "triposg.1.5b",
+# "canonical.short_biped") to route through the typed subprocess worker
+# protocol instead, on a machine with the VRAM for it.
+backend = "hunyuan3d"
+checkpoint = "hunyuan3d-dit-v2-mini.safetensors"   # or hunyuan3d-dit-v2.safetensors (~6GB)
+steps = 50
+cfg = 5.0
+octree_resolution = 256               # 128 is faster/coarser, 384 finer and slower
+seed = 7132026
+timeout_seconds = 1800
+# Only read when backend is a subprocess worker, not for hunyuan3d:
 worker_id = "trellis2.4b"
 decimation_target = 300000
 texture_size = 2048
-timeout_seconds = 1800
 
 [stages.D3]                           # WIRED -- Blender cleanup
 render_size = 512

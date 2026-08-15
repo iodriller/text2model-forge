@@ -21,6 +21,7 @@ from .schemas import ArtifactLineage, ArtifactRecord, AssetStage, ExternalWorker
 from .studio_comfy import (
     StudioComfyClient,
     concept_workflow,
+    hunyuan3d_workflow,
     inpaint_workflow,
     make_chroma_alpha,
     make_humanoid_openpose_guide,
@@ -1679,29 +1680,27 @@ class StudioCoordinator:
         if run.spec is None:
             raise RuntimeError("D2 requires the compiled specification")
         selected_concept = self._selected_evidence_path(run, "D1")
-        self._begin(run, "D2", "Qwen is translating the approved identity into a riggable geometry seed.")
-        qwen = self._qwen_factory(run)
-        plan = qwen.geometry_seed_plan(run.spec, stage, selected_concept)
+        self._begin(run, "D2", "Turning the approved concept image into 3D geometry.")
         attempt_root = self.store.run_root(run.run_id) / "D2_geometry" / f"iteration-{stage.iteration:02d}"
-        _write_json(attempt_root / "qwen_geometry_seed_plan.json", plan.model_dump(mode="json"))
+        settings = self._stage_settings(run, "D2")
         comfy = self._comfy_factory(run)
         self._register_comfy(run.run_id, comfy)
-        if run.checkpoint not in comfy.checkpoints():
-            raise RuntimeError(f"required ComfyUI checkpoint is not installed: {run.checkpoint}")
-        self._progress(run, "D2", 0.08, "ComfyUI is rendering the unarmed A-pose geometry seed.")
-        workflow = concept_workflow(
-            checkpoint=run.checkpoint,
-            positive=plan.positive_prompt,
-            negative=plan.negative_prompt,
-            seed=plan.seed,
-            prefix=f"DarknessStudio/{run.run_id}/geometry/i{stage.iteration:02d}",
-            steps=run.concept_steps,
-            cfg=run.concept_cfg,
-        )
-        raw_seed = comfy.generate(workflow=workflow, destination=attempt_root / "seed")[0]
+        # The image the human approved at D1 IS the image-to-3D input. It is
+        # only background-keyed to RGBA first, because every image-to-3D model
+        # needs the subject isolated from its background. D2 used to discard
+        # the approved image and render a brand new one from a text prompt,
+        # which meant "text -> 2D -> 3D" was never actually a chain: the mesh
+        # came from an image nobody had reviewed.
+        self._progress(run, "D2", 0.08, "Keying the approved concept to RGBA for image-to-3D.")
         rgba_seed = attempt_root / "geometry_seed_rgba.png"
-        alpha_metrics = make_chroma_alpha(raw_seed, rgba_seed)
-        alpha_metrics.update({"seed": plan.seed, "iteration": stage.iteration})
+        alpha_metrics = make_chroma_alpha(selected_concept, rgba_seed)
+        alpha_metrics.update(
+            {
+                "iteration": stage.iteration,
+                "source_evidence": "d1_approved_concept",
+                "source_sha256": sha256_file(selected_concept),
+            }
+        )
         self.store.evidence(
             run,
             "D2",
@@ -1711,53 +1710,92 @@ class StudioCoordinator:
             media_type="image/png",
             metrics=alpha_metrics,
         )
-        self._progress(run, "D2", 0.2, "TRELLIS.2 is generating the 3D candidate from owned RGBA input.")
-        artifact_id = f"{run.spec.asset_id}.d2.seed.i{stage.iteration:02d}"
-        digest = sha256_file(rgba_seed)
-        artifact = ArtifactRecord(
-            artifact_id=artifact_id,
-            sha256=digest,
-            size_bytes=rgba_seed.stat().st_size,
-            media_type="image/png",
-            stage=AssetStage.concept,
-            blob_path=self._workspace_relative(rgba_seed),
-            created_at=datetime.now(timezone.utc),
-            lineage=ArtifactLineage(
+        backend = str(settings.get("backend", "hunyuan3d"))
+        geometry_seed = int(settings.get("seed", 7132026))
+        if backend == "hunyuan3d":
+            # Native ComfyUI Hunyuan3D-2: ~5GB (mini) to 6GB (standard) for
+            # shape, versus 16-24GB for TRELLIS.2-4B. This is what makes the
+            # image-to-3D step reachable on a consumer laptop GPU at all.
+            self._progress(run, "D2", 0.2, "Hunyuan3D is generating the mesh from the approved concept.")
+            uploaded = comfy.upload_image(
+                f"{run.run_id}_d2_i{stage.iteration:02d}_rgba.png",
+                rgba_seed.read_bytes(),
+            )
+            workflow = hunyuan3d_workflow(
+                image=uploaded,
+                prefix=f"DarknessStudio/{run.run_id}/geometry/i{stage.iteration:02d}",
+                seed=geometry_seed,
+                checkpoint=str(settings.get("checkpoint", "hunyuan3d-dit-v2-mini.safetensors")),
+                steps=int(settings.get("steps", 50)),
+                cfg=float(settings.get("cfg", 5.0)),
+                octree_resolution=int(settings.get("octree_resolution", 256)),
+            )
+            produced = comfy.generate(
+                workflow=workflow,
+                destination=attempt_root / "hunyuan3d",
+                timeout_seconds=float(settings.get("timeout_seconds", 1800)),
+            )
+            geometry_output = next(
+                (item for item in produced if item.suffix.lower() in {".glb", ".gltf"}), None
+            )
+            if geometry_output is None:
+                raise RuntimeError(
+                    "Hunyuan3D produced no GLB. Check that ComfyUI has the Hunyuan3D checkpoint "
+                    f"installed in models/checkpoints/ (got: {[p.name for p in produced]})"
+                )
+            worker_diagnostics: dict[str, object] = {
+                "backend": "hunyuan3d",
+                "octree_resolution": int(settings.get("octree_resolution", 256)),
+            }
+        else:
+            # Typed subprocess worker (TRELLIS.2, TripoSG, the procedural
+            # fallback). Kept for machines with the VRAM for it.
+            artifact_id = f"{run.spec.asset_id}.d2.seed.i{stage.iteration:02d}"
+            digest = sha256_file(rgba_seed)
+            artifact = ArtifactRecord(
                 artifact_id=artifact_id,
-                artifact_sha256=digest,
-                stage=AssetStage.concept.value,
-                source_license_ids=["user-authored", "project-generated"],
-            ),
-            metadata={"meaningful_alpha": True, "studio_run_id": run.run_id},
-        )
-        output_root = attempt_root / "trellis2"
-        settings = self._stage_settings(run, "D2")
-        request = ExternalWorkerRequest(
-            job_id=f"studio.{run.run_id}.d2.i{stage.iteration:02d}",
-            run_id=run.run_id,
-            operation_id="geometry.generate_from_rgba",
-            stage=AssetStage.geometry,
-            inputs=[artifact],
-            input_paths={artifact_id: str(rgba_seed)},
-            parameters={
-                "seed": plan.seed,
-                "decimation_target": settings.get("decimation_target", 300000),
-                "texture_size": settings.get("texture_size", 2048),
-                "remesh": True,
-            },
-            output_directory=str(output_root),
-        )
-        response = self._execute_worker(
-            settings.get("worker_id", "trellis2.4b"),
-            request,
-            timeout_seconds=settings.get("timeout_seconds", 1800),
-        )
-        geometry_output = next(
-            (Path(item.path) for item in response.outputs if item.media_type == "model/gltf-binary"),
-            None,
-        )
-        if geometry_output is None:
-            raise RuntimeError("TRELLIS.2 returned no GLB candidate")
+                sha256=digest,
+                size_bytes=rgba_seed.stat().st_size,
+                media_type="image/png",
+                stage=AssetStage.concept,
+                blob_path=self._workspace_relative(rgba_seed),
+                created_at=datetime.now(timezone.utc),
+                lineage=ArtifactLineage(
+                    artifact_id=artifact_id,
+                    artifact_sha256=digest,
+                    stage=AssetStage.concept.value,
+                    source_license_ids=["user-authored", "project-generated"],
+                ),
+                metadata={"meaningful_alpha": True, "studio_run_id": run.run_id},
+            )
+            self._progress(run, "D2", 0.2, f"{backend} is generating the 3D candidate from the approved RGBA input.")
+            request = ExternalWorkerRequest(
+                job_id=f"studio.{run.run_id}.d2.i{stage.iteration:02d}",
+                run_id=run.run_id,
+                operation_id="geometry.generate_from_rgba",
+                stage=AssetStage.geometry,
+                inputs=[artifact],
+                input_paths={artifact_id: str(rgba_seed)},
+                parameters={
+                    "seed": geometry_seed,
+                    "decimation_target": settings.get("decimation_target", 300000),
+                    "texture_size": settings.get("texture_size", 2048),
+                    "remesh": True,
+                },
+                output_directory=str(attempt_root / backend),
+            )
+            response = self._execute_worker(
+                str(settings.get("worker_id", backend)),
+                request,
+                timeout_seconds=settings.get("timeout_seconds", 1800),
+            )
+            geometry_output = next(
+                (Path(item.path) for item in response.outputs if item.media_type == "model/gltf-binary"),
+                None,
+            )
+            if geometry_output is None:
+                raise RuntimeError(f"{backend} returned no GLB candidate")
+            worker_diagnostics = dict(response.diagnostics)
         self._progress(run, "D2", 0.78, "Building deterministic four-view geometry evidence.")
         diagnostic = attempt_root / "geometry_diagnostic.png"
         script = Path(__file__).resolve().parents[1] / "adapters" / "render_glb_diagnostic.py"
@@ -1773,7 +1811,7 @@ class StudioCoordinator:
         meshes = [item for item in loaded.geometry.values() if isinstance(item, trimesh.Trimesh)]
         mesh = trimesh.util.concatenate(meshes)
         metrics: dict[str, object] = {
-            **response.diagnostics,
+            **worker_diagnostics,
             "vertices": int(len(mesh.vertices)),
             "faces": int(len(mesh.faces)),
             "watertight": bool(mesh.is_watertight),
@@ -1788,7 +1826,7 @@ class StudioCoordinator:
             "D2",
             geometry_output,
             evidence_id=f"d2-i{stage.iteration:02d}-glb",
-            label=f"TRELLIS.2 geometry candidate, iteration {stage.iteration}",
+            label=f"Geometry candidate from the approved concept, iteration {stage.iteration}",
             media_type="model/gltf-binary",
             metrics=metrics,
         )
@@ -1802,6 +1840,7 @@ class StudioCoordinator:
             metrics={**metrics, "iteration": stage.iteration},
         )
         self._progress(run, "D2", 0.88, "Qwen is comparing the mesh against the approved identity and numeric gates.")
+        qwen = self._qwen_factory(run)
         review, qwen_passed = qwen.review_geometry(
             run.spec,
             stage,

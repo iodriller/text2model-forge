@@ -202,6 +202,10 @@ class FakeComfy:
     def generate(self, *, workflow, destination: Path, timeout_seconds=900):
         self.workflows.append(workflow)
         destination.mkdir(parents=True, exist_ok=True)
+        # A workflow ending in SaveGLB produces a mesh, not an image -- mirror
+        # real ComfyUI, where Hunyuan3D writes a .glb rather than a .png.
+        if any(node["class_type"] == "SaveGLB" for node in workflow.values()):
+            return [_synthetic_mesh(destination / "hunyuan3d_mesh.glb")]
         target = destination / "concept.png"
         # An edge-connected green border around a non-green center, so this
         # image is also valid input to make_chroma_alpha() (D2's geometry
@@ -1479,65 +1483,115 @@ def test_d2_geometry_generation_runs_end_to_end_through_a_fake_worker(tmp_path: 
     assert d2.metrics["faces"] == 5120
     assert d2.metrics["watertight"] is True
     assert d2.metrics["hard_gate_passed"] is True
-    assert worker.requests[0].operation_id == "geometry.generate_from_rgba"
+    assert d2.metrics["backend"] == "hunyuan3d"
+    # The default backend is native ComfyUI, so D2 itself runs no subprocess
+    # worker. Later stages (D3 onward) legitimately still do.
+    assert not any(item.operation_id == "geometry.generate_from_rgba" for item in worker.requests)
     glb_evidence = [item for item in d2.evidence if item.media_type == "model/gltf-binary"]
     assert len(glb_evidence) == 1
 
 
-def test_d2_geometry_seed_render_uses_the_runs_configured_quality(tmp_path: Path) -> None:
-    """D2's geometry-seed render honors the run's resolved quality tier, the
-    same as D1's concept render -- this exercises D2's own concept_workflow()
-    call site, which is a separate one from D1's.
+def test_d2_generates_the_mesh_from_the_image_the_human_approved(tmp_path: Path) -> None:
+    """The whole text -> 2D -> 3D chain, and the bug that used to break it.
 
-    (Named for what it asserts: this is run-level quality config, NOT the
-    per-attempt retry/edit seed override -- D2 has no human gate, so a
-    stage-level override can never reach it through the review flow.)
+    D2 previously fed the approved concept to Qwen only as context for a text
+    prompt, rendered a BRAND NEW image from that prompt, and sent that to the
+    3D model. So the mesh came from an image nobody had reviewed, and
+    approving a concept had no effect on the geometry. D2 must now key the
+    approved image itself to RGBA and hand exactly that to image-to-3D.
     """
     store = StudioStore(tmp_path)
-    qwen = FakeQwen()
     comfy = FakeComfy()
-    worker = FakeWorkerExecutor()
     with ThreadPoolExecutor(max_workers=1) as executor:
         coordinator = StudioCoordinator(
             store,
-            qwen_factory=lambda run: qwen,
+            qwen_factory=lambda run: FakeQwen(),
             comfy_factory=lambda run: comfy,
+            worker_executor=FakeWorkerExecutor(),
+            executor=executor,
+        )
+        store.create("d2-chain-v1", DESCRIPTION)
+        coordinator.submit("d2-chain-v1")
+        first = wait_for(store, "d2-chain-v1", "awaiting_review")
+        approved = next(
+            item for item in first.stage("D1").evidence if item.metrics.get("selectable") is True
+        )
+        store.decide("d2-chain-v1", "D1", "approve", "Looks good.", approved.evidence_id)
+        coordinator.submit("d2-chain-v1")
+        run = _wait_for_stage_settled(store, "d2-chain-v1", "D2")
+
+    d2 = run.stage("D2")
+    assert d2.state == "approved", d2.error
+
+    rgba = next(item for item in d2.evidence if item.evidence_id.endswith("rgba-seed"))
+    assert rgba.metrics["source_evidence"] == "d1_approved_concept"
+    assert rgba.metrics["source_sha256"] == approved.sha256
+
+    # Compare actual pixels, not just the recorded provenance. A metric can be
+    # mislabelled -- an earlier version of this test asserted only on
+    # source_sha256 and passed even when D2 was keying a freshly rendered
+    # image, because that field was populated from the approved concept
+    # regardless of what was really used. make_chroma_alpha is deterministic,
+    # so re-keying the approved concept here must reproduce D2's RGBA byte for
+    # byte; keying anything else cannot.
+    from darkness.studio_comfy import make_chroma_alpha as _key
+
+    expected = tmp_path / "expected_rgba.png"
+    _key(store.artifact_path("d2-chain-v1", approved.relative_path), expected)
+    actual = store.artifact_path("d2-chain-v1", rgba.relative_path)
+    assert actual.read_bytes() == expected.read_bytes(), (
+        "D2's RGBA input does not match a chroma-key of the approved concept, "
+        "so the mesh derives from some other image"
+    )
+
+    # D2 submitted an image-to-3D graph, not another text-to-image one.
+    mesh_workflows = [
+        w for w in comfy.workflows if any(n["class_type"] == "SaveGLB" for n in w.values())
+    ]
+    assert len(mesh_workflows) == 1, "D2 must submit exactly one image-to-3D workflow"
+    classes = {n["class_type"] for n in mesh_workflows[0].values()}
+    assert "LoadImage" in classes, "the workflow must consume an uploaded image"
+    assert "Hunyuan3Dv2Conditioning" in classes
+    assert "EmptyLatentImage" not in classes, "an image-to-3D graph must not start from an empty latent"
+
+
+def test_d2_backend_is_configurable_back_to_a_subprocess_worker(tmp_path: Path) -> None:
+    """Machines with the VRAM for TRELLIS.2 can still route D2 through the
+    typed worker protocol by setting [stages.D2].backend."""
+    store = StudioStore(tmp_path)
+    worker = FakeWorkerExecutor()
+    profiles = tmp_path / "profiles"
+    profiles.mkdir(parents=True, exist_ok=True)
+    (profiles / "base.toml").write_text(
+        '[stages.D2]\nbackend = "trellis2.4b"\nworker_id = "trellis2.4b"\n', encoding="utf-8"
+    )
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        coordinator = StudioCoordinator(
+            store,
+            qwen_factory=lambda run: FakeQwen(),
+            comfy_factory=lambda run: FakeComfy(),
             worker_executor=worker,
             executor=executor,
         )
-        store.create("d2-seed-v1", DESCRIPTION, {"concept_steps": 45, "concept_cfg": 7.0})
-        coordinator.submit("d2-seed-v1")
-        first = wait_for(store, "d2-seed-v1", "awaiting_review")
-        candidate = next(
+        coordinator._stage_settings = lambda run, stage_id: (
+            {"backend": "trellis2.4b", "worker_id": "trellis2.4b"} if stage_id == "D2" else {}
+        )
+        store.create("d2-backend-v1", DESCRIPTION)
+        coordinator.submit("d2-backend-v1")
+        first = wait_for(store, "d2-backend-v1", "awaiting_review")
+        approved = next(
             item for item in first.stage("D1").evidence if item.metrics.get("selectable") is True
         )
-        store.decide("d2-seed-v1", "D1", "approve", "Looks good.", candidate.evidence_id)
-        coordinator.submit("d2-seed-v1")
-        run = _wait_for_stage_settled(store, "d2-seed-v1", "D2")
+        store.decide("d2-backend-v1", "D1", "approve", "Looks good.", approved.evidence_id)
+        coordinator.submit("d2-backend-v1")
+        run = _wait_for_stage_settled(store, "d2-backend-v1", "D2")
 
     assert run.stage("D2").state == "approved", run.stage("D2").error
-    # Isolate D2's own render by its filename_prefix -- asserting across every
-    # submitted workflow would pass on D1's two concept renders alone, even if
-    # D2's call site were never reached.
-    geometry_seed_workflows = [
-        workflow
-        for workflow in comfy.workflows
-        if any(
-            node["class_type"] == "SaveImage"
-            and "/geometry/" in str(node["inputs"]["filename_prefix"])
-            for node in workflow.values()
-        )
-    ]
-    assert geometry_seed_workflows, "D2's geometry-seed workflow was never submitted"
-    samplers = [
-        node
-        for workflow in geometry_seed_workflows
-        for node in workflow.values()
-        if node["class_type"] == "KSampler"
-    ]
-    assert samplers
-    assert all(node["inputs"]["steps"] == 45 for node in samplers)
-    assert all(node["inputs"]["cfg"] == 7.0 for node in samplers)
+    geometry = [item for item in worker.requests if item.operation_id == "geometry.generate_from_rgba"]
+    assert len(geometry) == 1, "D2 must have routed through the subprocess worker"
+    # It still receives the approved concept, keyed to RGBA -- only the
+    # backend changed, not where the image comes from.
+    assert list(geometry[0].input_paths.values())[0].endswith("geometry_seed_rgba.png")
 
 
 def test_d3_cleanup_runs_end_to_end_through_the_same_fake_worker(tmp_path: Path) -> None:
@@ -1860,9 +1914,14 @@ def test_a_static_prop_runs_the_whole_chain_end_to_end(
 
 
 def test_stage_config_reaches_the_real_worker_requests(tmp_path: Path) -> None:
-    """Tier-2 wiring proof: [stages.*] values must actually appear in the
+    """Config-wiring proof: [stages.*] values must actually appear in the
     typed worker requests, not merely resolve. Uses the advanced profile,
-    which raises D2's texture_size and D3/D4's render_size above base."""
+    which raises D3/D4's render_size above base.
+
+    D2 is deliberately not checked here: on the default hunyuan3d backend it
+    goes through ComfyUI rather than the worker protocol, and its own config
+    is asserted in the D2 image-to-3D tests instead.
+    """
     store = StudioStore(tmp_path)
     worker = FakeWorkerExecutor()
     with ThreadPoolExecutor(max_workers=1) as executor:
@@ -1879,9 +1938,6 @@ def test_stage_config_reaches_the_real_worker_requests(tmp_path: Path) -> None:
         _wait_for_stage_settled(store, "stage-config-v1", "D4")
 
     by_operation = {item.operation_id: item for item in worker.requests}
-    # base.toml's D2 texture_size is 2048; advanced.toml raises it to 4096.
-    assert by_operation["geometry.generate_from_rgba"].parameters["texture_size"] == 4096
-    assert by_operation["geometry.generate_from_rgba"].parameters["decimation_target"] == 500000
     # base render_size is 512; advanced raises D3 and D4 to 768.
     assert by_operation["blender.repair"].parameters["render_size"] == 768
     assert by_operation["blender.propose_short_biped_rig"].parameters["render_size"] == 768
