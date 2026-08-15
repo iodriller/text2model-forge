@@ -8,7 +8,7 @@ from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 import secrets
-from typing import Any
+from typing import Any, NamedTuple
 from urllib.parse import parse_qs, quote, unquote, urlparse
 import urllib.request
 import uuid
@@ -365,20 +365,46 @@ def _doctor() -> str:
     )
 
 
-def serve(
+class StudioServer(NamedTuple):
+    """A constructed but not-yet-running Studio server, plus the pieces a
+    caller needs to drive or inspect it. Split out of serve() so the HTTP
+    layer -- routing, CSRF, form parsing, error rendering -- can be tested
+    against a real loopback server instead of only by reading it."""
+
+    server: ThreadingHTTPServer
+    store: StudioStore
+    coordinator: StudioCoordinator
+    csrf: str
+    recovered: list[str]
+
+    @property
+    def url(self) -> str:
+        host, port = self.server.server_address[:2]
+        return f"http://{host}:{port}"
+
+
+def build_server(
     workspace: Path,
     *,
     host: str = "127.0.0.1",
     port: int = 8766,
-    open_browser: bool = False,
-) -> None:
+    coordinator_factory=None,
+) -> StudioServer:
+    """Construct the Studio HTTP server without running it.
+
+    Pass port=0 for an ephemeral port. `coordinator_factory` takes the
+    server's own StudioStore and returns a StudioCoordinator, so a test can
+    supply fake Qwen/ComfyUI/worker providers. It deliberately receives the
+    store rather than accepting a pre-built coordinator: two StudioStore
+    instances over one directory hold independent locks, so a coordinator
+    built on a different store than the request handlers use would race on
+    run.json writes.
+    """
     if host not in {"127.0.0.1", "::1", "localhost"}:
         raise ValueError("Darkness Studio may bind only to a loopback address")
     store = StudioStore(workspace)
     recovered = store.recover_interrupted_runs()
-    if recovered:
-        print(f"Darkness Studio recovered interrupted runs: {', '.join(recovered)}")
-    coordinator = StudioCoordinator(store)
+    coordinator = (coordinator_factory or StudioCoordinator)(store)
     csrf = secrets.token_urlsafe(32)
 
     class Handler(BaseHTTPRequestHandler):
@@ -525,13 +551,30 @@ def serve(
         def log_message(self, format: str, *args: Any) -> None:
             print(f"Darkness Studio {self.address_string()}: {format % args}")
 
-    server = ThreadingHTTPServer((host, port), Handler)
-    url = f"http://{host}:{server.server_address[1]}"
-    print(f"Darkness Studio: {url}")
+    return StudioServer(
+        server=ThreadingHTTPServer((host, port), Handler),
+        store=store,
+        coordinator=coordinator,
+        csrf=csrf,
+        recovered=recovered,
+    )
+
+
+def serve(
+    workspace: Path,
+    *,
+    host: str = "127.0.0.1",
+    port: int = 8766,
+    open_browser: bool = False,
+) -> None:
+    studio = build_server(workspace, host=host, port=port)
+    if studio.recovered:
+        print(f"Darkness Studio recovered interrupted runs: {', '.join(studio.recovered)}")
+    print(f"Darkness Studio: {studio.url}")
     if open_browser:
-        webbrowser.open(url + "/new")
+        webbrowser.open(studio.url + "/new")
     try:
-        server.serve_forever()
+        studio.server.serve_forever()
     finally:
-        coordinator.close()
-        server.server_close()
+        studio.coordinator.close()
+        studio.server.server_close()

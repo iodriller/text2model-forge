@@ -126,48 +126,36 @@ for selecting a specific donor clip at that gate.
 
 Stated plainly so nobody discovers these the hard way:
 
-- **Config coverage is uneven.** `[studio]` and `[quality.*]`'s
-  `concept_steps`/`concept_cfg` are WIRED -- they reach the real KSampler node
-  at D1 and D2. The rest of `[stages.*]` (D2b, D6, D7, D8, D9, D10) is still
-  DOCUMENTED only: those values mirror the adapters' hardcoded CLI defaults
-  but nothing reads them from here yet.
-- **The typed subprocess-worker protocol (D2-D5, D9) now has a fake.**
-  `StudioCoordinator(..., worker_executor=...)` injects a
-  `callable(worker_id, request, *, timeout_seconds) -> ExternalWorkerResponse`
-  in place of the real `config.local.toml` lookup + `WorkerManager` subprocess
-  launch, the same way `qwen_factory`/`comfy_factory` already worked. D2 is
-  proven end to end through it: `tests/test_studio.py`'s `FakeWorkerExecutor`
-  writes a genuinely valid synthetic mesh via `trimesh.creation.icosphere()`
-  (not a placeholder file -- D2's real code parses it and computes real
-  vertex/face/watertightness numbers from it) and the real
-  `render_glb_diagnostic.py` subprocess runs against it unmodified, since that
-  script needs only trimesh/numpy/PIL, not Blender. **D3 is now proven the
-  same way** and needed no new production code or fakes to get there, which
-  confirms the pattern generalizes. D4, D5, and D9 route through the same
-  `_execute_worker` chokepoint and need one `FakeQwen` method each (D4's
-  `review_deformable_rig`/`rigid_structure_plan`, and D5/D9's equivalents)
-  plus a worker fixture. D7's motion chain is architecturally different -- it
-  shells out to `adapters/run_motion_candidate_pipeline.py` directly via
-  `subprocess.run` rather than through `_execute_worker`, so it needs its own
-  seam.
-- **D2 has no human gate**, so retry/edit override values can never reach it
-  through the documented review flow even though its `steps`/`cfg` are wired
-  -- only a caller driving the coordinator directly could set them.
-- **Retry/edit override values otherwise reach D1 only** (see the scope note
-  above).
-- **The D0-D10 chain is not proven end to end for a non-character asset.**
-  The stage-skip logic for props, materials, and rigid-articulated assets is
-  implemented and tested, but no chair has actually been produced. Expect the
-  concept stage in particular to need work for non-character subjects.
+- **The generators themselves are never exercised by the test suite.** Both
+  subprocess boundaries are injectable -- `worker_executor` for the typed
+  worker protocol (D2-D5, D9) and `script_runner` for the `adapters/` helper
+  scripts (D7's motion chain, D8's surface bake) -- and both full chains, a
+  static prop and a deformable character, run end to end against fakes. What
+  that proves is orchestration: stage sequencing, gates, evidence, hashes,
+  adoption contracts, and config reaching real worker requests. It proves
+  nothing about whether TRELLIS.2 makes a good mesh or whether the surface
+  bake looks right. Only a real GPU run does that.
+- **No asset has been produced end to end on real hardware.** The chair test
+  proves the prop path's stages run and hand off correctly; it does not prove
+  a recognizable chair comes out. Expect the D1 concept stage in particular to
+  need work for non-character subjects -- it is built around turnarounds,
+  OpenPose ControlNet, and equipment layout.
+- **Retry/edit override values reach D1 only.** The mechanism is generic
+  (`_begin()` returns a stage's pending overrides), but D1 is the only stage
+  that reads them today. D2 additionally has no human gate, so a stage-level
+  override could not reach it through the review flow regardless.
 - **A human retry is not subject to the automatic iteration budget.** D1 stops
   Qwen's own correction loop after six iterations, but an explicit human retry
   resets the stage to `pending` and bypasses that ceiling. This is deliberate
   -- a person clicking retry should not be rate-limited by a guard meant for a
   runaway model -- but it does mean retry is unbounded by design.
-- **Half the system cannot be verified in CI.** Anything touching Blender,
-  ComfyUI, Ollama/LocalDeploy, WSL2, or Unity needs those tools running
-  locally. `pytest tests` and `darkness demo` cover the orchestration
-  substrate, contracts, gates, config, and lineage -- not the generators.
+- **`[adapter_defaults]` in `base.toml` is reference, not configuration.**
+  Those values mirror the argparse defaults of standalone scripts under
+  `adapters/` that you invoke by hand. Editing them changes nothing; only
+  `[studio]`, `[quality.*]`, and `[stages.*]` are read by the pipeline.
+- **Coverage is ~72%.** The untested remainder is concentrated in code that
+  talks to real services: `darkness/studio_qwen.py`'s live LLM calls (52%),
+  `external_worker.py`'s real subprocess path (22%), and `cli.py` (26%).
 
 ## Repository layout
 
@@ -205,8 +193,39 @@ deterministically, without a GPU or any of the real generation workers -- it is
 the fast regression check for anything that touches the compiler.
 
 Anything that touches Blender, ComfyUI, Ollama/LocalDeploy, WSL2, or Unity needs
-those tools installed and running locally; there is no CI path for that half of
-the system today.
+those tools installed and running locally. Everything else runs in CI on both
+Windows and Ubuntu (`.github/workflows/ci.yml`), which also enforces two
+coupling guards: no reference to a specific consuming project, and no
+pre-extraction repo-root path assumptions.
+
+Test order is randomized on every run by `pytest-randomly` -- it earned its
+place by catching an order-dependent race in the web test fixture that a fixed
+order never surfaced. Reproduce a specific ordering with the seed printed on
+failure:
+
+```powershell
+python -m pytest tests -q -p randomly --randomly-seed=12345
+python -m pytest tests -q -p no:randomly            # disable shuffling
+python -m pytest tests -q --cov=darkness --cov=assetforge --cov-report=term-missing
+```
+
+### Writing tests for stages
+
+Two injection seams let a test drive real stage logic without real tools, and
+`tests/test_studio.py`'s fakes show the pattern:
+
+- `worker_executor=` replaces the typed worker protocol (D2-D5, D9).
+- `script_runner=` replaces the `adapters/` helper scripts (D7, D8).
+
+Two rules worth keeping, because both caught real bugs:
+
+1. **Fakes must produce real artifacts.** `FakeWorkerExecutor` writes an
+   actual `trimesh` mesh because D2 genuinely parses it and computes
+   vertex/face/watertightness from it. A stub file would pass the test and
+   hide the defect.
+2. **Prove a regression test fails without its fix.** Revert the fix, confirm
+   the exact original error, restore. A test that passes both ways is
+   decoration.
 
 ## Using this from another project
 

@@ -1914,6 +1914,82 @@ def test_stage_settings_fall_back_to_defaults_for_an_unknown_profile(tmp_path: P
     assert coordinator._stage_settings(run, "D99") == {}  # unknown stage is empty, not an error
 
 
+def test_d7_uses_the_historical_default_clip_when_no_catalog_id_is_set(tmp_path: Path) -> None:
+    store = StudioStore(tmp_path)
+    coordinator = StudioCoordinator(store, qwen_factory=lambda run: FakeQwen())
+    run = store.create("donor-default-v1", DESCRIPTION)
+    _machine_config_with_blender(tmp_path)  # creates the default clip on disk
+    resolved = coordinator._resolve_donor_motion(run, tmp_path)
+    assert resolved == (tmp_path / _MOTION_SOURCE_RELATIVE).resolve()
+
+
+def test_d7_resolves_a_configured_donor_motion_id_through_the_catalog(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The motion catalog was previously unused by the pipeline: base.toml
+    documented donor_motion_id but _run_motion_chain hardcoded one clip and
+    never consulted it."""
+    catalog_dir = tmp_path / "motion_library"
+    catalog_dir.mkdir(parents=True, exist_ok=True)
+    clip = _synthetic_mesh(catalog_dir / "clips" / "sprint.glb")
+    (catalog_dir / "catalog.json").write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "clips": [
+                    {
+                        "clip_id": "sprint_v1",
+                        "display_name": "Sprint",
+                        "description": "A CC0 sprint cycle.",
+                        "compatible_anatomy_family": "humanoid",
+                        "source_url": "https://example.com/sprint",
+                        "author": "Example Author",
+                        "license": "CC0-1.0",
+                        "license_requires_attribution": False,
+                        "local_path": "clips/sprint.glb",
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.chdir(tmp_path)
+
+    store = StudioStore(tmp_path)
+    coordinator = StudioCoordinator(store, qwen_factory=lambda run: FakeQwen())
+    run = store.create("donor-catalog-v1", DESCRIPTION)
+    monkeypatch.setattr(
+        coordinator,
+        "_stage_settings",
+        lambda run, stage_id: {"donor_motion_id": "sprint_v1"} if stage_id == "D7" else {},
+    )
+    assert coordinator._resolve_donor_motion(run, tmp_path) == clip.resolve()
+
+
+def test_d7_fails_loudly_for_an_unknown_donor_motion_id(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An unrecognized id must never silently fall back to the default clip --
+    that would retarget a motion the operator did not choose."""
+    catalog_dir = tmp_path / "motion_library"
+    catalog_dir.mkdir(parents=True, exist_ok=True)
+    (catalog_dir / "catalog.json").write_text(
+        json.dumps({"schema_version": 1, "clips": []}), encoding="utf-8"
+    )
+    monkeypatch.chdir(tmp_path)
+
+    store = StudioStore(tmp_path)
+    coordinator = StudioCoordinator(store, qwen_factory=lambda run: FakeQwen())
+    run = store.create("donor-unknown-v1", DESCRIPTION)
+    monkeypatch.setattr(
+        coordinator,
+        "_stage_settings",
+        lambda run, stage_id: {"donor_motion_id": "does_not_exist"} if stage_id == "D7" else {},
+    )
+    with pytest.raises(ValueError, match="unknown donor_motion_id"):
+        coordinator._resolve_donor_motion(run, tmp_path)
+
+
 def test_d2_survives_a_studio_workspace_that_differs_from_config_workspace_root(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

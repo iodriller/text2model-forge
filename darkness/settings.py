@@ -41,9 +41,9 @@ def bundled_profiles_dir() -> Path:
 
 def profiles_dir(repo_root: Path | None = None) -> Path:
     """Where to read profiles/*.toml from. If a project working directory has
-    its own profiles/base.toml (e.g. a consuming project like EmberDefense
-    that keeps project-specific profiles), that wins; otherwise fall back to
-    the profiles bundled with the installed package."""
+    its own profiles/base.toml (a consuming project keeping project-specific
+    profiles), that wins; otherwise fall back to the profiles bundled with
+    the installed package."""
     if repo_root is not None:
         return repo_root / "profiles"
     cwd_profiles = Path.cwd() / "profiles"

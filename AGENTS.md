@@ -126,6 +126,18 @@ gitignored; copy `machine.example.toml` to get one.
 - Any change to `darkness/` or `assetforge/`: run `pytest tests -q` and
   `python -m darkness demo --workspace <tmp>`. Both are fast, deterministic,
   and require no external tools -- there is no excuse to skip them.
+- Test order is randomized (`pytest-randomly`). A failure prints its seed;
+  reproduce with `--randomly-seed=N`. Do not "fix" an order-dependent
+  failure by pinning the order -- it is a real shared-state bug. The one
+  found so far was two `StudioStore` instances over one directory holding
+  independent locks.
+- A stage-level test drives the real coordinator with `worker_executor=`
+  and/or `script_runner=` injected (see `tests/test_studio.py`). Fakes must
+  emit the exact output roles the stage consumes and real parseable
+  artifacts where the stage parses them -- a stub file that merely exists
+  passes for the wrong reason and hides defects.
+- A regression test must be proven to fail without its fix: revert, confirm
+  the exact original error, restore. State that you did this.
 - A change to the gate/decision state machine (`studio_store.py`,
   `studio_models.py`): add or update a test in `tests/test_studio.py` that
   exercises the state transition directly, following the existing

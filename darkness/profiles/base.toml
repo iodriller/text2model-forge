@@ -98,10 +98,11 @@ timeout_seconds = 1200
 
 [stages.D7]                           # WIRED -- motion (timeout only)
 timeout_seconds = 3600
-# NOT YET WIRED. darkness/motion_library.py can resolve a clip_id to a local
-# file, but _run_motion_chain still hardcodes one qualified CC0 clip path
-# under workspace_root and never consults this value. Setting it has no
-# effect today -- see the README's Known gaps.
+# WIRED. Names a clip_id in motion_library/catalog.json (copy
+# catalog.example.json to create one). Empty keeps the historical default:
+# the qualified CC0 clip under workspace_root/sources/. An id that is unknown
+# or whose file has not been downloaded fails loudly rather than silently
+# retargeting a motion you did not choose.
 donor_motion_id = ""
 
 [stages.D9]                           # WIRED -- delivery render (static/prop path)

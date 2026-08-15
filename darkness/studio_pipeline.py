@@ -26,6 +26,7 @@ from .studio_comfy import (
     make_humanoid_openpose_guide,
     qwen_image_2512_workflow,
 )
+from .motion_library import load_motion_library, resolve_donor_motion_path
 from .settings import resolve_settings
 from .studio_models import (
     StudioQwenReview,
@@ -54,6 +55,18 @@ class ComfyProvider(Protocol):
     def models(self, kind: str) -> list[str]: ...
     def upload_image(self, name: str, data: bytes, subfolder: str = "darkness_studio") -> str: ...
     def generate(self, *, workflow, destination: Path, timeout_seconds: float = 900) -> list[Path]: ...
+
+
+def _motion_catalog_path() -> Path | None:
+    """The motion catalog, preferring a project's own over the packaged one --
+    the same working-directory-first rule profiles/ uses."""
+    for candidate in (
+        Path.cwd() / "motion_library" / "catalog.json",
+        Path(__file__).resolve().parents[1] / "motion_library" / "catalog.json",
+    ):
+        if candidate.is_file():
+            return candidate
+    return None
 
 
 def _write_json(path: Path, value: object) -> None:
@@ -2195,6 +2208,46 @@ class StudioCoordinator:
             ("skinning_report", "deformation_report", "neutral_comparison_report", "rigged_export_validation"),
         )
 
+    # The clip D7 retargets when no catalog entry is selected. Kept as the
+    # default so existing runs behave exactly as before the motion catalog
+    # existed; set [stages.D7].donor_motion_id to choose another.
+    _DEFAULT_DONOR_MOTION = (
+        Path("sources")
+        / "quaternius_universal_animation_library_standard"
+        / "Universal Animation Library[Standard]"
+        / "Unreal-Godot"
+        / "UAL1_Standard.glb"
+    )
+
+    def _resolve_donor_motion(self, run: StudioRun, workspace_root: Path) -> Path:
+        """The donor animation D7 retargets onto the rig.
+
+        [stages.D7].donor_motion_id names a clip_id in the motion catalog
+        (motion_library/catalog.json, next to the installed package or in the
+        working directory). Empty falls back to the historical hardcoded
+        qualified CC0 clip, so this changed nothing for existing runs.
+        """
+        clip_id = str(self._stage_settings(run, "D7").get("donor_motion_id", "")).strip()
+        if clip_id:
+            catalog = _motion_catalog_path()
+            if catalog is None:
+                raise RuntimeError(
+                    f"[stages.D7].donor_motion_id is {clip_id!r} but no motion_library/catalog.json "
+                    "was found; copy motion_library/catalog.example.json and fill it in"
+                )
+            library = load_motion_library(catalog)
+            # Raises with a clear message for an unknown id or a clip whose
+            # file has not been downloaded yet -- never silently falls back,
+            # which would retarget a motion the operator did not ask for.
+            motion_source = resolve_donor_motion_path(
+                library, clip_id, catalog_dir=catalog.parent
+            ).resolve()
+        else:
+            motion_source = (workspace_root / self._DEFAULT_DONOR_MOTION).resolve()
+        if not motion_source.is_file():
+            raise RuntimeError(f"donor motion source is missing: {motion_source}")
+        return motion_source
+
     def _run_motion_chain(self, run: StudioRun, *, stop_after: str, timeout_seconds: int = 3600) -> Path:
         if run.spec is None:
             raise RuntimeError("the motion chain requires an asset specification")
@@ -2213,16 +2266,7 @@ class StudioCoordinator:
             media_type="application/x-blender",
             role="rigged_candidate_checkpoint",
         )
-        motion_source = (
-            Path(config.workspace_root)
-            / "sources"
-            / "quaternius_universal_animation_library_standard"
-            / "Universal Animation Library[Standard]"
-            / "Unreal-Godot"
-            / "UAL1_Standard.glb"
-        ).resolve()
-        if not motion_source.is_file():
-            raise RuntimeError(f"qualified CC0 motion source is missing: {motion_source}")
+        motion_source = self._resolve_donor_motion(run, Path(config.workspace_root))
         spec_path = self._latest_evidence_path(run, "D0", media_type="application/json")
         chain_root = self.store.run_root(run.run_id) / "D7_D10_chain"
         script = Path(__file__).resolve().parents[1] / "adapters" / "run_motion_candidate_pipeline.py"

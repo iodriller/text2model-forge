@@ -1,0 +1,77 @@
+name: CI
+
+# Covers the half of the system that needs no GPU, Blender, ComfyUI, Ollama,
+# WSL2, or Unity: the orchestration substrate, typed contracts, human gates,
+# config resolution, and lineage. The generation workers themselves are
+# manual-only by nature -- see the README's Known gaps.
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        # Windows is the primary development platform; Ubuntu is included
+        # because several fixed bugs were Windows-path-specific (atomic
+        # replace races, workspace-relative path computation) and a
+        # POSIX run is what proves those fixes were not merely papering
+        # over a platform quirk.
+        os: [windows-latest, ubuntu-latest]
+        python-version: ["3.12"]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+
+      - name: Install
+        run: python -m pip install --upgrade pip && python -m pip install -e ".[dev]"
+
+      # pytest-randomly shuffles order every run; a seed is printed on
+      # failure so a bad ordering can be reproduced with -p randomly --seed=N.
+      - name: Test
+        run: python -m pytest tests -q --cov=darkness --cov=assetforge --cov-report=term
+
+      - name: Deterministic D0-D10 orchestration fixture
+        run: python -m darkness demo --workspace ${{ runner.temp }}/forge-demo
+
+      - name: Resolved configuration is loadable for every shipped profile
+        run: |
+          python -m darkness config show --profile base
+          python -m darkness config show --profile simple
+          python -m darkness config show --profile advanced
+
+  coupling:
+    # Guards the extraction: this package must not grow a dependency back on
+    # any specific consuming project, and must not regain the repo-root
+    # assumptions that broke when it was lifted out of the game repo.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: No dependency on a specific consuming project
+        run: |
+          if grep -rn "EmberDefense" --include="*.py" --include="*.toml" --include="*.json" \
+              darkness/ assetforge/ adapters/ workers/ \
+              | grep -v "test_unity_candidate_contract"; then
+            echo "::error::Found a reference to a specific consuming project outside the guard test."
+            exit 1
+          fi
+
+      - name: No stale repo-root path assumptions
+        run: |
+          if grep -rn "parents\[3\]\|tools/asset_forge" --include="*.py" darkness/ assetforge/ adapters/; then
+            echo "::error::Found a pre-extraction path assumption."
+            exit 1
+          fi
