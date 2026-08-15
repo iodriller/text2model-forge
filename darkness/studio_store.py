@@ -16,12 +16,14 @@ from .studio_models import (
     StudioQwenReview,
     StudioRun,
     new_studio_run,
+    validate_stage_overrides,
 )
 
 
 class StudioStore:
     def __init__(self, workspace: str | Path) -> None:
-        self.root = Path(workspace).resolve() / "studio"
+        self.workspace = Path(workspace).resolve()
+        self.root = self.workspace / "studio"
         self.runs_root = self.root / "runs"
         self.runs_root.mkdir(parents=True, exist_ok=True)
         self._lock = threading.RLock()
@@ -244,6 +246,7 @@ class StudioStore:
         """
         if decision not in self._DECISIONS:
             raise ValueError(f"decision must be one of {sorted(self._DECISIONS)}")
+        validate_stage_overrides(overrides)
         if decision == "reject" and not comment.strip():
             raise ValueError("a rejection comment is required so Qwen knows what to improve")
         if decision == "edit" and not comment.strip() and not overrides:

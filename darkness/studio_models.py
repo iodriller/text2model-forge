@@ -164,6 +164,42 @@ def awaiting_correction(stage: "StudioStageState") -> bool:
     )
 
 
+def validate_stage_overrides(overrides: dict[str, Any] | None) -> None:
+    """Reject malformed per-attempt override values at decision time.
+
+    Without this the check happens deep inside the stage runner, so a typo
+    like {"seed": -5} is accepted by the gate, reported as success, and only
+    surfaces later as an asynchronously failed stage -- far from the input
+    that caused it. Validating here means the web form (and any API caller)
+    gets an immediate, actionable error instead.
+
+    Unknown keys are deliberately allowed: a stage may define its own
+    overrides, and this must not become a chokepoint that has to be updated
+    before any stage can add one. Only the shape of known keys is enforced.
+    """
+    if not overrides:
+        return
+    seed = overrides.get("seed")
+    if seed is not None and (
+        not isinstance(seed, int) or isinstance(seed, bool) or seed < 0
+    ):
+        raise ValueError("the 'seed' override must be a non-negative whole number")
+    for key in ("concept_steps",):
+        value = overrides.get(key)
+        if value is not None and (
+            not isinstance(value, int) or isinstance(value, bool) or not 1 <= value <= 150
+        ):
+            raise ValueError(f"the '{key}' override must be a whole number between 1 and 150")
+    for key in ("concept_cfg",):
+        value = overrides.get(key)
+        if value is not None and (
+            isinstance(value, bool)
+            or not isinstance(value, (int, float))
+            or not 0 < value <= 30
+        ):
+            raise ValueError(f"the '{key}' override must be a number greater than 0 and at most 30")
+
+
 class StudioStageState(StrictModel):
     stage_id: str = Field(pattern=r"^D(?:10|[0-9])$")
     label: str = Field(min_length=1)

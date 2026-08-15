@@ -141,13 +141,15 @@ Stated plainly so nobody discovers these the hard way:
   (not a placeholder file -- D2's real code parses it and computes real
   vertex/face/watertightness numbers from it) and the real
   `render_glb_diagnostic.py` subprocess runs against it unmodified, since that
-  script needs only trimesh/numpy/PIL, not Blender. D3-D5 and D9 route
-  through the same `_execute_worker` chokepoint and are one `FakeQwen` method
-  each away from the same treatment (`review_cleanup` is already faked; D4's
-  `review_deformable_rig`/`rigid_structure_plan` and D5/D9's equivalents are
-  not yet). D7's motion chain is architecturally different -- it shells out
-  to `adapters/run_motion_candidate_pipeline.py` directly via `subprocess.run`
-  rather than through `_execute_worker`, so it needs its own seam.
+  script needs only trimesh/numpy/PIL, not Blender. **D3 is now proven the
+  same way** and needed no new production code or fakes to get there, which
+  confirms the pattern generalizes. D4, D5, and D9 route through the same
+  `_execute_worker` chokepoint and need one `FakeQwen` method each (D4's
+  `review_deformable_rig`/`rigid_structure_plan`, and D5/D9's equivalents)
+  plus a worker fixture. D7's motion chain is architecturally different -- it
+  shells out to `adapters/run_motion_candidate_pipeline.py` directly via
+  `subprocess.run` rather than through `_execute_worker`, so it needs its own
+  seam.
 - **D2 has no human gate**, so retry/edit override values can never reach it
   through the documented review flow even though its `steps`/`cfg` are wired
   -- only a caller driving the coordinator directly could set them.

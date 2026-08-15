@@ -32,6 +32,7 @@ from .studio_models import (
     awaiting_correction,
     latest_correction,
     utc_now,
+    validate_stage_overrides,
 )
 from .studio_qwen import ConceptCorrectionPlan, ConceptPlan, StudioQwen
 from .studio_store import StudioStore
@@ -1082,8 +1083,10 @@ class StudioCoordinator:
         # the attempt still offers a genuine alternative to compare against.
         pinned_seed = stage_overrides.get("seed")
         if pinned_seed is not None:
-            if not isinstance(pinned_seed, int) or isinstance(pinned_seed, bool) or pinned_seed < 0:
-                raise ValueError("the 'seed' stage override must be a non-negative whole number")
+            # Shape already enforced at decision time by
+            # studio_models.validate_stage_overrides, so the human got an
+            # immediate error rather than an asynchronously failed stage.
+            validate_stage_overrides(stage_overrides)
             other = next((item for item in plan.seeds if item != pinned_seed), pinned_seed + 1)
             plan.seeds = [pinned_seed, other]
         attempt_root = self.store.run_root(run.run_id) / "D1_concept" / f"iteration-{stage.iteration:02d}"
@@ -1560,12 +1563,25 @@ class StudioCoordinator:
             return self.store.artifact_path(run.run_id, item.relative_path)
         raise RuntimeError(f"{stage_id} has no evidence matching media_type={media_type!r}, role={role!r}")
 
-    @staticmethod
-    def _artifact_for_path(run: StudioRun, path: Path, *, artifact_id: str) -> ArtifactRecord:
-        config = load_local_config()
-        if config is None:
-            raise RuntimeError("Darkness config.local.toml is required")
-        workspace = Path(config.workspace_root).resolve()
+    def _workspace_relative(self, path: Path) -> str:
+        """Workspace-relative blob_path for an artifact record.
+
+        Every Studio-run file lives under the store's own workspace by
+        construction, so that is the correct base. config.local.toml's
+        workspace_root is NOT: `darkness studio --workspace X` explicitly
+        allows X to differ from it, and basing on the config value made
+        Path.relative_to() raise an opaque
+        "'...' is not in the subpath of '...'" mid-stage whenever they
+        diverged. Falls back to the resolved absolute path rather than
+        raising if a caller ever passes something genuinely outside.
+        """
+        resolved = path.resolve()
+        base = self.store.workspace
+        if base == resolved or base in resolved.parents:
+            return resolved.relative_to(base).as_posix()
+        return resolved.as_posix()
+
+    def _artifact_for_path(self, run: StudioRun, path: Path, *, artifact_id: str) -> ArtifactRecord:
         resolved = path.resolve()
         digest = sha256_file(resolved)
         return ArtifactRecord(
@@ -1578,7 +1594,7 @@ class StudioCoordinator:
                 else "model/gltf-binary"
             ),
             stage=AssetStage.geometry,
-            blob_path=resolved.relative_to(workspace).as_posix(),
+            blob_path=self._workspace_relative(resolved),
             created_at=datetime.now(timezone.utc),
             lineage=ArtifactLineage(
                 artifact_id=artifact_id,
@@ -1660,7 +1676,7 @@ class StudioCoordinator:
             size_bytes=rgba_seed.stat().st_size,
             media_type="image/png",
             stage=AssetStage.concept,
-            blob_path=rgba_seed.relative_to(Path(load_local_config().workspace_root).resolve()).as_posix(),
+            blob_path=self._workspace_relative(rgba_seed),
             created_at=datetime.now(timezone.utc),
             lineage=ArtifactLineage(
                 artifact_id=artifact_id,

@@ -312,6 +312,21 @@ def wait_for(store: StudioStore, run_id: str, state: str, timeout: float = 5):
     raise AssertionError(f"run never reached {state}: {store.load(run_id).model_dump()}")
 
 
+def _wait_for_stage_settled(store: StudioStore, run_id: str, stage_id: str, timeout: float = 5):
+    """Wait for one stage to reach a terminal state. Unlike wait_for(), which
+    watches run.state, this watches a specific stage -- needed for stages like
+    D2 that have no human gate and so never park the run in awaiting_review."""
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        run = store.load(run_id)
+        if run.stage(stage_id).state in {"approved", "rejected", "failed", "skipped", "blocked"}:
+            return run
+        time.sleep(0.02)
+    raise AssertionError(
+        f"{stage_id} never settled: {store.load(run_id).stage(stage_id).model_dump()}"
+    )
+
+
 def test_stage_contract_covers_d0_through_d10() -> None:
     assert [item[0] for item in STAGE_DEFINITIONS] == [f"D{i}" for i in range(11)]
     assert [item[0] for item in STAGE_DEFINITIONS if item[2]] == ["D1", "D4", "D7", "D8", "D10"]
@@ -921,6 +936,53 @@ def test_retry_requires_no_comment_and_carries_overrides_into_pending_overrides(
     assert "gate_retried" in event_types
 
 
+@pytest.mark.parametrize(
+    "bad_overrides, message",
+    [
+        ({"seed": -5}, "non-negative whole number"),
+        ({"seed": 1.5}, "non-negative whole number"),
+        ({"seed": True}, "non-negative whole number"),  # bool is an int subclass
+        ({"seed": "42"}, "non-negative whole number"),
+        ({"concept_steps": 0}, "between 1 and 150"),
+        ({"concept_steps": 500}, "between 1 and 150"),
+        ({"concept_cfg": 0}, "greater than 0"),
+        ({"concept_cfg": 99}, "greater than 0 and at most 30"),
+    ],
+)
+def test_decide_rejects_malformed_overrides_immediately(
+    tmp_path: Path, bad_overrides: dict, message: str
+) -> None:
+    """Regression: decide() accepted any JSON object, so {"seed": -5} was
+    reported as success and only surfaced later as an asynchronously failed
+    stage, far from the input that caused it. The human (or API caller) must
+    get the error at the moment they submit it."""
+    store = StudioStore(tmp_path)
+    run, item = _awaiting_stage_with_one_candidate(store, "bad-overrides-v1", "D1")
+    with pytest.raises(ValueError, match=message):
+        store.decide(run.run_id, "D1", "retry", "", item.evidence_id, overrides=bad_overrides)
+    # rejected cleanly -- the stage is untouched, not left half-decided
+    assert store.load(run.run_id).stage("D1").state == "awaiting_review"
+    assert store.load(run.run_id).stage("D1").pending_overrides == {}
+
+
+def test_decide_allows_valid_and_unknown_override_keys(tmp_path: Path) -> None:
+    """Valid known keys pass, and an unknown key is deliberately allowed so
+    this validator does not become a chokepoint every new stage-specific
+    override has to be registered in before it can be used."""
+    store = StudioStore(tmp_path)
+    run, item = _awaiting_stage_with_one_candidate(store, "ok-overrides-v1", "D1")
+    decided = store.decide(
+        run.run_id,
+        "D1",
+        "retry",
+        "",
+        item.evidence_id,
+        overrides={"seed": 0, "concept_steps": 150, "concept_cfg": 30, "some_future_key": "x"},
+    )
+    assert decided.stage("D1").pending_overrides["seed"] == 0
+    assert decided.stage("D1").pending_overrides["some_future_key"] == "x"
+
+
 def test_edit_requires_comment_or_overrides(tmp_path: Path) -> None:
     store = StudioStore(tmp_path)
     run, item = _awaiting_stage_with_one_candidate(store, "edit-v1", "D1")
@@ -1166,9 +1228,7 @@ def test_a_run_with_no_quality_override_submits_todays_real_default_workflow(tmp
     assert all(node["inputs"]["cfg"] == 6.0 for node in samplers)
 
 
-def test_d2_geometry_generation_runs_end_to_end_through_a_fake_worker(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_d2_geometry_generation_runs_end_to_end_through_a_fake_worker(tmp_path: Path) -> None:
     """First real pipeline-level test of D2, which has never been driven
     through the coordinator before -- it always stopped at D1's gate. Proves
     the worker_executor injection seam works and that _run_d2's real
@@ -1176,15 +1236,11 @@ def test_d2_geometry_generation_runs_end_to_end_through_a_fake_worker(
     GLB, hard_gate_passed, Qwen review) reaches 'approved', not just that a
     canned response satisfies a mock.
 
-    D2 separately calls load_local_config() itself (not through
-    worker_executor) just to learn workspace_root for one blob-path
-    computation; monkeypatched here rather than routed through the new seam,
-    since it is not a worker call.
+    Takes no config.local.toml monkeypatch: D2's blob-path computation now
+    goes through _workspace_relative() and is based on the store's own
+    workspace, so a run driven by an injected worker_executor needs no
+    machine config at all.
     """
-    monkeypatch.setattr(
-        "darkness.studio_pipeline.load_local_config",
-        lambda *a, **k: DarknessLocalConfig(workspace_root=str(tmp_path), workers={}),
-    )
     store = StudioStore(tmp_path)
     qwen = FakeQwen()
     comfy = FakeComfy()
@@ -1206,18 +1262,11 @@ def test_d2_geometry_generation_runs_end_to_end_through_a_fake_worker(
         )
         store.decide("d2-e2e-v1", "D1", "approve", "Looks good.", candidate.evidence_id)
         coordinator.submit("d2-e2e-v1")
-        # D2 has no human gate; it runs straight through to D3 or stops there instead.
-        deadline = time.monotonic() + 5
-        while time.monotonic() < deadline:
-            run = store.load("d2-e2e-v1")
-            if run.stage("D2").state in {"approved", "rejected", "failed"}:
-                break
-            time.sleep(0.02)
-        else:
-            raise AssertionError(f"D2 never finished: {store.load('d2-e2e-v1').stage('D2').model_dump()}")
+        # D2 has no human gate, so the run never parks in awaiting_review for it.
+        run = _wait_for_stage_settled(store, "d2-e2e-v1", "D2")
 
     d2 = run.stage("D2")
-    assert d2.state == "approved", d2.message
+    assert d2.state == "approved", d2.error
     assert d2.metrics["vertices"] == 2562  # trimesh.creation.icosphere(subdivisions=4), computed for real
     assert d2.metrics["faces"] == 5120
     assert d2.metrics["watertight"] is True
@@ -1227,16 +1276,15 @@ def test_d2_geometry_generation_runs_end_to_end_through_a_fake_worker(
     assert len(glb_evidence) == 1
 
 
-def test_d2_seed_override_reaches_the_geometry_seed_render(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """The seed-pinning mechanism proven for D1 works identically at D2,
-    since both stages call concept_workflow() through the same _begin()
-    override path -- this exercises D2's specific call site."""
-    monkeypatch.setattr(
-        "darkness.studio_pipeline.load_local_config",
-        lambda *a, **k: DarknessLocalConfig(workspace_root=str(tmp_path), workers={}),
-    )
+def test_d2_geometry_seed_render_uses_the_runs_configured_quality(tmp_path: Path) -> None:
+    """D2's geometry-seed render honors the run's resolved quality tier, the
+    same as D1's concept render -- this exercises D2's own concept_workflow()
+    call site, which is a separate one from D1's.
+
+    (Named for what it asserts: this is run-level quality config, NOT the
+    per-attempt retry/edit seed override -- D2 has no human gate, so a
+    stage-level override can never reach it through the review flow.)
+    """
     store = StudioStore(tmp_path)
     qwen = FakeQwen()
     comfy = FakeComfy()
@@ -1257,18 +1305,22 @@ def test_d2_seed_override_reaches_the_geometry_seed_render(
         )
         store.decide("d2-seed-v1", "D1", "approve", "Looks good.", candidate.evidence_id)
         coordinator.submit("d2-seed-v1")
-        deadline = time.monotonic() + 5
-        while time.monotonic() < deadline:
-            run = store.load("d2-seed-v1")
-            if run.stage("D2").state in {"approved", "rejected", "failed"}:
-                break
-            time.sleep(0.02)
+        run = _wait_for_stage_settled(store, "d2-seed-v1", "D2")
 
+    assert run.stage("D2").state == "approved", run.stage("D2").error
+    # Isolate D2's own render by its filename_prefix -- asserting across every
+    # submitted workflow would pass on D1's two concept renders alone, even if
+    # D2's call site were never reached.
     geometry_seed_workflows = [
         workflow
         for workflow in comfy.workflows
-        if any(node["class_type"] == "EmptyLatentImage" for node in workflow.values())
+        if any(
+            node["class_type"] == "SaveImage"
+            and "/geometry/" in str(node["inputs"]["filename_prefix"])
+            for node in workflow.values()
+        )
     ]
+    assert geometry_seed_workflows, "D2's geometry-seed workflow was never submitted"
     samplers = [
         node
         for workflow in geometry_seed_workflows
@@ -1278,6 +1330,118 @@ def test_d2_seed_override_reaches_the_geometry_seed_render(
     assert samplers
     assert all(node["inputs"]["steps"] == 45 for node in samplers)
     assert all(node["inputs"]["cfg"] == 7.0 for node in samplers)
+
+
+def test_d3_cleanup_runs_end_to_end_through_the_same_fake_worker(tmp_path: Path) -> None:
+    """Validates the README's claim that D3 is 'one FakeQwen method away'
+    from the treatment D2 got: FakeQwen.review_cleanup and
+    FakeWorkerExecutor's blender.repair fixture already existed, so this
+    needed no new production code and no new fake -- only a test. D3 runs
+    the real Blender-worker request path (via the injected executor), builds
+    a real image board from the returned PNG, and applies its real Qwen
+    identity gate."""
+    store = StudioStore(tmp_path)
+    worker = FakeWorkerExecutor()
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        coordinator = StudioCoordinator(
+            store,
+            qwen_factory=lambda run: FakeQwen(),
+            comfy_factory=lambda run: FakeComfy(),
+            worker_executor=worker,
+            executor=executor,
+        )
+        store.create("d3-e2e-v1", DESCRIPTION)
+        coordinator.submit("d3-e2e-v1")
+        first = wait_for(store, "d3-e2e-v1", "awaiting_review")
+        candidate = next(
+            item for item in first.stage("D1").evidence if item.metrics.get("selectable") is True
+        )
+        store.decide("d3-e2e-v1", "D1", "approve", "Looks good.", candidate.evidence_id)
+        coordinator.submit("d3-e2e-v1")
+        run = _wait_for_stage_settled(store, "d3-e2e-v1", "D3")
+
+    d3 = run.stage("D3")
+    assert d3.state == "approved", d3.error
+    assert run.stage("D2").state == "approved"
+    repair_requests = [item for item in worker.requests if item.operation_id == "blender.repair"]
+    assert len(repair_requests) == 1
+    # A deformable character must ask Blender for a single connected component.
+    assert repair_requests[0].parameters["component_policy"] == "keep_largest"
+    assert repair_requests[0].parameters["maximum_connected_components"] == 1
+    # D3 must carry forward a usable cleaned mesh for D4.
+    assert any(
+        item.media_type == "model/gltf-binary" and item.metrics.get("role") == "candidate_geometry"
+        for item in d3.evidence
+    )
+
+
+def test_d2_survives_a_studio_workspace_that_differs_from_config_workspace_root(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Regression: `darkness studio --workspace X` explicitly allows X to
+    differ from config.local.toml's workspace_root (see cli.py's
+    `args.workspace or ...`), but D2 computed its artifact blob_path as
+    rgba_seed.relative_to(config.workspace_root). When they diverged that
+    raised an opaque ValueError -- "'...' is not in the subpath of '...'" --
+    and failed the stage. The base must be the store's own workspace, which
+    every Studio-run file lives under by construction."""
+    studio_workspace = tmp_path / "studio_workspace"
+    config_workspace = tmp_path / "config_workspace"
+    config_workspace.mkdir(parents=True, exist_ok=True)
+    monkeypatch.setattr(
+        "darkness.studio_pipeline.load_local_config",
+        lambda *a, **k: DarknessLocalConfig(workspace_root=str(config_workspace), workers={}),
+    )
+    store = StudioStore(studio_workspace)
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        coordinator = StudioCoordinator(
+            store,
+            qwen_factory=lambda run: FakeQwen(),
+            comfy_factory=lambda run: FakeComfy(),
+            worker_executor=FakeWorkerExecutor(),
+            executor=executor,
+        )
+        store.create("diverging-ws-v1", DESCRIPTION)
+        coordinator.submit("diverging-ws-v1")
+        first = wait_for(store, "diverging-ws-v1", "awaiting_review")
+        candidate = next(
+            item for item in first.stage("D1").evidence if item.metrics.get("selectable") is True
+        )
+        store.decide("diverging-ws-v1", "D1", "approve", "Looks good.", candidate.evidence_id)
+        coordinator.submit("diverging-ws-v1")
+        run = _wait_for_stage_settled(store, "diverging-ws-v1", "D2")
+    assert run.stage("D2").state == "approved", run.stage("D2").error
+
+
+def test_d2_needs_no_machine_config_when_a_worker_executor_is_injected(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Regression: D2 was the one load_local_config() call site of five with
+    no None guard, so running without config.local.toml crashed with
+    AttributeError: 'NoneType' object has no attribute 'workspace_root'
+    instead of the clear RuntimeError every other stage raises. The blob-path
+    computation no longer consults machine config at all, so this path is
+    simply gone rather than merely better-worded."""
+    monkeypatch.setattr("darkness.studio_pipeline.load_local_config", lambda *a, **k: None)
+    store = StudioStore(tmp_path)
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        coordinator = StudioCoordinator(
+            store,
+            qwen_factory=lambda run: FakeQwen(),
+            comfy_factory=lambda run: FakeComfy(),
+            worker_executor=FakeWorkerExecutor(),
+            executor=executor,
+        )
+        store.create("no-machine-config-v1", DESCRIPTION)
+        coordinator.submit("no-machine-config-v1")
+        first = wait_for(store, "no-machine-config-v1", "awaiting_review")
+        candidate = next(
+            item for item in first.stage("D1").evidence if item.metrics.get("selectable") is True
+        )
+        store.decide("no-machine-config-v1", "D1", "approve", "Looks good.", candidate.evidence_id)
+        coordinator.submit("no-machine-config-v1")
+        run = _wait_for_stage_settled(store, "no-machine-config-v1", "D2")
+    assert run.stage("D2").state == "approved", run.stage("D2").error
 
 
 def test_save_retries_a_transient_windows_permission_error_on_replace(
