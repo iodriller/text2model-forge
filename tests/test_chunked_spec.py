@@ -15,6 +15,7 @@ import pytest
 from darkness.chunked_spec import (
     ChunkedSpecCompiler,
     _clean_phrases,
+    _explicit_articulation_demanded,
     _explicit_equipment_demanded,
     _slug,
 )
@@ -238,6 +239,34 @@ def test_a_rigid_asset_gets_movable_parts_and_open_close():
     assert [item.component_id for item in spec.components] == ["left_door_leaf"]
     assert spec.components[0].motion == "rigid"
     assert spec.animations == ["open", "close"]
+
+
+def test_rigid_articulation_requires_an_explicit_moving_state():
+    assert _explicit_articulation_demanded("A door with two hinged leaves that opens outward.") is True
+    assert _explicit_articulation_demanded("A sealed fire hydrant with two capped outlets.") is False
+    assert _explicit_articulation_demanded("A workshop stool with no moving parts.") is False
+
+    sender = ScriptedSender(
+        classification={"asset_kind": "prop", "behavior": "rigid_articulated"},
+        identity={"title": "Fire Hydrant", "creative_direction": "Compact municipal ironwork."},
+        appearance={"silhouette": ["domed compact body"], "materials": ["cast iron"]},
+        production={"locked_features": ["two capped outlets"], "gameplay_readability": ["reads as hydrant"]},
+        items={
+            "items": [
+                {
+                    "name": "Outlet Cap",
+                    "connection": "threaded onto the body",
+                    "description": "A removable side cap.",
+                }
+            ]
+        },
+    )
+    compiler = _compiler(sender)
+    spec = compiler.compile("A compact red fire hydrant with two capped side outlets.")
+    assert spec.behavior == "static"
+    assert spec.components == []
+    assert spec.animations == []
+    assert any(item["chunk"] == "deterministic_behavior_guard" for item in compiler.trace)
 
 
 def test_grammar_forced_filler_is_rejected_before_it_reaches_the_spec():

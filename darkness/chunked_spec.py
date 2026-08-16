@@ -73,11 +73,15 @@ _PLACEMENT: dict[str, tuple[str, str, str]] = {
 }
 
 _BEHAVIOR_RULES = (
-    "static = scenery that never moves. "
-    "rigid_articulated = solid parts that hinge or rotate but never bend, such as a door or a lid. "
+    "static = an object or scene delivered in one fixed state; this is the default for nonliving objects "
+    "unless the description explicitly requests a moving state. Removable caps, fasteners, handles, or lids "
+    "do not make an asset articulated by themselves. "
+    "rigid_articulated = the description explicitly requires solid parts to open, close, hinge, rotate, slide, "
+    "or otherwise move through named states without bending. "
     "deformable_animated = a living body with a bendable skeleton; any character or creature that "
     "walks, attacks, or reacts. "
-    "simulated = driven by cloth, fluid, or particle simulation."
+    "simulated = driven by cloth, fluid, or particle simulation. "
+    "Classify the requested output behavior, not everything the real object could physically do."
 )
 
 _ASSET_KIND_RULES = (
@@ -216,6 +220,30 @@ def _explicit_equipment_demanded(description: str) -> bool:
     )
 
 
+def _explicit_articulation_demanded(description: str) -> bool:
+    """Require the brief, rather than model inference, to activate rigid motion.
+
+    A static fire hydrant was classified as articulated because its outlet
+    caps could physically be unscrewed. That is an invented production
+    requirement: D4-D7 would then build a rig the user never asked for. The
+    conservative contract is static unless the text actually requests motion
+    or a movable state. Explicit static/no-motion wording wins if a brief
+    mentions a physical mechanism only to rule it out.
+    """
+    text = re.sub(r"\s+", " ", description.lower())
+    if re.search(r"\b(static|fixed|non[- ]moving|unmoving)\b|\bno moving parts?\b", text):
+        return False
+    return bool(
+        re.search(
+            r"\b(open(?:s|ed|ing)?|clos(?:e|es|ed|ing)|hing(?:e|es|ed|ing)|"
+            r"rotat(?:e|es|ed|ing)|swing(?:s|ing)?|slid(?:e|es|ing)|fold(?:s|ed|ing)?|"
+            r"extend(?:s|ed|ing)?|retract(?:s|ed|ing)?|articulat(?:e|es|ed|ing)|"
+            r"movable|operable|deploy(?:s|ed|ing)?|transform(?:s|ed|ing)?)\b",
+            text,
+        )
+    )
+
+
 class ChunkedSpecCompiler:
     """Compile one StudioAssetSpec through many small calls.
 
@@ -291,6 +319,19 @@ class ChunkedSpecCompiler:
             max_tokens=120,
         )
         kind, behavior = classification.asset_kind, classification.behavior
+        if behavior == "rigid_articulated" and not _explicit_articulation_demanded(brief):
+            self.trace.append(
+                {
+                    "chunk": "deterministic_behavior_guard",
+                    "seconds": 0.0,
+                    "result": {
+                        "model_behavior": "rigid_articulated",
+                        "effective_behavior": "static",
+                        "reason": "the description does not explicitly request movable states",
+                    },
+                }
+            )
+            behavior = "static"
 
         # 2. Anatomy, only where the contract actually requires it.
         anatomy: str | None = None

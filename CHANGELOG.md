@@ -25,6 +25,8 @@ period, minor versions may change experimental worker and UI contracts.
   model qualification.
 - The small-model D0 classifier now defines the complete asset-kind taxonomy,
   including the standalone-prop versus multi-object-environment boundary.
+- Rigid-articulated stages now require motion explicitly requested by the
+  brief; removable real-world parts no longer invent an unwanted rig.
 
 ## [0.1.0] - 2026-07-13
 
