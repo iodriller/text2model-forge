@@ -10,10 +10,13 @@ machine, hash-bound human decisions, downstream invalidation, worker protocol,
 and model-lineage enforcement solve real integration and traceability problems.
 
 It is **not yet useful as a dependable end-user text-to-3D product**. The
-repository has no completed, reproducible live D0–D10 asset, the first 8 GB
-qualification corpus is unrun, several optional workers have unresolved or
-territory-limited terms, and the animated path is research-grade. A large test
-suite proves the coordinator and contracts; it cannot prove generator quality.
+repository has no completed, reproducible live D0–D10 asset. Its first ten-case
+8 GB qualification attempt reached real D1 concept review, but all ten cases
+failed the configured hard requirements; only 11 of 20 concept images passed
+the conservative alpha-mask preflight. Several optional workers also have
+unresolved or territory-limited terms, and the animated path is research-grade.
+A large test suite proves the coordinator and contracts; it cannot prove
+generator quality.
 
 Accordingly, the defensible public label is **developer preview**, not stable,
 production-ready, one-click text-to-3D, or a generator model. The repository
@@ -53,11 +56,11 @@ All gates are binary. A partial pass is a failed public-release gate.
 | License | Repository license, notices, contribution terms, security policy, and third-party matrix present | Implemented; not a legal opinion |
 | Secrets/privacy | All reachable commits pass a secret scan; owner accepts every historical author email becoming public | Secret scan passed locally; email consent unresolved |
 | Reproducible core install | Hash-locked clean install passes on Windows, Ubuntu, and macOS | Windows and bare Ubuntu passed locally; macOS/hosted evidence pending |
-| Package | Wheel installs outside the checkout and can load 13 manifests, resolve config, and run the demo | Passed locally from a clean environment; hosted evidence pending |
-| Container | Compose validates and the pinned, non-root image builds and becomes healthy | Passed locally as UID 10001 |
-| Deterministic behavior | Full randomized tests and deterministic D0–D10 demo pass | Passed locally: 355 tests, one environment skip, demo completed |
+| Package | Wheel installs outside the checkout and can load 13 manifests, resolve config, and run the demo | Passed locally from a clean Python 3.12 environment at evidence revision `974390f`; hosted evidence pending |
+| Container | Compose validates and the pinned, non-root image builds and becomes healthy | Passed locally at evidence revision `974390f` as UID 10001 with HTTP 200 from `/doctor` |
+| Deterministic behavior | Full randomized tests and deterministic D0–D10 demo pass | Passed locally: 360 tests, one environment skip, demo completed |
 | Security automation | Dependency audit, full-history secret scan, and CodeQL are green | Local audit has no known vulnerabilities; hosted checks pending |
-| Live usefulness | Exactly ten real 8 GB runs attempted; at least eight pass the checked-in recognition/geometry/surface/features rubric | **Failed: no live corpus evidence exists** |
+| Live usefulness | Exactly ten real 8 GB runs attempted; at least eight pass the checked-in recognition/geometry/surface/features rubric | **Failed at evidence revision `974390f`: 10/10 reached real D1 review, 0/10 satisfied its hard requirements, and no case reached a human-approved final asset** |
 | Release integrity | Tag matches package version; archives, wheel/sdist, checksums, SPDX SBOMs, and attestations publish | Workflow implemented; must not tag before preceding gates pass |
 
 ## Execution order
@@ -68,10 +71,12 @@ All gates are binary. A partial pass is a failed public-release gate.
    operating system.
 3. Have the owner decide whether the historical email exposure is acceptable
    and obtain an actual trademark/name review if commercial use is planned.
-4. On a physically observed 8 GB machine, run every prompt in
-   `golden/static-props.json` with real workers and exact model revisions.
-5. Record the human assessments, then run `vettedmesh golden evaluate`; publish
-   the portable gallery only if all ten were attempted and at least eight pass.
+4. In Studio, inspect the ten D1 concept reviews already generated on the
+   physically observed 8 GB machine. Record honest reject/retry decisions; do
+   not approve evidence that failed the hard requirements.
+5. Iterate the real workers through D2–D10, record human assessments, then run
+   `vettedmesh golden evaluate`; publish the portable gallery only if all ten
+   were attempted and at least eight pass.
 6. Re-run the dependency/legal matrix against the exact chosen models. A
    territory-limited or unresolved backend cannot support a globally cleared
    release.
