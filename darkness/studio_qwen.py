@@ -131,6 +131,34 @@ class GateAssessment(StrictModel):
     request_human_review: bool = True
 
 
+_NO_RECOMMENDATION = frozenset({"none", "no candidate", "neither candidate", "no recommendation"})
+
+
+def _validated_concept_selection(
+    assessment: GateAssessment,
+    candidate_ids: list[str],
+) -> str | None:
+    """Validate model-authored IDs without treating a correct reject-all as downtime.
+
+    The small live reviewer commonly returns a complete exact ranking but
+    writes ``recommended_evidence_id="none"`` after deciding every candidate
+    violates hard requirements. That is a valid negative review, not an ID
+    hallucination. Accept only an explicit no-selection sentinel in that one
+    state; a passing review still has to recommend one supplied ID, and the
+    ranking must contain every supplied ID exactly once in all cases.
+    """
+    expected = set(candidate_ids)
+    ranking = assessment.candidate_ranking
+    if len(ranking) != len(candidate_ids) or set(ranking) != expected:
+        raise ValueError("Qwen concept ranking did not contain each supplied evidence id exactly once")
+    if assessment.recommended_evidence_id in expected:
+        return assessment.recommended_evidence_id
+    normalized = assessment.recommended_evidence_id.strip().lower().replace("_", " ")
+    if not assessment.hard_requirements_satisfied and normalized in _NO_RECOMMENDATION:
+        return None
+    raise ValueError("Qwen concept recommendation was not one of the supplied evidence ids")
+
+
 class RevisionPlan(StrictModel):
     schema_version: Literal[1] = 1
     diagnosis: _ReviewSummary
@@ -856,9 +884,7 @@ DRAFT={draft.model_dump_json()}
             )
         except Exception:
             result = first
-        ids = {item[0] for item in images}
-        if set(result.candidate_ranking) != ids or result.recommended_evidence_id not in ids:
-            raise ValueError("Qwen concept ranking did not contain each supplied evidence id exactly once")
+        recommendation = _validated_concept_selection(result, [item[0] for item in images])
         return StudioQwenReview(
             review_id=f"d1.qwen.iteration-{stage.iteration:02d}",
             created_at=utc_now(),
@@ -868,7 +894,7 @@ DRAFT={draft.model_dump_json()}
             strengths=result.strengths,
             issues=result.issues,
             candidate_ranking=result.candidate_ranking,
-            recommended_evidence_id=result.recommended_evidence_id,
+            recommended_evidence_id=recommendation,
             recommended_changes=result.recommended_changes,
             confidence=result.confidence,
             hard_requirements_satisfied=result.hard_requirements_satisfied,
