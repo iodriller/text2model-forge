@@ -80,6 +80,17 @@ _BEHAVIOR_RULES = (
     "simulated = driven by cloth, fluid, or particle simulation."
 )
 
+_ASSET_KIND_RULES = (
+    "character = one person or person-like individual; "
+    "creature = one non-human living or monster-like individual; "
+    "prop = one self-contained object, including furniture, tools, containers, vehicles, and decor; "
+    "architecture = a building, structural construction, or building part such as a door, wall, or stair; "
+    "environment = a place, terrain, room, or scene composed of multiple objects, never one standalone object; "
+    "material = a surface or shader definition without its own object geometry; "
+    "vfx = a transient visual effect such as fire, smoke, sparks, or magic. "
+    "Classify the requested deliverable, not its presentation background."
+)
+
 # Canonical clip names for a body that animates. Deliberately fixed rather
 # than model-authored: these ids are consumed downstream by D7's donor
 # retarget catalogue, so an invented synonym would silently miss its donor.
@@ -268,13 +279,14 @@ class ChunkedSpecCompiler:
 
         # 1. Classification, reasoned first then constrained.
         analysis = self._prose(
-            "In 2-3 sentences of plain prose and no JSON, say what this asset is, and whether it is "
-            "scenery that never moves, an object with hinged rigid parts, or a living body with a "
-            f"bendable skeleton.\n{_BEHAVIOR_RULES}\nDESCRIPTION: {brief}"
+            "In 2-3 sentences of plain prose and no JSON, identify the single requested deliverable, "
+            "classify its asset kind, and say whether it is scenery that never moves, an object with "
+            "hinged rigid parts, or a living body with a bendable skeleton.\n"
+            f"{_ASSET_KIND_RULES}\n{_BEHAVIOR_RULES}\nDESCRIPTION: {brief}"
         )
         classification = self._extract(
             _Classification,
-            f"DESCRIPTION: {brief}\n\nANALYSIS: {analysis}\n\n{_BEHAVIOR_RULES}\n"
+            f"DESCRIPTION: {brief}\n\nANALYSIS: {analysis}\n\n{_ASSET_KIND_RULES}\n{_BEHAVIOR_RULES}\n"
             "Using the analysis, output the classification.",
             max_tokens=120,
         )

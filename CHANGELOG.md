@@ -23,6 +23,8 @@ period, minor versions may change experimental worker and UI contracts.
   product and Python-distribution collisions.
 - Product claims now distinguish deterministic orchestration tests from live
   model qualification.
+- The small-model D0 classifier now defines the complete asset-kind taxonomy,
+  including the standalone-prop versus multi-object-environment boundary.
 
 ## [0.1.0] - 2026-07-13
 

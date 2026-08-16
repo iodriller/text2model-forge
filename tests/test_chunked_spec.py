@@ -185,6 +185,38 @@ def test_a_static_prop_gets_no_animations_and_no_equipment_chunk():
     assert spec.anatomy_family is None
 
 
+def test_classification_defines_a_standalone_object_as_a_prop_not_an_environment():
+    """Regression from the first live golden run: the 4B model labelled one
+    workshop stool as an environment because the enum was supplied without a
+    taxonomy. Both the reasoning and constrained calls need the distinction;
+    otherwise either call can undo the other one's correct interpretation.
+    """
+    sender = ScriptedSender(
+        classification={"asset_kind": "prop", "behavior": "static"},
+        identity={"title": "Workshop Stool", "creative_direction": "Simple worn furniture."},
+        appearance={"silhouette": ["round three-legged seat"], "materials": ["wood"]},
+        production={"locked_features": ["three legs"], "gameplay_readability": ["reads as a stool"]},
+    )
+    _compiler(sender).compile("A single three-legged wooden workshop stool.")
+
+    free_call = next(call for call in sender.calls if "response_format" not in call)
+    classification_call = next(
+        call
+        for call in sender.calls
+        if "response_format" in call
+        and {
+            "asset_kind",
+            "behavior",
+        }
+        <= set(call["response_format"]["json_schema"]["schema"].get("properties", {}))
+    )
+    for call in (free_call, classification_call):
+        prompt = call["messages"][0]["content"]
+        assert "prop = one self-contained object" in prompt
+        assert "environment = a place, terrain, room, or scene composed of multiple objects" in prompt
+        assert "Classify the requested deliverable, not its presentation background" in prompt
+
+
 def test_a_rigid_asset_gets_movable_parts_and_open_close():
     sender = ScriptedSender(
         classification={"asset_kind": "architecture", "behavior": "rigid_articulated"},
