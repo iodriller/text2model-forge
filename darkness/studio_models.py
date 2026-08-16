@@ -198,6 +198,44 @@ def validate_stage_overrides(overrides: dict[str, Any] | None) -> None:
             or not 0 < value <= 30
         ):
             raise ValueError(f"the '{key}' override must be a number greater than 0 and at most 30")
+    render_size = overrides.get("render_size")
+    if render_size is not None and (
+        not isinstance(render_size, int) or isinstance(render_size, bool) or not 64 <= render_size <= 4096
+    ):
+        raise ValueError("the 'render_size' override must be a whole number between 64 and 4096")
+    for key in ("maximum_material_change_fraction",):
+        value = overrides.get(key)
+        if value is not None and (
+            isinstance(value, bool) or not isinstance(value, (int, float)) or not 0 < value <= 1
+        ):
+            raise ValueError(f"the '{key}' override must be a number greater than 0 and at most 1")
+    bone_influences = overrides.get("maximum_bone_influences")
+    if bone_influences is not None and (
+        not isinstance(bone_influences, int) or isinstance(bone_influences, bool) or not 1 <= bone_influences <= 8
+    ):
+        raise ValueError("the 'maximum_bone_influences' override must be a whole number between 1 and 8")
+    landmark_adjustments = overrides.get("landmark_adjustments")
+    if landmark_adjustments is not None:
+        # Only the top-level shape: adapters/blender_worker.py owns the deep
+        # semantics (landmark names, offset bounds) and rejects a malformed
+        # value itself. Duplicating that here would drift out of sync with it.
+        if not isinstance(landmark_adjustments, dict):
+            raise ValueError("the 'landmark_adjustments' override must be an object")
+        for name, offset in landmark_adjustments.items():
+            if not isinstance(name, str) or not isinstance(offset, list) or len(offset) != 3:
+                raise ValueError(
+                    "each 'landmark_adjustments' entry must map a landmark name to a 3-value offset"
+                )
+            if not all(isinstance(component, (int, float)) and not isinstance(component, bool) for component in offset):
+                raise ValueError("each 'landmark_adjustments' offset must contain three numbers")
+    weight_adjustments = overrides.get("weight_adjustments")
+    if weight_adjustments is not None:
+        # Same boundary as landmark_adjustments above: WEIGHT_JOINT_PAIRS and
+        # the transfer/radius fraction bounds live in the adapter, not here.
+        if not isinstance(weight_adjustments, list) or not all(
+            isinstance(item, dict) for item in weight_adjustments
+        ):
+            raise ValueError("the 'weight_adjustments' override must be an array of objects")
 
 
 class StudioStageState(StrictModel):
@@ -262,6 +300,17 @@ class StudioRun(StrictModel):
     # picks a [quality.<tier>] section that can change these two.
     concept_steps: int = Field(default=30, ge=1, le=150)
     concept_cfg: float = Field(default=6.0, gt=0, le=30)
+    # How D0 compiles the description into a spec, and how long any single
+    # LLM call may take. "chunked" exists so a 7-8B local model can satisfy
+    # StudioAssetSpec at all -- see darkness/chunked_spec.py. Stored per run
+    # so a resumed run keeps the strategy it was compiled under.
+    spec_strategy: Literal["monolithic", "chunked"] = "monolithic"
+    llm_timeout_seconds: float = Field(default=120, gt=0, le=3600)
+    # Evict the other GPU service before each LLM / ComfyUI call. Off by
+    # default because it costs a model reload every switch; needed on a card
+    # too small to hold the reviewer and the image model at once. See
+    # _VramHandoff in studio_pipeline.py.
+    vram_handoff: bool = False
     # Which profiles/<name>.toml this run resolves its per-stage settings
     # from. Stored so a resumed run keeps the configuration it started with
     # rather than silently adopting whatever the profile says today.
@@ -269,6 +318,15 @@ class StudioRun(StrictModel):
     spec: StudioAssetSpec | None = None
     stages: list[StudioStageState]
     event_count: int = 0
+    # A visibility flag only -- hides a run from the dashboard's default view.
+    # Deliberately not a delete: this system's evidence and decisions are
+    # append-only (see AGENTS.md's Human Gate Invariants), so there is no
+    # "remove a run" action, only "stop showing it by default." Archiving
+    # never changes `state`, is reversible, and StudioStore.list() still
+    # returns archived runs -- callers that need every run regardless of
+    # visibility (recover_interrupted_runs, artifact serving) must not filter
+    # on this; only the dashboard and the CLI's `list` do, and only by choice.
+    archived: bool = False
 
     def stage(self, stage_id: str) -> StudioStageState:
         for item in self.stages:

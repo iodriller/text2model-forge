@@ -1,0 +1,2 @@
+# Runtime plus the repository's test and coverage tools.
+-e .[dev]

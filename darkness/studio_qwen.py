@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import base64
+import io
 import json
 from pathlib import Path
 import re
@@ -23,10 +24,19 @@ from .studio_models import (
 
 class ConceptPlan(StrictModel):
     schema_version: Literal[1] = 1
-    positive_prompt: str = Field(min_length=80)
-    negative_prompt: str = Field(min_length=20)
+    # The upper bounds are load-bearing, not decoration. A grammar-constrained
+    # decoder will happily generate an unbounded string forever; if it is still
+    # inside one when max_tokens runs out, the response is cut off mid-string
+    # and the whole object fails as invalid JSON -- grammar guarantees shape
+    # only while the model keeps producing tokens. Observed on
+    # qwen3-vl:8b-instruct: positive_prompt ran to ~8.5k characters and both
+    # attempts died with "EOF while parsing a string". These caps are far above
+    # any useful CLIP-conditioned prompt (SDXL stops attending long before
+    # this) and keep generation inside the 1600-token budget below.
+    positive_prompt: str = Field(min_length=80, max_length=1400)
+    negative_prompt: str = Field(min_length=20, max_length=700)
     seeds: list[int] = Field(min_length=2, max_length=2)
-    rationale: str = Field(min_length=1)
+    rationale: str = Field(min_length=1, max_length=700)
 
     @model_validator(mode="after")
     def distinct_seeds(self) -> "ConceptPlan":
@@ -221,8 +231,48 @@ def _history(stage: StudioStageState) -> str:
     )
 
 
-def _image_content(path: Path) -> dict[str, object]:
-    encoded = base64.b64encode(path.read_bytes()).decode("ascii")
+# Longest edge, in pixels, of an image handed to the vision reviewer. This is
+# the single highest-leverage number for local-model throughput, because a
+# vision transformer's cost is driven by patch count, which is quadratic in
+# image size. Qwen-VL tokenises at ~28 px patches, so D4's 1440x1392 rig
+# stress board alone is roughly 2,500 vision tokens -- and Ollama serves an
+# 8B model with a 4,096-token context by default. Two such images plus the
+# spec and history do not fit; the server thrashes and the call runs past
+# even a 900 s ceiling, which is what "ReadTimeout" at D4 actually was.
+#
+# At 768 px the same board is about 750 raw patches, comfortably inside the
+# window, and nothing is lost for the judgement being asked: these reviews
+# ask "is the deformation sane", "is the sword in the right hand" -- gross
+# structure, never pixel detail. The full-resolution file remains on disk as
+# evidence; only the copy handed to the model is reduced.
+VISION_MAX_EDGE = 768
+
+
+def _image_content(path: Path, *, max_edge: int = VISION_MAX_EDGE) -> dict[str, object]:
+    raw = path.read_bytes()
+    try:
+        from PIL import Image
+
+        with Image.open(path) as image:
+            if max(image.size) > max_edge:
+                image = image.convert("RGB")
+                image.thumbnail((max_edge, max_edge), Image.LANCZOS)
+                buffer = io.BytesIO()
+                # JPEG rather than PNG: these are lit renders and photographic
+                # boards, where PNG is several times larger for no benefit the
+                # reviewer can see, and the base64 payload is itself part of
+                # the request the local server has to parse.
+                image.save(buffer, format="JPEG", quality=88)
+                encoded = base64.b64encode(buffer.getvalue()).decode("ascii")
+                return {
+                    "type": "image_url",
+                    "image_url": {"url": f"data:image/jpeg;base64,{encoded}"},
+                }
+    except Exception:
+        # A reviewer running on the original bytes is far better than a stage
+        # that dies because Pillow could not read one diagnostic PNG.
+        pass
+    encoded = base64.b64encode(raw).decode("ascii")
     return {
         "type": "image_url",
         "image_url": {"url": f"data:image/png;base64,{encoded}"},
@@ -267,11 +317,43 @@ def _critic_history(stage: StudioStageState) -> str:
 
 
 class StudioQwen:
-    def __init__(self, *, base_url: str, model: str) -> None:
-        self.client = LocalDeployStructuredClient(base_url=base_url, timeout_seconds=120)
+    def __init__(
+        self,
+        *,
+        base_url: str,
+        model: str,
+        spec_strategy: str = "monolithic",
+        timeout_seconds: float = 120,
+    ) -> None:
+        # 120s suits a fast hosted endpoint. A 7-8B model generating a
+        # multi-array chunk on a laptop GPU can legitimately exceed it, so
+        # this is configurable rather than fixed -- a timeout here is
+        # indistinguishable at the gate from a real model failure.
+        self.client = LocalDeployStructuredClient(base_url=base_url, timeout_seconds=timeout_seconds)
         self.model = model
+        # "monolithic" asks for the whole StudioAssetSpec in one constrained
+        # call -- what the qualified 27B model does well. "chunked" composes
+        # it from many small calls instead; see darkness/chunked_spec.py for
+        # why a 7-8B model needs that and measurements showing it works.
+        # Both paths end at the same StudioAssetSpec and the same
+        # _validate_explicit_handedness check below.
+        if spec_strategy not in {"monolithic", "chunked"}:
+            raise ValueError("spec_strategy must be 'monolithic' or 'chunked'")
+        self.spec_strategy = spec_strategy
+        self.last_spec_trace: list[dict[str, object]] = []
 
     def compile_spec(self, description: str) -> StudioAssetSpec:
+        if self.spec_strategy == "chunked":
+            from .chunked_spec import ChunkedSpecCompiler
+
+            compiler = ChunkedSpecCompiler(self.client, self.model)
+            spec = compiler.compile(description)
+            self.last_spec_trace = compiler.trace
+            self._validate_explicit_handedness(description, spec)
+            return spec
+        return self._compile_spec_monolithic(description)
+
+    def _compile_spec_monolithic(self, description: str) -> StudioAssetSpec:
         prompt = f"""
 You are Qwen in ASSET ARCHITECT mode for Asset Forge Darkness. Convert the user's single description into one original,
 production-ready StudioAssetSpec. First classify asset_kind and behavior. The system accepts characters, creatures,
@@ -363,7 +445,10 @@ USER_DESCRIPTION={description}
         prompt = f"""
 You are Qwen in DOER mode for the D1 asset concept gate. Produce one precise SDXL prompt shared by two NEW seeds.
 Show the entire asset in a readable production concept, orthographic-feeling three-quarter view, centered and fully
-inside frame on a simple studio background. Apply the structured asset kind, behavior, components, dimensions,
+inside frame on a FLAT PURE GREEN chroma-key background (RGB near 0,177,64) with no floor shadow and no
+gradient or vignette. That backdrop is not a style choice: D2 keys this exact approved image to RGBA by
+flood-filling the background inward from the border, and its test is green >= blue * 1.20, which a neutral
+grey studio backdrop fails -- see make_chroma_alpha in darkness/studio_comfy.py. Apply the structured asset kind, behavior, components, dimensions,
 materials, and locked features literally. For a character, show every equipment item simultaneously with correct
 anatomical handedness and believable attachment/grip; the sword must be in the actual right hand and the shield on
 the actual left arm when specified. For a door, wall, prop, or other static/dynamic object, show its construction and
@@ -445,7 +530,7 @@ not an SDXL prompt and not an explanation. {source_rule}
 
 The target is an original, premium hand-painted stylized 3D fantasy game concept: smooth curved forms, believable
 anatomy, physically coherent armor and equipment, controlled studio lighting, readable medium-scale details, and a
-simple neutral studio background. Explicitly prohibit pixel art, voxel/block forms, 8-bit rendering, retro sprites,
+flat pure green chroma-key background. Explicitly prohibit pixel art, voxel/block forms, 8-bit rendering, retro sprites,
 hard black contour lines, chibi proportions, text, logos, watermarks, duplicate people, extra limbs, equipment racks,
 and floating equipment. Do not name, imitate, or refer to third-party franchises.
 

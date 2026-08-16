@@ -18,6 +18,11 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+local-ai = [
+  # Required by adapters/install_qwen_image_edit_models.py. Keep heavyweight
+  # ComfyUI/PyTorch dependencies in ComfyUI's own isolated environment.
+  "huggingface-hub>=0.27,<2",
+]
 dev = [
   "pytest>=8,<9",
   # Randomizes test order every run. Earned its place: it caught a real

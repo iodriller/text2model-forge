@@ -147,6 +147,17 @@ def resolve_settings(
             merged = _deep_merge(merged, {"studio": overlay})
             for key in _flatten({"studio": overlay}):
                 origin[key] = "machine"
+        # [stage_defaults] is the per-stage counterpart of [studio_defaults].
+        # Without it a machine could tune the [studio] table but nothing under
+        # [stages.*], so a setting that genuinely depends on the hardware --
+        # D3's manifold_policy, which is only needed because a small card
+        # forces an isosurface D2 backend -- had no home outside editing a
+        # checked-in profile.
+        stage_overlay = machine_data.get("stage_defaults")
+        if isinstance(stage_overlay, dict):
+            merged = _deep_merge(merged, {"stages": stage_overlay})
+            for key in _flatten({"stages": stage_overlay}):
+                origin[key] = "machine"
 
     if run_overrides:
         merged = _deep_merge(merged, run_overrides)
@@ -176,6 +187,9 @@ _STUDIO_RUN_FIELDS = (
     "style_lora_trigger",
     "prop_lora",
     "prop_lora_strength",
+    "spec_strategy",
+    "llm_timeout_seconds",
+    "vram_handoff",
 )
 
 

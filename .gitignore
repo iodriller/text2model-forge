@@ -1,6 +1,9 @@
 # Machine-local config: real binary paths and env vars, never portable.
 config.local.toml
 config.local.json
+# The container sample has no machine paths or credentials and is intentionally
+# versioned; only the repository-root machine config stays ignored.
+!docker/config.local.toml
 
 # Python
 __pycache__/
@@ -22,3 +25,7 @@ workspaces/
 
 # Local run output, never checked in.
 /AssetForgeRuns/
+
+# Machine-local recovery notes produced while repairing a ComfyUI install.
+/.comfyui-revert-to.txt
+/.comfyui-torch-before.txt

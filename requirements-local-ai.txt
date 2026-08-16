@@ -1,0 +1,2 @@
+# Runtime plus the model-downloader dependency used by the setup launchers.
+-e .[local-ai]

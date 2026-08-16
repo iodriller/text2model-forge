@@ -1,0 +1,53 @@
+name: asset-forge
+
+services:
+  studio:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    init: true
+    restart: unless-stopped
+    ports:
+      # Studio has no account system. Keep it reachable only from this host.
+      - "127.0.0.1:${ASSET_FORGE_PORT:-8766}:8766"
+    volumes:
+      - asset-forge-workspace:/workspace
+      - type: bind
+        source: ${ASSET_FORGE_DOCKER_CONFIG:-./docker/config.local.toml}
+        target: /app/config.local.toml
+        read_only: true
+    extra_hosts:
+      # Works on Docker Desktop and Docker Engine 20.10+.
+      - "host.docker.internal:host-gateway"
+    depends_on:
+      ollama:
+        condition: service_healthy
+
+  ollama:
+    image: ollama/ollama:0.32.4
+    init: true
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:${ASSET_FORGE_OLLAMA_PORT:-11434}:11434"
+    volumes:
+      - asset-forge-ollama:/root/.ollama
+    healthcheck:
+      test: ["CMD", "ollama", "list"]
+      interval: 5s
+      timeout: 5s
+      retries: 24
+      start_period: 10s
+
+  reviewer-model:
+    image: ollama/ollama:0.32.4
+    restart: "no"
+    environment:
+      OLLAMA_HOST: http://ollama:11434
+    command: ["pull", "qwen3-vl:8b-instruct"]
+    depends_on:
+      ollama:
+        condition: service_healthy
+
+volumes:
+  asset-forge-workspace:
+  asset-forge-ollama:

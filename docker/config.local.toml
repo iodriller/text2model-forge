@@ -1,0 +1,20 @@
+# Container-local defaults. Override the mounted file with
+# ASSET_FORGE_DOCKER_CONFIG=/absolute/path/to/another-config.local.toml.
+schema_version = 1
+workspace_root = "/workspace"
+
+[studio_defaults]
+model = "qwen3-vl:8b-instruct"
+localdeploy_url = "http://ollama:11434/v1"
+# ComfyUI remains host-native so each OS can use its supported GPU path.
+# It must listen beyond host loopback to be reachable from this container.
+comfy_url = "http://host.docker.internal:8188"
+concept_backend = "auto"
+checkpoint = "sd_xl_base_1.0.safetensors"
+style_lora = ""
+spec_strategy = "chunked"
+llm_timeout_seconds = 600
+
+[workers."canonical.short_biped"]
+command_prefix = ["/usr/local/bin/python", "/app/adapters/canonical_short_biped_worker.py"]
+[workers."canonical.short_biped".environment]

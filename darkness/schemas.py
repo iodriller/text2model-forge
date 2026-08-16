@@ -118,6 +118,17 @@ class DarknessLocalConfig(StrictModel):
     schema_version: Literal[1] = 1
     workspace_root: str = Field(min_length=1)
     workers: dict[str, WorkerBinding] = Field(default_factory=dict)
+    # This machine's [studio_defaults] overlay. darkness/settings.py reads it
+    # out of the SAME config.local.toml (see resolve_settings' layer 3) and
+    # README documents it, but this model is strict -- so without the field
+    # declared here, writing the documented table made load_local_config()
+    # raise extra_forbidden and took the worker bindings down with it.
+    # Deliberately untyped values: settings.py owns their meaning, this model
+    # only owns the worker bindings, and duplicating the studio schema here
+    # would give two places to update for every new tunable.
+    studio_defaults: dict[str, Any] = Field(default_factory=dict)
+    # Per-stage counterpart of studio_defaults; see settings.resolve_settings.
+    stage_defaults: dict[str, Any] = Field(default_factory=dict)
 
 
 class ExternalWorkerRequest(StrictModel):

@@ -35,15 +35,106 @@ animated, rigged things -- see `asset_kind` and `behavior` in a run's spec.
 
 ## Quick start
 
+### One-command setup and start
+
+On Windows, run the PowerShell launcher from a fresh checkout:
+
 ```powershell
+.\asset-forge.ps1
+```
+
+On Linux or macOS, use the native Bash launcher:
+
+```bash
+bash ./asset-forge.sh
+```
+
+The launchers check for Python 3.12+, create the reusable `.venv`, install
+the editable project when needed, create a machine-local config only when one
+does not already exist, run the offline D0-D10 smoke test, start selected
+local services, and opens Studio. Linux/macOS use a pinned per-user `uv`
+bootstrap when Python is missing, then fall back to Homebrew or the native
+system package manager only where a tool genuinely needs it. Windows tries
+WinGet user scope, normal scope, and finally UAC elevation. The first run
+offers four setups:
+
+- **Full Qwen stack** -- Ollama + a small Qwen reviewer, ComfyUI, native Qwen
+  Image 2512, SDXL for surface work, Hunyuan3D-2, and Blender.
+- **Full SDXL stack** -- the same local base stack with SDXL selected for D1.
+- **Existing services** -- keep using ComfyUI/reviewer/models already installed.
+- **Core only** -- install and run the control plane without live generators.
+
+Large model downloads show progress and require accepting their own model
+terms. For unattended setup, make every choice explicit:
+
+```powershell
+.\asset-forge.ps1 -Action install -AiStack qwen -NonInteractive `
+  -AcceptSdxlLicense -AcceptHunyuanLicense
+.\asset-forge.ps1 -AiStack existing       # later runs: check core, then start
+.\asset-forge.ps1 -Action repair           # retry/repair the selected setup
+.\asset-forge.ps1 -Action doctor           # concise service + worker readiness
+```
+
+```bash
+bash ./asset-forge.sh install --ai-stack qwen --non-interactive \
+  --accept-sdxl-license --accept-hunyuan-license
+bash ./asset-forge.sh start --ai-stack existing
+bash ./asset-forge.sh repair
+bash ./asset-forge.sh doctor
+```
+
+Package setup is bounded by three attempts by default (`-MaxAttempts` on
+Windows, `--max-attempts` on Linux/macOS). Pass `-NoElevation` or
+`--no-elevation` to prohibit the administrator fallback; non-interactive sudo
+uses `sudo -n` so it cannot hang waiting for a password. `-NoBrowser` or
+`--no-browser` suppresses both browser tabs. Existing
+`config.local.toml` files are never overwritten. The launcher installs the
+usable local D0-D4/D8-D9 base, but the System page still reports specialized
+workers, motion sources, and Unity validation that require separate
+qualification or tooling.
+
+### Docker Compose
+
+Docker runs Studio plus the local Qwen reviewer with persistent named volumes:
+
+```bash
+docker compose up --build
+```
+
+Open `http://127.0.0.1:8766`. The first run also pulls
+`qwen3-vl:8b-instruct`; model data and Studio runs survive container rebuilds.
+Studio is published on host loopback only because it has no account/login
+boundary. On an NVIDIA Docker host with the NVIDIA Container Toolkit, enable
+GPU access for Ollama with:
+
+```bash
+docker compose -f compose.yaml -f compose.nvidia.yaml up --build
+```
+
+ComfyUI stays host-native in this portable Compose setup so Windows, Linux,
+and Apple Silicon can each use their supported GPU runtime. The supplied
+container config looks for it at `host.docker.internal:8188`; a host ComfyUI
+instance must use a container-reachable bind, with the host firewall keeping
+8188 private. Override the mounted typed config with
+`ASSET_FORGE_DOCKER_CONFIG=/absolute/path/config.local.toml` when services live
+elsewhere. `docker compose config` is a fast configuration check, and
+`docker compose down` stops the stack without deleting either named volume.
+
+### Manual/core-only setup
+
+```bash
 python -m venv .venv
-.venv\Scripts\pip install -e .
-$env:PYTHONPATH = "."  # not required once installed, shown for clarity
-python -m darkness studio --workspace C:/AssetForgeRuns --open-browser
+# Windows: .venv\Scripts\python -m pip install -r requirements.txt
+# Linux/macOS: .venv/bin/python -m pip install -r requirements.txt
+python -m darkness studio --workspace ./AssetForgeRuns --open-browser
 ```
 
 This opens the local browser control plane at `http://127.0.0.1:8766`. Describe
-one asset, pick a configuration profile, and step through the gates. Every
+one asset, pick a configuration profile, optionally override the text-to-2D
+backend (Auto, native Qwen Image 2512, or any installed SDXL checkpoint),
+reviewer model, spec strategy, steps, and CFG, then step through the gates. The
+form discovers installed ComfyUI and reviewer models when those services are
+online. Every
 decision -- approve, reject, retry, edit, skip, or roll back -- is explained on
 the page; see [Human control](#human-control) below for what each one does.
 
@@ -54,6 +145,35 @@ orchestration substrate work end to end without any of them:
 ```powershell
 python -m darkness demo --workspace C:/AssetForgeRuns/demo
 ```
+
+## Check the machine first
+
+```powershell
+python -m darkness doctor          # ~1s: hardware, recommended stack, every assumption
+python -m darkness doctor --deep   # ~17s: also launches Blender to verify its API and your donor rig
+```
+
+`doctor` answers two questions `darkness workers` cannot. First, *what stack
+does this hardware imply* -- the reviewer model's real budget is what is left
+after ComfyUI, not the size of the card, and getting that wrong makes every
+vision review look like a timeout. Second, *do the assumptions between stages
+hold here* -- whether ComfyUI has the nodes your D2 backend needs, whether the
+D3 voxel is fine enough for the fingers D7 will look for, whether the donor
+motion's bones match the retarget contract.
+
+Those are the failures that otherwise surface three stages and twenty minutes
+into a run, one at a time. `doctor` finds all of them at once, each with the
+fix, and exits non-zero if any would fail.
+
+Pick the matching profile rather than tuning settings individually:
+
+```powershell
+python -m darkness config show --profile 8gb
+```
+
+`profiles/8gb.toml` is one decision -- "8 GB card, ComfyUI and the reviewer
+co-resident" -- and every value in it follows from that. See
+`docs/free-local-8gb-setup.md` for the measurements behind each one.
 
 ## Configuration
 
@@ -100,11 +220,64 @@ Every decision hash-binds the evidence it saw and is recorded in an append-only
 history -- nothing is silently overwritten, and evidence from an invalidated
 attempt stays in the run's event log even after a stage resets.
 
+Invalidation never reopens a stage the compiled D0 contract ruled out. A static
+prop has no skeleton, rig, skin weights, or motion, so rejecting its concept --
+or rolling back past those stages -- leaves them skipped rather than scheduling
+work the asset does not need. Only re-running D0, which recompiles the spec,
+can change whether a stage applies.
+
+Every stage in the timeline is a link to its own page, so an approved stage's
+evidence, every Qwen review it received, and the full human decision record
+stay reachable for the life of the run -- not only while it is the current
+stage.
+
 **Scope note on override values:** all six actions work at every gated stage,
-but the JSON *override values* carried by retry/edit are currently consumed
-only by D1 (Concept), where `{"seed": N}` pins the first concept seed. The
-other stage runners accept and record overrides but do not yet read them --
-see "Known gaps" below.
+but the JSON *override values* carried by retry/edit are consumed only where
+the underlying stage actually has a per-attempt parameter to change:
+
+- **D1 (Concept)** -- `{"seed": N}` pins the first concept seed.
+- **D4 (Canonical structure), non-rigid path only** -- `{"landmark_adjustments":
+  {...}, "weight_adjustments": [...], "render_size": N, "maximum_material_change_fraction": F,
+  "maximum_bone_influences": N}` reach the Blender rig-proposal worker
+  directly; `adapters/blender_worker.py` applies landmark offsets and
+  joint-pair weight transfers and validates their deep shape itself.
+
+D7 (Motion), D8 (Surface), and D10 (Runtime validation) are not seed-driven
+or parameter-driven the way D1/D4 are -- D7 retargets from a fixed donor
+motion catalog, D8's paint bake is deterministic from the spec text, and D10
+only packages already-approved D9 evidence. There is no per-attempt lever in
+any of the three to wire an override onto; adding one there would be a
+control with nothing behind it. A rejection or edit at those stages still
+works exactly as everywhere else -- the comment carries a correction to
+Qwen, which is how D7/D8's own mediator loop actually improves an attempt.
+
+### Driving a gate headlessly
+
+The browser is not the only way to record a decision. `darkness studio`
+without a subcommand launches it exactly as before; three subcommands drive
+the same `StudioStore`/`StudioCoordinator` without it:
+
+```powershell
+python -m darkness studio list --workspace C:/AssetForgeRuns
+python -m darkness studio show --workspace C:/AssetForgeRuns --run-id asset-...
+python -m darkness studio decide --workspace C:/AssetForgeRuns --run-id asset-... `
+  --stage-id D1 --decision approve --selected-evidence-id d1-i01-candidate-1 `
+  --comment "Looks good."
+```
+
+`decide` calls the identical `StudioStore.decide()` the web form's
+`/decision` route calls, so validation and state-machine effect are exactly
+the same either way. By default it then drives the pipeline on the calling
+thread until the next stopping point (a gate, completion, failure, or block)
+and prints the resulting run state; pass `--no-resume` to only record the
+decision, matching a browser tab that records a decision and is then closed
+without the coordinator being resubmitted. `--overrides` takes the same JSON
+object the web form's Overrides field does.
+
+**Do not run `darkness studio decide` against the same `--workspace` while
+`darkness studio serve` is running against it.** `StudioStore`'s lock is
+in-process only, not a cross-process file lock; a concurrent load-modify-save
+from each process can silently clobber the other's write.
 
 ## The LLM optimizer is optional
 
@@ -187,10 +360,15 @@ tests/                   Both packages' test suites (pytest).
 
 ```powershell
 python -m venv .venv
-.venv\Scripts\pip install -e ".[dev]"
+.venv\Scripts\python -m pip install -r requirements-dev.txt
 python -m pytest tests -q
 python -m darkness demo --workspace C:/AssetForgeRuns/demo
 ```
+
+`requirements.txt`, `requirements-dev.txt`, and
+`requirements-local-ai.txt` are thin entry points; dependency versions live
+in `pyproject.toml` so the launchers, local installs, and Docker build share one
+source of truth.
 
 The demo command exercises the full D0-D10 orchestration substrate
 deterministically, without a GPU or any of the real generation workers -- it is

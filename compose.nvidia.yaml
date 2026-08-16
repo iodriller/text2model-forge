@@ -1,0 +1,11 @@
+# Optional overlay for NVIDIA hosts with the NVIDIA Container Toolkit.
+# Usage: docker compose -f compose.yaml -f compose.nvidia.yaml up --build
+services:
+  ollama:
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]

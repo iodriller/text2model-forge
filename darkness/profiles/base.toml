@@ -31,6 +31,27 @@ style_lora_strength = 0.8
 style_lora_trigger = "World of Warcraft cinematic style"
 prop_lora = ""
 prop_lora_strength = 0.6
+# How D0 turns the description into a StudioAssetSpec.
+#   monolithic -- one constrained call for the whole spec. What the qualified
+#                 27B model does well, and the long-standing behaviour.
+#   chunked    -- many small calls, assembled deterministically. Needed for
+#                 7-8B local models: measured on an RTX 3080 Laptop, the
+#                 monolithic call returned `equipment: []` in ~119s and failed
+#                 the handedness contract, while chunked compiled the same
+#                 knight correctly in ~18s. See darkness/chunked_spec.py.
+spec_strategy = "monolithic"
+# Per-call ceiling for the LLM endpoint. A hosted endpoint answers in
+# seconds; a local 8B model generating a multi-array chunk can legitimately
+# take longer, and a timeout is indistinguishable at the gate from a real
+# model failure.
+llm_timeout_seconds = 120
+# Evict the other GPU service before each LLM / ComfyUI call. Costs a model
+# reload on every switch, so it is off by default; turn it on when the card
+# cannot hold the reviewer and the image model at once. Measured on an 8 GB
+# RTX 3080 Laptop: idle ComfyUI + a resident 8B reviewer left 250 MiB free
+# and D1's planning call exceeded a 600 s timeout; freeing both returned
+# ~7 GB. See _VramHandoff in darkness/studio_pipeline.py.
+vram_handoff = false
 
 [optimizer]                           # DOCUMENTED -- see adapters/optimize_short_biped_rig.py
 # The LLM optimizer (darkness/optimizer.py) is a separate, explicitly
@@ -107,6 +128,42 @@ render_size = 512
 maximum_material_change_fraction = 0.03
 weld_distance = 0.00005               # deformable assets only; static uses 0.0
 timeout_seconds = 900
+# How D3 reaches a manifold surface before its topology hard gate.
+#   weld_only -- remove_doubles + keep-largest-component only. Correct when
+#                D2's backend already emits near-manifold geometry, and the
+#                long-standing default: it never touches your topology.
+#   if_needed -- additionally voxel-remesh (OpenVDB, inside Blender) when the
+#                incoming mesh is actually non-manifold or has holes.
+#   always    -- voxel-remesh unconditionally.
+# Set this to "if_needed" whenever [stages.D2].backend is an isosurface
+# generator such as hunyuan3d. Measured on a real 8 GB knight run: the
+# Hunyuan3D mesh arrived with 30,258 non-manifold edges, weld+filter got it
+# to 28,491 (a 6% dent) and D3 failed its gate; voxel remesh took it to 0 in
+# 0.5 s on CPU. A non-manifold edge has three or more faces on it and no
+# duplicate vertices to merge, so no weld distance can ever fix one.
+manifold_policy = "weld_only"
+# Voxel size as a fraction of the asset's longest axis, so it is independent
+# of asset scale.
+#
+# Pick this from the smallest feature that must stay TOPOLOGICALLY SEPARATE,
+# not from how the silhouette looks. Voxelisation fuses anything thinner than
+# about two voxels into one blob, and D7's grip builder searches the mesh
+# near the hand for 2-4 distinct finger branches. On a 1.97 m knight:
+#   0.006 -> 11.8 mm voxels -> fingers FUSE  -> D7 fails with
+#            "grip topology did not resolve the expected digit branches: []"
+#   0.003 ->  5.9 mm voxels -> fingers survive
+# Human fingers are roughly 15 mm across, so stay at or below 0.003 for any
+# character that has to grip something. Surface detail below the voxel size
+# is recovered at D8's texture bake; separated fingers cannot be recovered
+# at all once fused, which is why this errs fine.
+voxel_fraction = 0.003
+# Visual-change budget that applies ONLY when a voxel remesh actually ran.
+# maximum_material_change_fraction above assumes cleanup barely moves a
+# vertex, which is true of remove_doubles and false of a rebuild. Measured on
+# the knight: front 1.5%, back 2.9%, left 14.0%, right 12.7%, and flat across
+# voxel sizes -- it is the rebuild, not lost resolution. Identity is still
+# enforced by D3's Qwen review against the approved concept and the D4 gate.
+maximum_material_change_fraction_remeshed = 0.25
 
 [stages.D4]                           # WIRED -- canonical structure / rig probe
 render_size = 512

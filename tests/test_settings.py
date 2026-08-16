@@ -182,9 +182,17 @@ def test_new_studio_run_with_custom_override_actually_changes_the_field():
     assert run.checkpoint == "other.safetensors"
 
 
-def test_cli_config_show_prints_value_and_origin_for_every_key():
+def test_cli_config_show_prints_value_and_origin_for_every_key(tmp_path):
     result = subprocess.run(
-        [sys.executable, "-m", "darkness", "config", "show", "--profile", "advanced"],
+        [
+            sys.executable, "-m", "darkness", "config", "show", "--profile", "advanced",
+            # A subprocess cannot see conftest's monkeypatch, so it would read
+            # the developer's real config.local.toml and report "set_by:
+            # machine" for anything that file overrides. Point it at a path
+            # that cannot exist so the assertions below stay about base and
+            # profile layers only.
+            "--machine-path", str(tmp_path / "absent.toml"),
+        ],
         cwd=Path(__file__).resolve().parents[1],
         capture_output=True,
         text=True,
@@ -195,9 +203,12 @@ def test_cli_config_show_prints_value_and_origin_for_every_key():
     assert report["studio.model"] == {"value": "qwen3_6_27b", "set_by": "base"}
 
 
-def test_cli_config_show_values_only_is_plain_merged_json():
+def test_cli_config_show_values_only_is_plain_merged_json(tmp_path):
     result = subprocess.run(
-        [sys.executable, "-m", "darkness", "config", "show", "--profile", "simple", "--values-only"],
+        [
+            sys.executable, "-m", "darkness", "config", "show", "--profile", "simple",
+            "--values-only", "--machine-path", str(tmp_path / "absent.toml"),
+        ],
         cwd=Path(__file__).resolve().parents[1],
         capture_output=True,
         text=True,

@@ -37,6 +37,8 @@ python -m pytest tests -q
 python -m darkness demo --workspace C:/AssetForgeRuns/demo
 python -m darkness config show --profile advanced
 python -m darkness studio --workspace C:/AssetForgeRuns --open-browser
+python -m darkness studio list --workspace C:/AssetForgeRuns
+python -m darkness doctor --deep
 python -m darkness workers
 ```
 
@@ -59,6 +61,13 @@ gitignored; copy `machine.example.toml` to get one.
   system -- it is what stops a gated or territory-restricted model from
   silently reaching a release export. Never weaken a check here to unblock a
   single asset; fix the asset's lineage instead.
+- `darkness/hardware.py`, `darkness/preflight.py`: what this machine is,
+  what stack that implies, and whether every cross-stage assumption holds.
+  Every constant in `recommend_stack()` was discovered by a failed pipeline
+  run; adding a new backend means adding its assumption here, not just its
+  code, or the next person rediscovers it the same expensive way. A check
+  that reports a problem must carry a `remedy` -- a diagnosis without a fix
+  just moves the guessing.
 - `darkness/settings.py`: the layered configuration resolver. It only merges
   plain data and knows nothing about StudioRun; `studio_overrides()` is the
   one place that translates resolved config into StudioRun constructor
@@ -86,6 +95,14 @@ gitignored; copy `machine.example.toml` to get one.
   stage they're recorded against; `skip` does not; `rollback` invalidates
   from its target stage forward, inclusive. Get this wrong and a run can
   promote work built on since-invalidated evidence.
+- `_invalidate_from()` resets a stage to `pending` only when
+  `stage.applicable` is True. A stage D0's compiled contract ruled out
+  (`applicable=False` -- a static prop's rig, a material's geometry) stays
+  `skipped` with its reason intact, because invalidating later work says
+  nothing about whether the asset needs it. `_run_d0` is therefore the only
+  place that may lift an exclusion, and it must reset applicability for
+  every stage before recomputing it -- otherwise a re-compiled spec can
+  never regain a stage the previous spec excluded.
 - Rejection (and edit, when it carries no explicit comment) requires a
   comment -- so the record explains what should change, not just that
   something was wrong.

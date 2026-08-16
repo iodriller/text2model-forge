@@ -1,0 +1,16 @@
+{
+  "schema_version": 1,
+  "clips": [
+    {
+      "clip_id": "quaternius_ual1_standard",
+      "display_name": "Quaternius Universal Animation Library 1 (Standard)",
+      "description": "45 humanoid clips on a 53-bone Rigify-style DEF- skeleton, covering everything D7 retargets for a deformable character: Idle_Loop, Walk_Loop, Sword_Attack, Hit_Chest and Death01. Bone-renamed from Rigify to the Unreal naming adapters/retarget_humanoid_motion.py contracts against (see adapters/prepare_donor_motion.py; right side stays at negative X so handedness is unchanged). Converted from the mirror's separate .gltf + .bin into a single .glb so the retarget adapter receives one self-contained file.",
+      "compatible_anatomy_family": "humanoid",
+      "source_url": "https://quaternius.itch.io/universal-animation-library",
+      "author": "Quaternius",
+      "license": "CC0-1.0",
+      "license_requires_attribution": false,
+      "local_path": "C:/AssetForgeRuns/sources/quaternius_universal_animation_library_standard/UAL1_Standard_Unreal.glb"
+    }
+  ]
+}

@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 import hashlib
 import json
 from pathlib import Path
+import re
 import threading
 import time
 from typing import Any
@@ -20,6 +21,13 @@ from .studio_models import (
 )
 
 
+# Must stay identical to StudioRun.run_id's own pattern. run_root() turns a
+# run id straight into a filesystem path, and the web layer passes an
+# unauthenticated URL segment into it, so a looser rule here (one that
+# accepted "." or "..") would resolve outside the run directory.
+_RUN_ID = re.compile(r"^[a-z0-9][a-z0-9_.-]*$")
+
+
 class StudioStore:
     def __init__(self, workspace: str | Path) -> None:
         self.workspace = Path(workspace).resolve()
@@ -29,7 +37,7 @@ class StudioStore:
         self._lock = threading.RLock()
 
     def run_root(self, run_id: str) -> Path:
-        if not run_id or any(ch not in "abcdefghijklmnopqrstuvwxyz0123456789.-_" for ch in run_id):
+        if not _RUN_ID.fullmatch(run_id):
             raise ValueError("invalid run id")
         return self.runs_root / run_id
 
@@ -97,6 +105,7 @@ class StudioStore:
             )
             if run.state != "running" and not interrupted_failure:
                 continue
+            before = (run.state, stage.state, stage.error, stage.message)
             if stage.state not in {"running", "failed"}:
                 run.state = "failed"
                 stage.error = "Studio stopped between stages; resume is safe."
@@ -143,6 +152,12 @@ class StudioStore:
                     stage.error = "The local Studio process stopped before this automatic stage completed."
                     stage.message = "Use Resume to retry this stage from its persisted inputs and history."
                     run.state = "failed"
+            if (run.state, stage.state, stage.error, stage.message) == before:
+                # Already recovered by an earlier start. The message this
+                # recovery writes itself matches `interrupted_failure`, so
+                # without this the same run is "recovered" -- and logged, and
+                # given another stage_recovered event -- on every launch.
+                continue
             stage.finished_at = datetime.now(timezone.utc)
             self.event(
                 run,
@@ -209,15 +224,29 @@ class StudioStore:
         """Reset every stage from `index` onward to pending, preserving each
         stage's own human_decisions (an append-only audit trail) but
         discarding evidence, reviews, and any stale pending_overrides built
-        on what is now invalidated work."""
+        on what is now invalidated work.
+
+        A stage D0's compiled asset contract ruled out (`applicable` is
+        False -- a static prop has no rig, a material has no geometry) is
+        the one exception: it keeps its skipped state and its reason.
+        Invalidating work that happens to sit after it says nothing about
+        whether the asset needs it, and reopening it here would send a
+        static prop through the skeleton, rig, skinning, and motion stages
+        the contract already excluded. Only re-running D0 -- which
+        recompiles the spec and recomputes applicability -- can change that.
+        """
         for downstream in run.stages[index:]:
-            downstream.state = "pending"
-            downstream.progress = 0
-            downstream.message = reason
             downstream.evidence = []
             downstream.qwen_reviews = []
             downstream.pending_overrides = {}
             downstream.error = None
+            if not downstream.applicable:
+                downstream.state = "skipped"
+                downstream.progress = 1
+                continue
+            downstream.state = "pending"
+            downstream.progress = 0
+            downstream.message = reason
 
     def decide(
         self,
@@ -346,3 +375,17 @@ class StudioStore:
         if root not in target.parents or not target.is_file():
             raise FileNotFoundError("artifact not found")
         return target
+
+    def set_archived(self, run_id: str, archived: bool) -> StudioRun:
+        """Flip a run's dashboard visibility. Never touches `state` or any
+        stage -- an archived run can still be resumed, decided on, or
+        recovered exactly as before; it just stops appearing in the default
+        list. Recorded as an event for the same reason every other action
+        here is: an append-only record of who changed what, and when."""
+        with self._lock:
+            run = self.load(run_id)
+            if run.archived == archived:
+                return run
+            run.archived = archived
+            self.event(run, "run_archived" if archived else "run_unarchived", {})
+            return run

@@ -9,7 +9,8 @@ import secrets
 import subprocess
 import sys
 import threading
-from typing import Protocol
+from typing import Any, Protocol
+import urllib.request
 
 from PIL import Image, ImageDraw, ImageFilter, ImageOps, ImageStat
 
@@ -361,6 +362,81 @@ def _rigid_structure_overlay(source: Path, plan, output: Path) -> Path:
     return output
 
 
+class _VramHandoff:
+    """Evict the other GPU service before each call, for small-VRAM machines.
+
+    The Studio already assumes one GPU-heavy stage at a time, and that is
+    enough on a 24 GB card. It is not enough on 8 GB, because D1 alternates
+    *within* one stage: Qwen plans the prompts, ComfyUI renders, Qwen
+    critiques the renders. Measured on an RTX 3080 Laptop (8 GB), an idle
+    ComfyUI plus a resident 8B reviewer leaves 250 MiB free, ollama spills to
+    CPU, and D1's planning call exceeds even a 600 s timeout. Freeing both
+    services returns ~7 GB, so the capacity is there -- it just has to be
+    handed over rather than shared.
+
+    Both evictions are best-effort and deliberately never raise: a failed
+    free means the next call is slow, which is far better than failing a
+    stage that would otherwise have completed. Both are no-ops on a machine
+    with room, and the whole mechanism is off unless run.vram_handoff is set.
+    """
+
+    @staticmethod
+    def _free_comfy(comfy_url: str) -> None:
+        try:
+            request = urllib.request.Request(
+                comfy_url.rstrip("/") + "/free",
+                data=json.dumps({"unload_models": True, "free_memory": True}).encode("utf-8"),
+                headers={"Content-Type": "application/json"},
+                method="POST",
+            )
+            urllib.request.urlopen(request, timeout=20).close()
+        except Exception:
+            pass
+
+    @staticmethod
+    def _free_llm(localdeploy_url: str, model: str) -> None:
+        # Ollama's own endpoint, not the OpenAI-compatible one: keep_alive=0
+        # is how a model is asked to unload immediately. On a non-Ollama
+        # endpoint this 404s harmlessly and the except below swallows it.
+        try:
+            root = localdeploy_url.rstrip("/")
+            if root.endswith("/v1"):
+                root = root[: -len("/v1")]
+            request = urllib.request.Request(
+                root + "/api/generate",
+                data=json.dumps({"model": model, "keep_alive": 0}).encode("utf-8"),
+                headers={"Content-Type": "application/json"},
+                method="POST",
+            )
+            urllib.request.urlopen(request, timeout=20).close()
+        except Exception:
+            pass
+
+    class _Proxy:
+        def __init__(self, inner: Any, before) -> None:
+            self._inner = inner
+            self._before = before
+
+        def __getattr__(self, name: str) -> Any:
+            attribute = getattr(self._inner, name)
+            if not callable(attribute):
+                return attribute
+
+            def wrapped(*args: Any, **kwargs: Any) -> Any:
+                self._before()
+                return attribute(*args, **kwargs)
+
+            return wrapped
+
+    @classmethod
+    def wrap_qwen(cls, inner: Any, run: StudioRun) -> Any:
+        return cls._Proxy(inner, lambda: cls._free_comfy(run.comfy_url))
+
+    @classmethod
+    def wrap_comfy(cls, inner: Any, run: StudioRun) -> Any:
+        return cls._Proxy(inner, lambda: cls._free_llm(run.localdeploy_url, run.model))
+
+
 class StudioCoordinator:
     """Runs one GPU-heavy Studio stage at a time and stops at every human gate."""
 
@@ -376,9 +452,25 @@ class StudioCoordinator:
     ) -> None:
         self.store = store
         self._qwen_factory = qwen_factory or (
-            lambda run: StudioQwen(base_url=run.localdeploy_url, model=run.model)
+            lambda run: StudioQwen(
+                base_url=run.localdeploy_url,
+                model=run.model,
+                spec_strategy=run.spec_strategy,
+                timeout_seconds=run.llm_timeout_seconds,
+            )
         )
         self._comfy_factory = comfy_factory or (lambda run: StudioComfyClient(run.comfy_url))
+        # On a small card the reviewer LLM and the image model cannot both be
+        # resident, and D1 alternates between them within a single stage. See
+        # _VramHandoff: these wrappers evict the *other* service before each
+        # call when run.vram_handoff is on.
+        inner_qwen, inner_comfy = self._qwen_factory, self._comfy_factory
+        self._qwen_factory = lambda run: (
+            _VramHandoff.wrap_qwen(inner_qwen(run), run) if run.vram_handoff else inner_qwen(run)
+        )
+        self._comfy_factory = lambda run: (
+            _VramHandoff.wrap_comfy(inner_comfy(run), run) if run.vram_handoff else inner_comfy(run)
+        )
         # D2-D5/D9's typed subprocess worker protocol (blender, trellis2.4b, ...),
         # injectable the same way qwen_factory/comfy_factory are. None (the
         # default) means _execute_worker does what it always has: read
@@ -412,6 +504,25 @@ class StudioCoordinator:
             self._jobs[run_id] = self._executor.submit(self._drive, run_id)
             return True
 
+    def run_to_stop(self, run_id: str) -> None:
+        """Advance one run on the calling thread until it reaches its next
+        stopping point (a human gate, completion, failure, or block).
+
+        submit() hands the work to this coordinator's background executor
+        because its caller -- an HTTP request handler -- must not block. A
+        one-shot CLI invocation has no such request thread to free, and
+        blocking is exactly what it wants: Ctrl+C should behave like it does
+        for any ordinary call, not leave an orphaned background thread that
+        keeps the process alive past its own timeout. This runs the same
+        _drive() a submitted job runs, just without the executor indirection.
+        """
+        with self._lock:
+            current = self._jobs.get(run_id)
+            if current is not None and not current.done():
+                raise RuntimeError(f"a Studio job is already running for {run_id}")
+            self._stop_requested.discard(run_id)
+        self._drive(run_id)
+
     def submit_manual_qwen_image(
         self,
         run_id: str,
@@ -431,6 +542,16 @@ class StudioCoordinator:
             raise ValueError("the direct Qwen Image prompt must contain at least 12 characters")
         if seed is not None and seed < 0:
             raise ValueError("the optional seed must be zero or a positive integer")
+        # Check the gate precondition here, synchronously, so a request that
+        # arrives after the gate has already moved on (a stale second browser
+        # tab) is refused with an explanation instead of being accepted and
+        # then failing inside the worker thread -- where the failure handler
+        # would mark the still-waiting D1 gate "failed".
+        run = self.store.load(run_id)
+        if run.current_stage != "D1" or run.stage("D1").state != "awaiting_review":
+            raise ValueError(
+                "a direct Qwen Image render is available only while the D1 concept gate awaits review"
+            )
         with self._lock:
             current = self._jobs.get(run_id)
             if current is not None and not current.done():
@@ -465,6 +586,17 @@ class StudioCoordinator:
         with self._lock:
             return run_id in self._stop_requested
 
+    def _clear_stop(self, run_id: str) -> None:
+        """Retire a stop request once the job it interrupted has ended.
+
+        Without this the flag survives until the *next* submit, so
+        stopping() keeps reporting "waiting for the worker to reach a safe
+        stop point" at an idle run, and the console contradicts the Resume
+        button sitting next to it.
+        """
+        with self._lock:
+            self._stop_requested.discard(run_id)
+
     def _mark_stopped(self, run_id: str) -> None:
         run = self.store.load(run_id)
         stage = run.stage(run.current_stage)
@@ -498,7 +630,10 @@ class StudioCoordinator:
             comfy = self._active_comfy.get(run_id)
         self._record_stop_requested(run_id)
         if queued_cancelled:
+            # The job never started, so no worker thread will reach the
+            # finally that normally retires the flag -- retire it here.
             self._mark_stopped(run_id)
+            self._clear_stop(run_id)
             return True, "The queued Studio job was cancelled before it reached ComfyUI."
         if comfy is None:
             return True, "Stop requested. The current Studio step will stop before it launches ComfyUI."
@@ -604,6 +739,7 @@ class StudioCoordinator:
             )
         finally:
             self._clear_comfy(run_id)
+            self._clear_stop(run_id)
 
     @staticmethod
     def _next_stage(run: StudioRun):
@@ -670,7 +806,15 @@ class StudioCoordinator:
             run = self.store.load(run_id)
             stage = run.stage("D1")
             if run.current_stage != "D1" or stage.state != "awaiting_review":
-                raise ValueError("a direct Qwen Image render is available only while the D1 concept gate awaits review")
+                # submit_manual_qwen_image() already checked this; losing the
+                # race with a decision recorded in between is not a stage
+                # failure, so record it and leave the gate exactly as it is.
+                self.store.event(
+                    run,
+                    "manual_qwen_image_refused",
+                    {"stage_id": run.current_stage, "reason": "the D1 concept gate is no longer awaiting review"},
+                )
+                return
             if run.spec is None:
                 raise RuntimeError("D1 requires the compiled D0 specification")
 
@@ -931,6 +1075,7 @@ class StudioCoordinator:
             )
         finally:
             self._clear_comfy(run_id)
+            self._clear_stop(run_id)
 
     def _run_d0(self, run: StudioRun) -> None:
         self._begin(run, "D0", "Qwen is compiling the description into a production contract.")
@@ -955,6 +1100,21 @@ class StudioCoordinator:
             },
         )
         stage = run.stage("D0")
+        # Recompute applicability from scratch. D0 can run a second time
+        # after a rollback to it, against a freshly compiled -- and possibly
+        # differently shaped -- spec. StudioStore._invalidate_from
+        # deliberately leaves a contract-excluded stage skipped, so unless
+        # the previous contract's exclusions are lifted here, a chair that
+        # is recompiled as an animated creature could never regain its
+        # skeleton, rig, skinning, and motion stages.
+        for item in run.stages:
+            if item.stage_id == "D0" or item.applicable:
+                continue
+            item.applicable = True
+            item.state = "pending"
+            item.progress = 0
+            item.error = None
+            item.message = "Reopened while the asset contract is recompiled."
         skip_reasons: dict[str, str] = {}
         if spec.asset_kind == "material":
             skip_reasons.update(
@@ -1905,6 +2065,15 @@ class StudioCoordinator:
                 ),
                 "minimum_connected_components": 1,
                 "maximum_connected_components": maximum_components,
+                # An isosurface backend (hunyuan3d on a small card) emits a
+                # non-manifold surface that welding cannot repair; see
+                # voxel_remesh_to_manifold() in adapters/blender_worker.py.
+                # "if_needed" leaves an already-clean mesh completely alone.
+                "manifold_policy": settings.get("manifold_policy", "weld_only"),
+                "voxel_fraction": settings.get("voxel_fraction", 0.006),
+                "maximum_material_change_fraction_remeshed": settings.get(
+                    "maximum_material_change_fraction_remeshed", 0.25
+                ),
             },
             output_directory=str(attempt_root / "blender"),
         )
@@ -2002,7 +2171,7 @@ class StudioCoordinator:
             role="candidate_geometry",
         )
         selected_concept = self._selected_evidence_path(run, "D1")
-        self._begin(run, "D4", "Building the typed canonical structure and its review evidence.")
+        stage_overrides = self._begin(run, "D4", "Building the typed canonical structure and its review evidence.")
         stage = run.stage("D4")
         attempt_root = self.store.run_root(run.run_id) / "D4_structure" / f"iteration-{stage.iteration:02d}"
         d4_settings = self._stage_settings(run, "D4")
@@ -2054,6 +2223,13 @@ class StudioCoordinator:
         else:
             artifact_id = f"{run.spec.asset_id}.d4.input.i{stage.iteration:02d}"
             artifact = self._artifact_for_path(run, source, artifact_id=artifact_id)
+            # landmark_adjustments/weight_adjustments are a real per-attempt
+            # correction channel -- adapters/blender_worker.py applies them as
+            # bounded landmark offsets and joint-pair weight transfers, and
+            # rejects an out-of-shape value itself (see WEIGHT_JOINT_PAIRS).
+            # A retry/edit decision is the only source for them: an ordinary
+            # attempt must still send {}/[] so an unrelated stale correction
+            # from a much earlier iteration can never resurface.
             request = ExternalWorkerRequest(
                 job_id=f"studio.{run.run_id}.d4.i{stage.iteration:02d}",
                 run_id=run.run_id,
@@ -2062,13 +2238,16 @@ class StudioCoordinator:
                 inputs=[artifact],
                 input_paths={artifact_id: str(source)},
                 parameters={
-                    "render_size": d4_settings.get("render_size", 512),
-                    "maximum_material_change_fraction": d4_settings.get(
-                        "maximum_material_change_fraction", 0.03
+                    "render_size": stage_overrides.get("render_size", d4_settings.get("render_size", 512)),
+                    "maximum_material_change_fraction": stage_overrides.get(
+                        "maximum_material_change_fraction",
+                        d4_settings.get("maximum_material_change_fraction", 0.03),
                     ),
-                    "maximum_bone_influences": d4_settings.get("maximum_bone_influences", 4),
-                    "landmark_adjustments": {},
-                    "weight_adjustments": [],
+                    "maximum_bone_influences": stage_overrides.get(
+                        "maximum_bone_influences", d4_settings.get("maximum_bone_influences", 4)
+                    ),
+                    "landmark_adjustments": stage_overrides.get("landmark_adjustments", {}),
+                    "weight_adjustments": stage_overrides.get("weight_adjustments", []),
                 },
                 output_directory=str(attempt_root / "blender"),
             )

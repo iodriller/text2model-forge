@@ -1,6 +1,7 @@
-"""Loopback-only browser UI for Darkness Studio runs and human gates."""
+"""Local-first browser UI for Darkness Studio runs and human gates."""
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
 import html
 import json
 import mimetypes
@@ -14,28 +15,166 @@ import urllib.request
 import uuid
 import webbrowser
 
-from .config import load_local_config
+from .config import load_local_config, worker_binding
+from .manifests import load_manifests, preflight
 from .settings import profiles_dir, resolve_settings, studio_overrides
+from .studio_models import utc_now
 from .studio_pipeline import StudioCoordinator
 from .studio_store import StudioStore
 
 
 STYLE = """
 :root{color-scheme:dark;--bg:#0c1114;--panel:#182126;--panel2:#202c32;--line:#3a4a51;--text:#eee6d7;--muted:#a4afb0;--ember:#dc6837;--steel:#45728b;--ok:#62bd79;--bad:#e26d62;--wait:#d5a746}
-*{box-sizing:border-box}body{margin:0;background:radial-gradient(circle at 20% -20%,#28373c,#0c1114 46%);color:var(--text);font:15px/1.45 system-ui,sans-serif}header{position:sticky;top:0;z-index:4;padding:18px 28px;background:#0d1417ee;border-bottom:1px solid var(--line);display:flex;align-items:center;gap:24px}header h1{font-size:20px;letter-spacing:.12em;margin:0}header a{color:#c8dce5;text-decoration:none}.wrap{max-width:1320px;margin:auto;padding:26px}h1,h2,h3{margin:0 0 12px}p{margin:8px 0}.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:16px}.card{background:linear-gradient(145deg,var(--panel),#141c20);border:1px solid var(--line);border-radius:12px;padding:18px;box-shadow:0 12px 30px #0005}.hero{padding:28px}.muted{color:var(--muted)}.error{color:#ff9e95}.good{color:#a7e7b6}.warning{color:#f0cf79}.timeline{display:grid;grid-template-columns:repeat(11,minmax(82px,1fr));gap:6px;margin:18px 0;overflow:auto}.stage{min-height:88px;border:1px solid var(--line);border-radius:9px;padding:9px;background:#12191d}.stage strong{display:block}.stage small{display:block;color:var(--muted)}.stage.approved{border-color:#3d8050;background:#17281c}.stage.skipped{opacity:.56;border-style:dashed}.stage.running,.stage.queued{border-color:var(--steel)}.stage.awaiting_review{border-color:var(--wait);background:#292315}.stage.rejected,.stage.failed{border-color:var(--bad);background:#2a1918}.stage.blocked{border-color:#8a6e3a}.bar{height:5px;background:#0b1012;border-radius:4px;margin-top:10px;overflow:hidden}.bar span{display:block;height:100%;background:var(--ember)}label{display:block;color:var(--muted);margin:10px 0 5px}textarea,input{width:100%;padding:11px;border:1px solid var(--line);border-radius:7px;background:#0d1417;color:var(--text)}textarea{min-height:130px;resize:vertical}button,.button{display:inline-block;border:0;border-radius:7px;padding:10px 16px;margin:10px 8px 0 0;background:var(--steel);color:white;text-decoration:none;cursor:pointer}.primary{background:var(--ember)!important}.reject,.danger{background:#9d4039!important}.memory{background:#735c24!important}.secondary{background:#34454c!important}.evidence{position:relative}.evidence img{width:100%;max-height:620px;object-fit:contain;background:#0a0f11;border:1px solid var(--line);border-radius:8px}.choice{display:flex;gap:8px;align-items:center;margin:8px 0}.choice input{width:auto}.badge{display:inline-block;padding:3px 7px;border-radius:999px;background:#29373d;color:#cbd8dc;font-size:12px}.recommended{background:#49381c;color:#ffe09a}pre,code{background:#0b1012;border:1px solid #2b373c;border-radius:6px}pre{padding:12px;white-space:pre-wrap;overflow:auto}code{padding:2px 5px}.review ul{margin-top:5px}.events{max-height:330px;overflow:auto}.event{border-left:2px solid var(--line);padding:5px 0 5px 12px;margin:4px 0}.run-card h2 a{color:var(--text);text-decoration:none}.actions{display:flex;gap:8px;flex-wrap:wrap}.health{display:flex;gap:8px;flex-wrap:wrap}.health span{padding:5px 9px;border-radius:8px;background:#253239}.health .down{background:#4a2220}.console{border-color:#5a707a;background:linear-gradient(135deg,#1b2a31,#142025)}.console-head{display:flex;justify-content:space-between;gap:12px;align-items:start}.console-head h2{margin:0}.control-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(235px,1fr));gap:10px;margin-top:15px}.control-action{border:1px solid var(--line);border-radius:9px;padding:12px;background:#10191d}.control-action h3{font-size:14px;margin-bottom:5px}.control-action p{font-size:13px;min-height:39px}.status-line{margin:14px 0 0;padding:10px 12px;border-radius:8px;background:#10191d;border-left:3px solid var(--steel)}.status-line.stopping{border-left-color:var(--bad);background:#2b1b1a}.status-line.idle{border-left-color:var(--ok)}.prompt-meta{display:flex;gap:7px;flex-wrap:wrap;margin:10px 0}.prompt-tools{display:flex;align-items:center;gap:2px;flex-wrap:wrap}.prompt-tools button{margin-top:10px}button:disabled{cursor:not-allowed;opacity:.5}@media(max-width:800px){.wrap{padding:15px}.timeline{grid-template-columns:repeat(11,100px)}header{padding:14px}.hero{padding:18px}}
+*{box-sizing:border-box}body{margin:0;background:radial-gradient(circle at 20% -20%,#28373c,#0c1114 46%);color:var(--text);font:15px/1.45 system-ui,sans-serif}header{position:sticky;top:0;z-index:4;padding:18px 28px;background:#0d1417ee;border-bottom:1px solid var(--line);display:flex;align-items:center;gap:24px}header h1{font-size:20px;letter-spacing:.12em;margin:0}header a{color:#c8dce5;text-decoration:none}.wrap{max-width:1320px;margin:auto;padding:26px}h1,h2,h3{margin:0 0 12px}p{margin:8px 0}.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:16px}.card{background:linear-gradient(145deg,var(--panel),#141c20);border:1px solid var(--line);border-radius:12px;padding:18px;box-shadow:0 12px 30px #0005}.hero{padding:28px}.muted{color:var(--muted)}.error{color:#ff9e95}.good{color:#a7e7b6}.warning{color:#f0cf79}.timeline{display:grid;grid-template-columns:repeat(auto-fit,minmax(88px,1fr));gap:6px;margin:18px 0;overflow:auto}.stage{min-height:88px;border:1px solid var(--line);border-radius:9px;padding:9px;background:#12191d}.stage strong{display:block}.stage small{display:block;color:var(--muted)}.stage.approved{border-color:#3d8050;background:#17281c}.stage.skipped{opacity:.56;border-style:dashed}.stage.running,.stage.queued{border-color:var(--steel)}.stage.awaiting_review{border-color:var(--wait);background:#292315}.stage.rejected,.stage.failed{border-color:var(--bad);background:#2a1918}.stage.blocked{border-color:#8a6e3a}.bar{height:5px;background:#0b1012;border-radius:4px;margin-top:10px;overflow:hidden}.bar span{display:block;height:100%;background:var(--ember)}label{display:block;color:var(--muted);margin:10px 0 5px}textarea,input{width:100%;padding:11px;border:1px solid var(--line);border-radius:7px;background:#0d1417;color:var(--text)}textarea{min-height:130px;resize:vertical}button,.button{display:inline-block;border:0;border-radius:7px;padding:10px 16px;margin:10px 8px 0 0;background:var(--steel);color:white;text-decoration:none;cursor:pointer}.primary{background:var(--ember)!important}.reject,.danger{background:#9d4039!important}.memory{background:#735c24!important}.secondary{background:#34454c!important}.evidence{position:relative}.evidence img{width:100%;max-height:620px;object-fit:contain;background:#0a0f11;border:1px solid var(--line);border-radius:8px}.choice{display:flex;gap:8px;align-items:center;margin:8px 0}.choice input{width:auto}.badge{display:inline-block;padding:3px 7px;border-radius:999px;background:#29373d;color:#cbd8dc;font-size:12px}.recommended{background:#49381c;color:#ffe09a}pre,code{background:#0b1012;border:1px solid #2b373c;border-radius:6px}pre{padding:12px;white-space:pre-wrap;overflow:auto}code{padding:2px 5px}.review ul{margin-top:5px}.events{max-height:330px;overflow:auto}.event{border-left:2px solid var(--line);padding:5px 0 5px 12px;margin:4px 0}.run-card h2 a{color:var(--text);text-decoration:none}.actions{display:flex;gap:8px;flex-wrap:wrap}.health{display:flex;gap:8px;flex-wrap:wrap}.health span{padding:5px 9px;border-radius:8px;background:#253239}.health .down{background:#4a2220}.console{border-color:#5a707a;background:linear-gradient(135deg,#1b2a31,#142025)}.console-head{display:flex;justify-content:space-between;gap:12px;align-items:start}.console-head h2{margin:0}.control-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(235px,1fr));gap:10px;margin-top:15px}.control-action{border:1px solid var(--line);border-radius:9px;padding:12px;background:#10191d}.control-action h3{font-size:14px;margin-bottom:5px}.control-action p{font-size:13px;min-height:39px}.status-line{margin:14px 0 0;padding:10px 12px;border-radius:8px;background:#10191d;border-left:3px solid var(--steel)}.status-line.stopping{border-left-color:var(--bad);background:#2b1b1a}.status-line.idle{border-left-color:var(--ok)}.prompt-meta{display:flex;gap:7px;flex-wrap:wrap;margin:10px 0}.prompt-tools{display:flex;align-items:center;gap:2px;flex-wrap:wrap}.prompt-tools button{margin-top:10px}button:disabled{cursor:not-allowed;opacity:.5}
+.timeline a.stage{color:inherit;text-decoration:none;display:block}.timeline a.stage:hover{border-color:var(--ember)}.stage.active{outline:2px solid var(--ember);outline-offset:1px}.badge.gate{background:#3b2f47;color:#dcc7f0;margin-top:4px}.badge.na{background:#2a3238;color:#8f9ba0}
+.attempt{display:flex;align-items:baseline;gap:10px;margin:20px 0 8px}.attempt h3{margin:0}.evidence details{margin-top:8px}.evidence summary{cursor:pointer;color:var(--muted);font-size:13px}.metrics{display:flex;gap:6px;flex-wrap:wrap;margin:8px 0 0}
+.decisions{list-style:none;padding:0;margin:6px 0 0}.decisions li{border-left:2px solid var(--line);padding:6px 0 6px 12px;margin:6px 0}.decisions .approve{border-left-color:var(--ok)}.decisions .reject,.decisions .rollback{border-left-color:var(--bad)}.decisions .edit,.decisions .retry{border-left-color:var(--steel)}.decisions .skip{border-left-color:var(--muted)}
+.run-card .bar{margin:12px 0 6px}.needs{background:var(--wait)!important;color:#1b1405!important}.crumb{display:flex;gap:10px;align-items:center;margin-bottom:12px}.crumb a{color:#c8dce5}
+.bar.overall{height:12px;margin:8px 0 4px}.bar span{background:linear-gradient(90deg,var(--ember),#f0a154);transition:width .35s ease}.progress-label{display:flex;justify-content:space-between;gap:12px;color:var(--muted);font-size:13px}select{width:100%;padding:11px;border:1px solid var(--line);border-radius:7px;background:#0d1417;color:var(--text)}.options{margin-top:18px;border:1px solid var(--line);border-radius:9px;padding:12px;background:#10191d}.options summary{cursor:pointer;font-weight:650}.option-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:4px 14px}.service-status{margin-top:10px;padding:9px 11px;border-radius:7px;background:#0d1417}.service-status.good{border-left:3px solid var(--ok)}.service-status.warning{border-left:3px solid var(--wait)}
+@media(max-width:800px){.wrap{padding:15px}header{padding:14px}.hero{padding:18px}}
 """
 
 
-def _page(title: str, body: str, *, refresh: bool = False) -> bytes:
-    meta = '<meta http-equiv="refresh" content="5">' if refresh else ""
+def _page(title: str, body: str) -> bytes:
     return (
         "<!doctype html><html><head><meta charset=utf-8>"
         '<meta name="viewport" content="width=device-width,initial-scale=1">'
-        f"{meta}<title>{html.escape(title)}</title><style>{STYLE}</style></head>"
+        f"<title>{html.escape(title)}</title><style>{STYLE}</style></head>"
         '<body><header><h1>DARKNESS STUDIO</h1><a href="/">Runs</a><a href="/new">New asset</a>'
         '<a href="/doctor">System</a></header><main class="wrap">'
         f"{body}</main></body></html>"
     ).encode("utf-8")
+
+
+# Polls /api/run/<id> while a stage is running and updates the active stage's
+# progress bar and status text in place. The CSP has no 'unsafe-inline' on
+# script-src (default-src 'self' covers same-origin <script src>, not inline
+# blocks), so this must be served as a real same-origin file, not embedded --
+# see build_server()'s CSP header. A full <meta http-equiv=refresh> reload
+# used to do this job, but it reset scroll position every five seconds on any
+# long-running stage; this only reloads the page when run.state or the
+# current stage actually changes, and otherwise just updates numbers in place.
+STUDIO_JS = """
+(function () {
+  function percentage(value) { return Math.round(Math.max(0, Math.min(1, value)) * 100); }
+
+  function overallProgress(run) {
+    var applicable = run.stages.filter(function (stage) { return stage.applicable; });
+    if (!applicable.length) return 0;
+    return applicable.reduce(function (sum, stage) { return sum + stage.progress; }, 0) / applicable.length;
+  }
+
+  function initRunProgress() {
+    var hero = document.querySelector('[data-run-id]');
+    if (!hero) return;
+    var runId = hero.getAttribute('data-run-id');
+    var knownState = hero.getAttribute('data-state');
+    var knownStage = hero.getAttribute('data-current-stage');
+
+    function apply(run) {
+      if (run.state !== knownState || run.current_stage !== knownStage) {
+        window.location.reload();
+        return;
+      }
+      var stage = null;
+      for (var i = 0; i < run.stages.length; i++) {
+        if (run.stages[i].stage_id === run.current_stage) { stage = run.stages[i]; break; }
+      }
+      if (!stage) return;
+      var stagePercent = percentage(stage.progress);
+      var bar = document.getElementById('active-stage-bar');
+      if (bar) {
+        bar.style.width = stagePercent + '%';
+        bar.parentNode.setAttribute('aria-valuenow', String(stagePercent));
+      }
+      var overallPercent = percentage(overallProgress(run));
+      var overall = document.getElementById('overall-run-bar');
+      if (overall) {
+        overall.style.width = overallPercent + '%';
+        overall.parentNode.setAttribute('aria-valuenow', String(overallPercent));
+      }
+      var overallLabel = document.getElementById('overall-run-label');
+      if (overallLabel) overallLabel.textContent = overallPercent + '% overall';
+      var message = document.getElementById('stage-message');
+      if (message) message.textContent = stage.message;
+      var status = document.getElementById('status-line');
+      if (status && stage.state === 'running') {
+        status.textContent = 'Running ' + stage.stage_id + ' at ' + stagePercent + '%.';
+      }
+    }
+
+    function poll() {
+      fetch('/api/run/' + encodeURIComponent(runId), { cache: 'no-store' })
+        .then(function (response) { return response.json(); })
+        .then(function (run) { apply(run); window.setTimeout(poll, 4000); })
+        .catch(function () { window.setTimeout(poll, 8000); });
+    }
+
+    window.setTimeout(poll, 4000);
+  }
+
+  function fillDatalist(id, values) {
+    var list = document.getElementById(id);
+    if (!list) return;
+    while (list.firstChild) list.removeChild(list.firstChild);
+    values.forEach(function (value) {
+      var option = document.createElement('option');
+      option.value = value;
+      list.appendChild(option);
+    });
+  }
+
+  function initSetupOptions() {
+    var form = document.querySelector('[data-setup-options]');
+    if (!form) return;
+    var profile = form.querySelector('[name="profile"]');
+    var status = document.getElementById('setup-service-status');
+
+    function load() {
+      if (status) {
+        status.className = 'service-status';
+        status.textContent = 'Checking local AI services and installed models...';
+      }
+      fetch('/api/setup/options?profile=' + encodeURIComponent(profile.value), { cache: 'no-store' })
+        .then(function (response) { return response.json(); })
+        .then(function (data) {
+          Object.keys(data.defaults).forEach(function (name) {
+            var field = form.querySelector('[name="' + name + '"]');
+            if (!field) return;
+            if (field.tagName === 'SELECT' && field.options.length && field.options[0].value === '') {
+              field.options[0].textContent = 'Profile default: ' + data.defaults[name];
+            } else {
+              field.setAttribute('placeholder', 'Profile default: ' + data.defaults[name]);
+            }
+          });
+          fillDatalist('installed-checkpoints', data.checkpoints);
+          fillDatalist('installed-review-models', data.review_models);
+          if (status) {
+            var ready = data.services.comfyui.ready && data.services.reviewer.ready;
+            status.className = 'service-status ' + (ready ? 'good' : 'warning');
+            status.textContent =
+              'ComfyUI: ' + data.services.comfyui.detail + ' (' + data.checkpoints.length +
+              ' checkpoints, ' + data.diffusion_models.length + ' diffusion models). Reviewer: ' +
+              data.services.reviewer.detail + ' (' + data.review_models.length + ' models). Qwen Image 2512: ' +
+              (data.qwen_image_2512_ready ? 'ready.' : 'required files not all detected.');
+          }
+        })
+        .catch(function () {
+          if (status) {
+            status.className = 'service-status warning';
+            status.textContent = 'Could not inspect local AI services. You can still use profile defaults or type model names.';
+          }
+        });
+    }
+
+    profile.addEventListener('change', load);
+    load();
+  }
+
+  initRunProgress();
+  initSetupOptions();
+})();
+"""
 
 
 def _probe(url: str) -> tuple[bool, str]:
@@ -46,9 +185,26 @@ def _probe(url: str) -> tuple[bool, str]:
         return False, f"{type(exc).__name__}: {exc}"
 
 
+def _json_get(url: str) -> tuple[Any | None, str]:
+    try:
+        with urllib.request.urlopen(url, timeout=2) as response:
+            return json.load(response), f"HTTP {response.status}"
+    except Exception as exc:
+        return None, f"{type(exc).__name__}: {exc}"
+
+
 def _form(handler: BaseHTTPRequestHandler) -> dict[str, str]:
-    length = int(handler.headers.get("Content-Length", "0"))
-    if length > 1_000_000:
+    try:
+        length = int(handler.headers.get("Content-Length", "0"))
+    except ValueError as exc:
+        handler.close_connection = True
+        raise ValueError("the request had no readable length") from exc
+    if length < 0 or length > 1_000_000:
+        # The body is deliberately not read, so this connection can no longer
+        # be trusted to start the next request at a message boundary. Closing
+        # it keeps an oversized form from desynchronising a keep-alive
+        # connection and corrupting whatever request follows.
+        handler.close_connection = True
         raise ValueError("form is too large")
     parsed = parse_qs(handler.rfile.read(length).decode("utf-8"), keep_blank_values=True)
     return {key: values[-1] for key, values in parsed.items()}
@@ -64,15 +220,69 @@ def _artifact_url(run_id: str, relative_path: str) -> str:
     return f"/artifact/{quote(run_id)}/{quote(relative_path, safe='/')}"
 
 
-def _timeline(run) -> str:
-    return '<div class="timeline">' + "".join(
-        (
-            f'<div class="stage {item.state}"><strong>{item.stage_id}</strong><small>{html.escape(item.label)}</small>'
-            f'<span class="badge">{html.escape(item.state.replace("_", " "))}</span>'
-            f'<div class="bar"><span style="width:{item.progress * 100:.0f}%"></span></div></div>'
+def _stage_url(run_id: str, stage_id: str) -> str:
+    return f"/run/{quote(run_id)}/stage/{quote(stage_id)}"
+
+
+def _run_progress(run) -> float:
+    """Normalized progress across stages that apply to this asset.
+
+    A stage's own fractional progress counts while it is running, instead of
+    making the dashboard look frozen until a whole stage settles. D0 is the
+    only stage that can change applicability; excluded stages are therefore
+    omitted once the compiled contract identifies them.
+    """
+    applicable = [stage for stage in run.stages if stage.applicable]
+    if not applicable:
+        return 0.0
+    return sum(stage.progress for stage in applicable) / len(applicable)
+
+
+def _progress_bar(value: float, *, label: str, bar_id: str | None = None) -> str:
+    percent = round(max(0.0, min(1.0, value)) * 100)
+    identifier = f' id="{html.escape(bar_id)}"' if bar_id else ""
+    return (
+        f'<div class="bar overall" role="progressbar" aria-label="{html.escape(label)}" '
+        f'aria-valuemin="0" aria-valuemax="100" aria-valuenow="{percent}">'
+        f'<span{identifier} style="width:{percent}%"></span></div>'
+    )
+
+
+def _timeline(run, *, active: str | None = None, mark_progress_id: bool = False) -> str:
+    """Every stage as a link to its own detail page.
+
+    The timeline used to be inert, which meant an approved stage's evidence
+    became unreachable in the browser the moment the run moved past it --
+    the run page only ever renders the *current* stage.
+
+    `mark_progress_id` gives the active tile's bar a stable id so STUDIO_JS
+    can update its width without a full page reload. Only the run page (where
+    `active` really is the run's live current_stage) passes it; the stage
+    detail page's `active` is just whichever stage the human is looking at.
+    """
+    tiles = []
+    for item in run.stages:
+        classes = "stage " + item.state + (" active" if item.stage_id == active else "")
+        if item.applicable:
+            state_badge = f'<span class="badge">{html.escape(item.state.replace("_", " "))}</span>'
+        else:
+            state_badge = '<span class="badge na">not applicable</span>'
+        gate = '<span class="badge gate">human gate</span>' if item.gate_required else ""
+        bar_id = ' id="active-stage-bar"' if mark_progress_id and item.stage_id == active else ""
+        percent = round(item.progress * 100)
+        tiles.append(
+            f'<a class="{classes}" href="{_stage_url(run.run_id, item.stage_id)}">'
+            f"<strong>{item.stage_id}</strong><small>{html.escape(item.label)}</small>"
+            f'{state_badge}{gate}<div class="bar" role="progressbar" aria-label="{html.escape(item.stage_id)} progress" '
+            f'aria-valuemin="0" aria-valuemax="100" aria-valuenow="{percent}">'
+            f'<span{bar_id} style="width:{percent}%"></span></div></a>'
         )
-        for item in run.stages
-    ) + "</div>"
+    columns = max(len(run.stages), 1)
+    return (
+        f'<div class="timeline" style="grid-template-columns:repeat({columns},minmax(88px,1fr))">'
+        + "".join(tiles)
+        + "</div>"
+    )
 
 
 def _spec(run) -> str:
@@ -111,7 +321,10 @@ def _spec(run) -> str:
 def _qwen_review(stage) -> str:
     if not stage.qwen_reviews:
         return '<p class="muted">No Qwen review yet.</p>'
-    review = stage.qwen_reviews[-1]
+    return _one_qwen_review(stage.qwen_reviews[-1])
+
+
+def _one_qwen_review(review) -> str:
     return (
         '<div class="review">'
         f"<p>{html.escape(review.summary)}</p>"
@@ -125,47 +338,150 @@ def _qwen_review(stage) -> str:
     )
 
 
-def _evidence(run, stage) -> tuple[str, list[str]]:
+# Metrics every evidence card carries for bookkeeping rather than for the
+# reader; they are still in the full JSON, just not worth a badge each.
+_ROUTINE_METRICS = frozenset({"iteration", "selectable", "role"})
+
+
+def _metric_badges(metrics: dict) -> str:
+    """The handful of values worth reading at a glance, above the full JSON."""
+    interesting = [
+        (key, value)
+        for key, value in metrics.items()
+        if key not in _ROUTINE_METRICS and value is not None and value != ""
+    ]
+    if not interesting:
+        return ""
+    shown = "".join(
+        f"<span class=badge>{html.escape(str(key))} {html.escape(str(value))}</span>"
+        for key, value in interesting[:6]
+    )
+    return f'<p class="metrics">{shown}</p>'
+
+
+def _evidence_iteration(item, stage) -> int:
+    """Which attempt produced this artefact.
+
+    Evidence written without an explicit iteration belongs to the attempt in
+    progress -- the same rule the flat renderer used when it decided whether
+    an item was still selectable.
+    """
+    raw = item.metrics.get("iteration")
+    if isinstance(raw, bool) or not isinstance(raw, (int, float)):
+        return stage.iteration
+    return int(raw)
+
+
+def _evidence(run, stage, *, allow_selection: bool = True) -> tuple[str, list[str]]:
+    """One stage's evidence, grouped by attempt, newest attempt first.
+
+    A gate that has been rejected and retried a few times accumulates every
+    attempt's artefacts on the same stage. Rendered as one flat grid, the two
+    candidates actually up for decision were indistinguishable from eight
+    superseded ones, and only the radio buttons hinted at which was which.
+    """
     recommended = stage.qwen_reviews[-1].recommended_evidence_id if stage.qwen_reviews else None
-    cards = []
-    choices = []
+    groups: dict[int, list] = {}
     for item in stage.evidence:
-        url = _artifact_url(run.run_id, item.relative_path)
-        if item.media_type.startswith("image/"):
-            current = item.metrics.get("iteration") in (None, stage.iteration)
-            selectable = item.metrics.get("selectable") is True
-            checked = " checked" if item.evidence_id == recommended else ""
-            choice = (
-                f'<label class=choice><input type=radio name=selected_evidence_id value="{html.escape(item.evidence_id)}"{checked}>'
-                f'Select {html.escape(item.label)}</label>'
-                if current and selectable and stage.state == "awaiting_review"
+        groups.setdefault(_evidence_iteration(item, stage), []).append(item)
+    if not groups:
+        return '<p class="muted">This stage has not produced any evidence yet.</p>', []
+
+    choices: list[str] = []
+    sections: list[str] = []
+    for iteration in sorted(groups, reverse=True):
+        current = iteration == stage.iteration
+        cards = []
+        for item in groups[iteration]:
+            url = _artifact_url(run.run_id, item.relative_path)
+            pick = (
+                '<span class="badge recommended">Qwen pick</span>'
+                if item.evidence_id == recommended
                 else ""
             )
-            if choice:
-                choices.append(choice)
+            details = (
+                "<details><summary>All recorded metrics and content hash</summary>"
+                f"<pre>{html.escape(json.dumps({**item.metrics, 'sha256': item.sha256}, indent=2))}</pre></details>"
+            )
+            if item.media_type.startswith("image/"):
+                choice = ""
+                if (
+                    allow_selection
+                    and current
+                    and item.metrics.get("selectable") is True
+                    and stage.state == "awaiting_review"
+                ):
+                    checked = " checked" if item.evidence_id == recommended else ""
+                    choice = (
+                        f'<label class=choice><input type=radio name=selected_evidence_id '
+                        f'value="{html.escape(item.evidence_id)}"{checked}>'
+                        f"Select {html.escape(item.label)}</label>"
+                    )
+                    choices.append(choice)
+                body = (
+                    f'<a href="{url}" target=_blank><img loading=lazy src="{url}" '
+                    f'alt="{html.escape(item.label)}"></a>'
+                )
+            else:
+                choice = ""
+                body = f'<p><a class=button href="{url}" target=_blank>Open evidence</a></p>'
             cards.append(
                 '<section class="card evidence">'
-                f"<h3>{html.escape(item.label)} {'<span class=\"badge recommended\">Qwen pick</span>' if item.evidence_id == recommended else ''}</h3>"
-                f'<a href="{url}" target=_blank><img loading=lazy src="{url}" alt="{html.escape(item.label)}"></a>'
-                f"<pre>{html.escape(json.dumps(item.metrics, indent=2))}</pre>{choice}</section>"
+                f"<h3>{html.escape(item.label)} {pick}</h3>{body}"
+                f"{_metric_badges(item.metrics)}{details}{choice}</section>"
             )
-        else:
-            cards.append(
-                '<section class="card evidence">'
-                f"<h3>{html.escape(item.label)}</h3><p><a class=button href=\"{url}\" target=_blank>Open evidence</a></p>"
-                f"<pre>{html.escape(json.dumps(item.metrics, indent=2))}</pre></section>"
+        heading = (
+            f'<div class="attempt"><h3>Attempt {iteration}</h3>'
+            + (
+                '<span class="badge recommended">current attempt</span>'
+                if current
+                else '<span class=badge>superseded</span>'
             )
-    return '<div class="grid">' + "".join(cards) + "</div>", choices
+            + "</div>"
+        )
+        sections.append(heading + '<div class="grid">' + "".join(cards) + "</div>")
+    return "".join(sections), choices
+
+
+def _decision_history(stage) -> str:
+    """The append-only human record for one stage.
+
+    Gate decisions are the product's core claim, and until now they were
+    only visible as raw JSON inside the last thirty run events -- which a
+    long run pushes out entirely.
+    """
+    if not stage.human_decisions:
+        return '<p class="muted">No human decision has been recorded at this gate yet.</p>'
+    rows = []
+    for item in stage.human_decisions:
+        facts = [f"<span class=badge>{len(item.evidence_hashes)} artefacts hash-bound</span>"]
+        if item.selected_evidence_id:
+            facts.append(f"<span class=badge>selected {html.escape(item.selected_evidence_id)}</span>")
+        if item.target_stage_id:
+            facts.append(f"<span class=badge>target {html.escape(item.target_stage_id)}</span>")
+        if item.overrides:
+            facts.append(f"<span class=badge>overrides {html.escape(json.dumps(item.overrides))}</span>")
+        rows.append(
+            f'<li class="{html.escape(item.decision)}"><strong>{html.escape(item.decision)}</strong> '
+            f'<span class=muted>{html.escape(item.created_at.isoformat())}</span>'
+            f"<p>{html.escape(item.comment) or '<span class=muted>No comment recorded.</span>'}</p>"
+            f'<p class="metrics">{"".join(facts)}</p></li>'
+        )
+    return f'<ul class="decisions">{"".join(rows)}</ul>'
 
 
 def _decision_form(run, stage, csrf: str, choices: list[str]) -> str:
     if stage.state != "awaiting_review":
         return ""
-    stage_index = next(i for i, item in enumerate(run.stages) if item.stage_id == stage.stage_id)
+    stage_index = next(
+        (i for i, item in enumerate(run.stages) if item.stage_id == stage.stage_id), 0
+    )
     rollback_targets = [
         item
         for item in run.stages[:stage_index]
-        if item.state in {"approved", "skipped", "rejected", "failed"}
+        # A stage the asset contract ruled out cannot be rolled back to: it
+        # was never decided, and StudioStore.decide() would refuse it.
+        if item.applicable and item.state in {"approved", "skipped", "rejected", "failed"}
     ]
     rollback_options = "".join(
         f'<option value="{item.stage_id}">{html.escape(item.stage_id)} -- {html.escape(item.label)}</option>'
@@ -183,7 +499,8 @@ def _decision_form(run, stage, csrf: str, choices: list[str]) -> str:
         f'<form method=post action="/run/{html.escape(run.run_id)}/decision">'
         f'<input type=hidden name=csrf value="{csrf}"><input type=hidden name=stage_id value="{stage.stage_id}">'
         + "".join(choices)
-        + '<label>Comment</label><textarea name=comment placeholder="Required for reject and skip; optional otherwise."></textarea>'
+        + '<label>Comment</label><textarea name=comment placeholder="Required to reject or skip. An edit needs a '
+        'comment, overrides, or both. Optional for approve, retry, and roll back."></textarea>'
         '<label>Overrides (JSON, optional -- used by retry and edit)</label>'
         '<textarea name=overrides placeholder=\'e.g. {"seed": 42}\'></textarea>'
         + rollback_block
@@ -237,7 +554,7 @@ def _studio_controls(run, stage, coordinator: StudioCoordinator, csrf: str, *, b
         status = "Stop requested. Waiting for the active worker to reach a safe stop point."
         status_class = "stopping"
     elif busy:
-        status = f"Running {stage.stage_id} at {stage.progress:.0%}. This page refreshes every five seconds."
+        status = f"Running {stage.stage_id} at {stage.progress:.0%}. This page updates automatically."
         status_class = ""
     else:
         status = "Idle. You can render, review, resume a blocked stage, or free ComfyUI model memory."
@@ -254,11 +571,20 @@ def _studio_controls(run, stage, coordinator: StudioCoordinator, csrf: str, *, b
         if not busy
         else '<button class=memory type=button disabled>Free VRAM after the job stops</button>'
     )
+    archive_action = (
+        f'<form method=post action="/run/{html.escape(run.run_id)}/unarchive">'
+        f'<input type=hidden name=csrf value="{csrf}">'
+        '<button class=secondary type=submit>Unarchive this run</button></form>'
+        if run.archived
+        else f'<form method=post action="/run/{html.escape(run.run_id)}/archive">'
+        f'<input type=hidden name=csrf value="{csrf}">'
+        '<button class=secondary type=submit>Archive this run</button></form>'
+    )
     return (
         '<section class="card console"><div class=console-head><div><h2>Studio control console</h2>'
         '<p class=muted>Controls apply only to the local Darkness Studio job and local ComfyUI service.</p></div>'
         f'<span class=badge>{"stopping" if stopping else "running" if busy else "idle"}</span></div>'
-        f'<div class="status-line {status_class}">{html.escape(status)}</div>'
+        f'<div id=status-line class="status-line {status_class}">{html.escape(status)}</div>'
         '<div class=control-grid><section class=control-action><h3>Current work</h3>'
         '<p>Interrupts the tracked ComfyUI workflow and preserves all prior evidence. Resume is always explicit.</p>'
         f'{stop_action}</section><section class=control-action><h3>GPU / model memory</h3>'
@@ -266,11 +592,123 @@ def _studio_controls(run, stage, coordinator: StudioCoordinator, csrf: str, *, b
         f'{memory_action}</section><section class=control-action><h3>Prompt workspace</h3>'
         '<p>The direct-render form includes a local Clear prompt and seed button. It never deletes stored evidence.</p>'
         '<p class=muted>ComfyUI is a shared local service: avoid unrelated Comfy jobs while stopping a Studio render.</p>'
-        '</section></div></section>'
+        '</section><section class=control-action><h3>Dashboard visibility</h3>'
+        '<p>Hides this run from the default dashboard list. Never deletes anything and is always reversible; '
+        'the run stays reachable at its own URL either way.</p>'
+        f'{archive_action}</section></div></section>'
     )
 
 
-def _run_page(store: StudioStore, coordinator: StudioCoordinator, run_id: str, csrf: str) -> tuple[str, bool]:
+# Substrings that show up in an unmet-dependency error: a missing Blender
+# executable, an absent config.local.toml worker binding, a ComfyUI model
+# that was never installed. Heuristic, not exhaustive -- worst case a real
+# bug's error just doesn't get the extra link, which is what happened for
+# every failure before this existed.
+_DEPENDENCY_ERROR_HINTS = (
+    "not installed",
+    "is required",
+    "does not exist",
+    "config.local.toml",
+    "worker binding",
+    "executable",
+    "not reachable",
+    "connection refused",
+)
+
+
+def _error_block(stage) -> str:
+    """A failed/blocked stage's raw error, plus what a human can actually do
+    about it. Previously this was a bare <pre> of the exception text with no
+    guidance beyond the Resume button already shown elsewhere on the page --
+    fine for "the render itself failed," unhelpful for "ComfyUI was never
+    started," which reads identically to a human until they already know to
+    check /doctor."""
+    if not stage.error:
+        return ""
+    hint = ""
+    lowered = stage.error.lower()
+    if any(needle in lowered for needle in _DEPENDENCY_ERROR_HINTS):
+        hint = (
+            '<p class=muted>This looks like a missing local dependency or configuration, not a bad '
+            'result. Check <a href="/doctor">the system page</a> for what is and is not reachable, fix '
+            "it, then use Resume below to retry this stage from its saved inputs -- no evidence is lost."
+            "</p>"
+        )
+    return f'<pre class=error>{html.escape(stage.error)}</pre>{hint}'
+
+
+def _duration_badge(stage) -> str:
+    """started_at/finished_at are written on every stage transition -- eleven
+    call sites in studio_pipeline.py -- but nothing ever read them back; no
+    duration was reachable anywhere in the browser. Render what's available:
+    a finished duration, an in-progress elapsed time, or neither."""
+    if stage.started_at is None:
+        return ""
+    if stage.finished_at is not None:
+        seconds = (stage.finished_at - stage.started_at).total_seconds()
+        label = f"ran {seconds:.0f}s"
+    elif stage.state == "running":
+        seconds = (utc_now() - stage.started_at).total_seconds()
+        label = f"running {seconds:.0f}s"
+    else:
+        return f'<span class=badge>started {html.escape(stage.started_at.isoformat(timespec="seconds"))}</span>'
+    return f"<span class=badge>{html.escape(label)}</span>"
+
+
+def _stage_page(store: StudioStore, run_id: str, stage_id: str) -> str:
+    """One stage's full record, reachable at any time from the timeline.
+
+    The run page shows only the current stage, so before this every earlier
+    stage's evidence, Qwen reviews, and human decisions were unreachable from
+    the browser as soon as the run advanced past them.
+    """
+    run = store.load(run_id)
+    try:
+        stage = run.stage(stage_id)
+    except KeyError as exc:
+        raise FileNotFoundError(f"unknown stage: {stage_id}") from exc
+    evidence, _ = _evidence(run, stage, allow_selection=False)
+    reviews = (
+        "".join(
+            f"<h3>Attempt {review.iteration} — {html.escape(review.review_id)}</h3>"
+            + _one_qwen_review(review)
+            for review in reversed(stage.qwen_reviews)
+        )
+        or '<p class="muted">Qwen did not review this stage.</p>'
+    )
+    gate = "Stops for your decision" if stage.gate_required else "Runs automatically"
+    error = _error_block(stage)
+    live = (
+        f'<p><a class="button primary" href="/run/{quote(run_id)}">This stage is waiting for your '
+        "decision — open the review gate</a></p>"
+        if stage.state == "awaiting_review" and run.current_stage == stage.stage_id
+        else ""
+    )
+    return (
+        f'<div class=crumb><a href="/">Runs</a><span class=muted>/</span>'
+        f'<a href="/run/{quote(run_id)}">{html.escape(run.title)}</a>'
+        f'<span class=muted>/</span><span>{html.escape(stage.stage_id)}</span></div>'
+        '<section class="card hero">'
+        f"<h1>{html.escape(stage.stage_id)} — {html.escape(stage.label)}</h1>"
+        f'<p><span class=badge>{html.escape(stage.state.replace("_", " "))}</span> '
+        f"<span class=badge>{html.escape(gate)}</span> "
+        f"<span class=badge>attempt {stage.iteration}</span> "
+        f'<span class=badge>{"applies to this asset" if stage.applicable else "not applicable"}</span> '
+        f"{_duration_badge(stage)}</p>"
+        f'<div class=progress-label><span>Stage progress</span><span>{stage.progress:.0%}</span></div>'
+        f'{_progress_bar(stage.progress, label=f"{stage.stage_id} progress")} '
+        f"<p>{html.escape(stage.message)}</p>{error}{live}"
+        f"{_timeline(run, active=stage.stage_id)}</section>"
+        '<div class=grid style="margin-top:16px">'
+        f'<section class=card><h2>Human decisions</h2>{_decision_history(stage)}</section>'
+        '<section class=card><h2>Stage metrics</h2>'
+        f'<pre>{html.escape(json.dumps(stage.metrics, indent=2, default=str))}</pre></section></div>'
+        f'<section class="card" style="margin-top:16px"><h2>Qwen reviews</h2>{reviews}</section>'
+        f"<h2 style='margin-top:22px'>Evidence</h2>{evidence}"
+    )
+
+
+def _run_page(store: StudioStore, coordinator: StudioCoordinator, run_id: str, csrf: str) -> str:
     run = store.load(run_id)
     stage = run.stage(run.current_stage)
     evidence, choices = _evidence(run, stage)
@@ -288,38 +726,107 @@ def _run_page(store: StudioStore, coordinator: StudioCoordinator, run_id: str, c
             f'<form method=post action="/run/{html.escape(run_id)}/resume"><input type=hidden name=csrf value="{csrf}">'
             '<button class=primary type=submit>Resume pipeline</button></form>'
         )
-    error = f'<pre class=error>{html.escape(stage.error)}</pre>' if stage.error else ""
+    error = _error_block(stage)
+    overall_progress = _run_progress(run)
     body = (
-        '<section class="card hero">'
+        f'<section class="card hero" data-run-id="{html.escape(run.run_id)}" '
+        f'data-state="{html.escape(run.state)}" data-current-stage="{html.escape(run.current_stage)}">'
         f"<h1>{html.escape(run.title)}</h1><p>{html.escape(run.description)}</p>"
         f'<p><span class=badge>{html.escape(run.run_id)}</span> <span class=badge>{html.escape(run.state)}</span> '
-        f'<span class=badge>concept backend: {html.escape(run.concept_backend)}</span></p>'
-        f"{_timeline(run)}<h2>{stage.stage_id} — {html.escape(stage.label)}</h2>"
-        f"<p>{html.escape(stage.message)}</p>{error}{actions}</section>"
+        f'<span class=badge>concept backend: {html.escape(run.concept_backend)}</span> '
+        f'<span class=badge>created {html.escape(run.created_at.isoformat(timespec="seconds"))}</span>'
+        + (' <span class=badge>Archived</span>' if run.archived else "")
+        + "</p>"
+        f'<div class=progress-label><span>Whole pipeline</span><span id=overall-run-label>{overall_progress:.0%} overall</span></div>'
+        f'{_progress_bar(overall_progress, label="Whole pipeline progress", bar_id="overall-run-bar")}'
+        f"{_timeline(run, active=stage.stage_id, mark_progress_id=True)}"
+        f'<h2><a href="{_stage_url(run.run_id, stage.stage_id)}">{stage.stage_id} — '
+        f"{html.escape(stage.label)}</a></h2>"
+        + (f'<p>{_duration_badge(stage)}</p>' if stage.started_at else "")
+        + f'<p id=stage-message>{html.escape(stage.message)}</p>{error}{actions}</section>'
         '<div class=grid style="margin-top:16px"><section class=card><h2>Qwen production contract</h2>'
-        f"{_spec(run)}</section><section class=card><h2>Qwen gate review</h2>{_qwen_review(stage)}</section></div>"
+        f"{_spec(run)}</section><section class=card><h2>Qwen gate review</h2>{_qwen_review(stage)}"
+        f'<p class=muted><a href="{_stage_url(run.run_id, stage.stage_id)}">'
+        f"See every review and decision recorded at this stage</a></p></section></div>"
         f"{_studio_controls(run, stage, coordinator, csrf, busy=busy)}"
         f"<h2 style='margin-top:22px'>Evidence</h2>{evidence}"
         f"{_manual_qwen_image_form(run, stage, csrf, busy=busy)}"
         f"{_decision_form(run, stage, csrf, choices)}"
         f'<section class=card style="margin-top:16px"><h2>Run history</h2><div class=events>{event_html}</div></section>'
+        + ('<script src="/static/studio.js" defer></script>' if busy else "")
     )
-    return body, busy
+    return body
 
 
-def _dashboard(store: StudioStore) -> str:
-    runs = store.list()
-    cards = "".join(
+def _run_card(run) -> str:
+    settled = sum(1 for item in run.stages if item.state in {"approved", "skipped"})
+    total = max(len(run.stages), 1)
+    overall_progress = _run_progress(run)
+    waiting = run.state == "awaiting_review"
+    attention = (
+        '<span class="badge needs">Needs your decision</span>'
+        if waiting
+        else (
+            '<span class="badge" style="background:#4a2220">Stopped</span>'
+            if run.state in {"failed", "blocked"}
+            else f"<span class=badge>{html.escape(run.state)}</span>"
+        )
+    )
+    description = run.description if len(run.description) <= 240 else run.description[:237] + "..."
+    stage = run.stage(run.current_stage) if any(
+        item.stage_id == run.current_stage for item in run.stages
+    ) else run.stages[0]
+    archived_badge = '<span class=badge>Archived</span> ' if run.archived else ""
+    return (
         '<section class="card run-card">'
         f'<h2><a href="/run/{quote(run.run_id)}">{html.escape(run.title)}</a></h2>'
-        f'<p class=muted>{html.escape(run.run_id)} · {html.escape(run.state)} · {html.escape(run.current_stage)}</p>'
-        f"<p>{html.escape(run.description[:240])}</p>"
-        f'<a class=button href="/run/{quote(run.run_id)}">Open run</a></section>'
-        for run in runs
+        f'<p>{archived_badge}{attention} <span class=badge>{html.escape(stage.stage_id)} '
+        f"{html.escape(stage.label)}</span> <span class=badge>{settled}/{total} stages settled</span></p>"
+        f'<div class=progress-label><span>Pipeline progress</span><span>{overall_progress:.0%}</span></div>'
+        f'{_progress_bar(overall_progress, label=f"{run.title} pipeline progress")}'
+        f"<p>{html.escape(description)}</p>"
+        f'<p class=muted>{html.escape(run.run_id)} · profile {html.escape(run.profile)} · '
+        f"updated {html.escape(run.updated_at.isoformat(timespec='seconds'))}</p>"
+        f'<a class="button{" primary" if waiting else ""}" href="/run/{quote(run.run_id)}">'
+        f'{"Review now" if waiting else "Open run"}</a></section>'
     )
+
+
+def _dashboard(store: StudioStore, *, show_archived: bool = False) -> str:
+    # Runs arrive newest-first; float the ones blocked on a human above them,
+    # because in a human-gated compiler an idle gate is the only thing that
+    # actually stops the machine. Archived runs are hidden by default -- see
+    # StudioRun.archived -- but never dropped from StudioStore.list() itself,
+    # only from what this page chooses to show.
+    all_runs = store.list()
+    archived_count = sum(1 for run in all_runs if run.archived)
+    runs = all_runs if show_archived else [run for run in all_runs if not run.archived]
+    runs = sorted(runs, key=lambda item: item.state != "awaiting_review")
+    waiting = sum(1 for run in runs if run.state == "awaiting_review")
+    cards = "".join(_run_card(run) for run in runs)
     if not cards:
         cards = '<section class=card><h2>No runs yet</h2><p>Describe any asset; Darkness compiles the production contract.</p><a class="button primary" href=/new>Create asset</a></section>'
-    return '<section class="card hero"><h1>Asset production runs</h1><p class=muted>One description in. Qwen acts, critiques, and mediates bounded corrections; deterministic gates preserve evidence and explicit human decisions.</p></section><div class=grid style="margin-top:16px">' + cards + "</div>"
+    summary = (
+        f"{len(runs)} run{'' if len(runs) == 1 else 's'}, "
+        f"{waiting} waiting for your decision."
+        if runs
+        else "One description in. Qwen acts, critiques, and mediates bounded corrections; "
+        "deterministic gates preserve evidence and explicit human decisions."
+    )
+    toggle = ""
+    if archived_count:
+        toggle = (
+            '<p class=muted><a href="/?archived=1">Show ' + str(archived_count) + " archived run"
+            + ("" if archived_count == 1 else "s") + "</a></p>"
+            if not show_archived
+            else '<p class=muted><a href="/">Hide archived runs</a></p>'
+        )
+    return (
+        '<section class="card hero"><h1>Asset production runs</h1>'
+        f'<p class=muted>{html.escape(summary)}</p>{toggle}'
+        '<a class="button primary" href=/new>Create asset</a></section>'
+        '<div class=grid style="margin-top:16px">' + cards + "</div>"
+    )
 
 
 def _available_profiles() -> list[str]:
@@ -330,38 +837,312 @@ def _available_profiles() -> list[str]:
     return names or ["simple"]
 
 
+def _setup_options(profile: str) -> dict[str, Any]:
+    """Profile defaults plus live model choices for the new-run form.
+
+    Service discovery is advisory: an offline ComfyUI or reviewer returns an
+    empty list and a visible status, while the form remains usable with typed
+    model ids. This keeps startup and profile editing independent of external
+    service availability.
+    """
+    defaults = studio_overrides(resolve_settings(profile=profile))
+    comfy_url = str(defaults.get("comfy_url", "http://127.0.0.1:8188")).rstrip("/")
+    reviewer_url = str(defaults.get("localdeploy_url", "http://127.0.0.1:8000/v1")).rstrip("/")
+    endpoints = {
+        "checkpoints": f"{comfy_url}/models/checkpoints",
+        "diffusion_models": f"{comfy_url}/models/diffusion_models",
+        "text_encoders": f"{comfy_url}/models/text_encoders",
+        "vae": f"{comfy_url}/models/vae",
+        "reviewer": f"{reviewer_url}/models",
+    }
+    with ThreadPoolExecutor(max_workers=len(endpoints)) as pool:
+        futures = {name: pool.submit(_json_get, url) for name, url in endpoints.items()}
+        results = {name: future.result() for name, future in futures.items()}
+
+    def string_list(value: Any) -> list[str]:
+        if not isinstance(value, list):
+            return []
+        return sorted(str(item) for item in value if isinstance(item, str))
+
+    checkpoints = string_list(results["checkpoints"][0])
+    diffusion_models = string_list(results["diffusion_models"][0])
+    text_encoders = string_list(results["text_encoders"][0])
+    vaes = string_list(results["vae"][0])
+    reviewer_payload = results["reviewer"][0]
+    reviewer_models = []
+    if isinstance(reviewer_payload, dict) and isinstance(reviewer_payload.get("data"), list):
+        reviewer_models = sorted(
+            str(item["id"])
+            for item in reviewer_payload["data"]
+            if isinstance(item, dict) and isinstance(item.get("id"), str)
+        )
+    qwen_ready = all(
+        required in installed
+        for required, installed in (
+            ("qwen_image_2512_fp8_e4m3fn.safetensors", diffusion_models),
+            ("qwen_2.5_vl_7b_fp8_scaled.safetensors", text_encoders),
+            ("qwen_image_vae.safetensors", vaes),
+        )
+    )
+    comfy_ready = any(results[name][0] is not None for name in endpoints if name != "reviewer")
+    return {
+        "defaults": {
+            key: value
+            for key, value in defaults.items()
+            if key in {"concept_backend", "checkpoint", "model", "spec_strategy", "concept_steps", "concept_cfg"}
+            and value is not None
+        },
+        "checkpoints": checkpoints,
+        "diffusion_models": diffusion_models,
+        "review_models": reviewer_models,
+        "qwen_image_2512_ready": qwen_ready,
+        "services": {
+            "comfyui": {
+                "ready": comfy_ready,
+                "detail": results["checkpoints"][1] if comfy_ready else results["diffusion_models"][1],
+            },
+            "reviewer": {
+                "ready": reviewer_payload is not None,
+                "detail": results["reviewer"][1],
+            },
+        },
+    }
+
+
 def _new_form(csrf: str) -> str:
     profiles = _available_profiles()
     default = "simple" if "simple" in profiles else profiles[0]
+    defaults = studio_overrides(resolve_settings(profile=default))
     options = "".join(
         f'<option value="{html.escape(name)}"{" selected" if name == default else ""}>{html.escape(name)}</option>'
         for name in profiles
     )
+    backend_default = html.escape(str(defaults.get("concept_backend", "auto")))
+    strategy_default = html.escape(str(defaults.get("spec_strategy", "monolithic")))
+    checkpoint_default = html.escape(str(defaults.get("checkpoint", "")))
+    model_default = html.escape(str(defaults.get("model", "")))
+    steps_default = html.escape(str(defaults.get("concept_steps", 30)))
+    cfg_default = html.escape(str(defaults.get("concept_cfg", 6.0)))
     return (
         '<section class="card hero"><h1>Describe one original asset</h1>'
         '<p>This is the only production input. It may be a character, creature, door, wall, prop, environment, material, or VFX. Include handedness, moving pieces, and required states when they matter; Qwen compiles the rest.</p>'
-        '<form method=post action=/runs>'
+        '<form method=post action=/runs data-setup-options>'
         f'<input type=hidden name=csrf value="{csrf}">'
         '<label>Description</label><textarea name=description minlength=20 required '
         'placeholder="Examples: an original armored footman with a right-hand sword and left shield; or a worn stone gate with two hinged iron doors and open/close states..."></textarea>'
         f'<label>Configuration profile</label><select name=profile>{options}</select>'
-        '<button class=primary type=submit>Compile asset and start</button></form></section>'
+        '<details class=options open><summary>Text-to-2D and reviewer options</summary>'
+        '<p class=muted>Leave any field blank to inherit the selected profile. Installed model names appear as suggestions when the local services are running.</p>'
+        '<div class=option-grid>'
+        '<div><label>Text-to-2D backend</label><select name=concept_backend>'
+        f'<option value="">Profile default: {backend_default}</option>'
+        '<option value=auto>Auto — prefer Qwen, fall back to SDXL</option>'
+        '<option value=qwen_image_2512>Qwen Image 2512 (native ComfyUI)</option>'
+        '<option value=sdxl>SDXL checkpoint (native ComfyUI)</option>'
+        '</select></div>'
+        '<div><label>SDXL / custom checkpoint</label>'
+        f'<input name=checkpoint list=installed-checkpoints maxlength=300 placeholder="Profile default: {checkpoint_default}">'
+        '<datalist id=installed-checkpoints></datalist></div>'
+        '<div><label>Qwen reviewer model</label>'
+        f'<input name=model list=installed-review-models maxlength=300 placeholder="Profile default: {model_default}">'
+        '<datalist id=installed-review-models></datalist></div>'
+        '<div><label>D0 spec strategy</label><select name=spec_strategy>'
+        f'<option value="">Profile default: {strategy_default}</option>'
+        '<option value=chunked>Chunked — best for 7–8B local models</option>'
+        '<option value=monolithic>Monolithic — qualified 27B model</option>'
+        '</select></div>'
+        '<div><label>Concept steps</label>'
+        f'<input name=concept_steps type=number min=1 max=150 placeholder="Profile default: {steps_default}"></div>'
+        '<div><label>Concept CFG</label>'
+        f'<input name=concept_cfg type=number min=0.1 max=30 step=0.1 placeholder="Profile default: {cfg_default}"></div>'
+        '</div><div id=setup-service-status class=service-status>Checking local AI services and installed models...</div>'
+        '</details><button class=primary type=submit>Compile asset and start</button></form>'
+        '<p class=muted>D1 is human-gated: reject, edit, or retry as many times as needed before the approved image is allowed into 3D.</p>'
+        '</section><script src="/static/studio.js" defer></script>'
+    )
+
+
+_CONCEPT_BACKENDS = {"auto", "qwen_image_2512", "qwen_image_edit_2511", "sdxl"}
+_SPEC_STRATEGIES = {"monolithic", "chunked"}
+
+
+def _new_run_overrides(values: dict[str, str], profile: str) -> dict[str, Any]:
+    """Merge optional browser fields over one resolved profile.
+
+    Empty fields intentionally do not become empty run settings; they mean
+    "inherit" so switching profiles keeps working exactly as it did before
+    the advanced controls were added.
+    """
+    result = studio_overrides(resolve_settings(profile=profile))
+    backend = values.get("concept_backend", "").strip()
+    if backend:
+        if backend not in _CONCEPT_BACKENDS:
+            raise ValueError(f"unknown text-to-2D backend: {backend}")
+        result["concept_backend"] = backend
+    strategy = values.get("spec_strategy", "").strip()
+    if strategy:
+        if strategy not in _SPEC_STRATEGIES:
+            raise ValueError(f"unknown D0 spec strategy: {strategy}")
+        result["spec_strategy"] = strategy
+    for key in ("checkpoint", "model"):
+        value = values.get(key, "").strip()
+        if value:
+            result[key] = value
+    raw_steps = values.get("concept_steps", "").strip()
+    if raw_steps:
+        try:
+            steps = int(raw_steps)
+        except ValueError as exc:
+            raise ValueError("concept steps must be a whole number from 1 to 150") from exc
+        if not 1 <= steps <= 150:
+            raise ValueError("concept steps must be a whole number from 1 to 150")
+        result["concept_steps"] = steps
+    raw_cfg = values.get("concept_cfg", "").strip()
+    if raw_cfg:
+        try:
+            cfg = float(raw_cfg)
+        except ValueError as exc:
+            raise ValueError("concept CFG must be a number greater than 0 and no more than 30") from exc
+        if not 0 < cfg <= 30:
+            raise ValueError("concept CFG must be a number greater than 0 and no more than 30")
+        result["concept_cfg"] = cfg
+    return result
+
+
+def _worker_report() -> list[dict[str, Any]]:
+    """Live worker readiness, the same check `python -m darkness workers` runs.
+
+    /doctor used to list only the *names* bound in config.local.toml, which
+    says nothing about whether any of them can actually run -- the one
+    question the page exists to answer. Failures are reported per worker
+    rather than raised: a single unreadable manifest must not blank the page.
+    """
+    try:
+        manifests = load_manifests()
+    except Exception as exc:
+        return [{"worker_id": "(manifests)", "ready": False, "health_error": f"{type(exc).__name__}: {exc}"}]
+    config = load_local_config()
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        futures = {
+            worker_id: pool.submit(
+                preflight,
+                manifest,
+                command_prefix=(binding.command_prefix if (binding := worker_binding(config, worker_id)) else None),
+                timeout_seconds=1.5,
+            )
+            for worker_id, manifest in manifests.items()
+        }
+        report = []
+        for worker_id, future in futures.items():
+            try:
+                report.append(future.result())
+            except Exception as exc:
+                report.append(
+                    {"worker_id": worker_id, "ready": False, "health_error": f"{type(exc).__name__}: {exc}"}
+                )
+    return sorted(report, key=lambda item: (item.get("ready") is not True, item["worker_id"]))
+
+
+
+def _preflight_report():
+    """Hardware + every cross-stage check, for the System page."""
+    from .hardware import detect_hardware, recommend_stack
+    from .preflight import run_preflight
+
+    try:
+        hardware, checks = run_preflight(profile="simple", deep=False)
+        return hardware, checks, recommend_stack(hardware)
+    except Exception as exc:  # a broken check must not blank the page
+        from .hardware import HardwareProfile
+        from .preflight import Check
+
+        blank = HardwareProfile()
+        return (
+            blank,
+            [Check(name="preflight", status="fail", detail=f"{type(exc).__name__}: {exc}")],
+            recommend_stack(blank),
+        )
+
+
+_STATUS_BADGE = {"ok": "", "warn": " needs", "fail": " needs", "skip": ""}
+
+
+def _preflight_html(hardware, checks, recommendation) -> str:
+    failures = [check for check in checks if check.status == "fail"]
+    rows = "".join(
+        f'<li><span class="badge{_STATUS_BADGE.get(check.status, "")}">{html.escape(check.status)}</span> '
+        f"<strong>{html.escape(check.name)}</strong><br>"
+        f"<span class=muted>{html.escape(check.detail)}</span>"
+        + (
+            f'<br><span class=warning>fix: {html.escape(check.remedy)}</span>'
+            if check.remedy and check.status in {"fail", "warn"}
+            else ""
+        )
+        + "</li>"
+        for check in checks
+    )
+    headline = (
+        f'<p class=error>{len(failures)} assumption{"" if len(failures) == 1 else "s"} '
+        "will fail this run. Each one below would otherwise surface several stages in.</p>"
+        if failures
+        else '<p class="good">Every cross-stage assumption holds on this machine.</p>'
+    )
+    reasons = "".join(f"<li>{html.escape(reason)}</li>" for reason in recommendation.reasons)
+    return (
+        '<h2 style="margin-top:18px">Preflight</h2>'
+        f"{headline}"
+        f'<ul class="decisions">{rows}</ul>'
+        f'<details style="margin-top:12px"><summary>Recommended stack for this hardware '
+        f"(profile {html.escape(recommendation.profile)})</summary>"
+        f"<p><span class=badge>reviewer {html.escape(recommendation.reviewer_size)}</span> "
+        f"<span class=badge>spec_strategy {html.escape(recommendation.spec_strategy)}</span> "
+        f"<span class=badge>voxel_fraction {recommendation.voxel_fraction}</span></p>"
+        f"<ul>{reasons}</ul></details>"
     )
 
 
 def _doctor() -> str:
-    localdeploy, localdeploy_detail = _probe("http://127.0.0.1:8000/v1/models")
-    comfy, comfy_detail = _probe("http://127.0.0.1:8188/system_stats")
+    defaults = studio_overrides(resolve_settings(profile="simple"))
+    reviewer_url = str(defaults.get("localdeploy_url", "http://127.0.0.1:8000/v1")).rstrip("/")
+    comfy_url = str(defaults.get("comfy_url", "http://127.0.0.1:8188")).rstrip("/")
+    with ThreadPoolExecutor(max_workers=3) as pool:
+        # Each probe blocks for up to two seconds and the worker preflight
+        # blocks for longer; run them together so the page is not the sum of
+        # every timeout on a machine with nothing running.
+        localdeploy_future = pool.submit(_probe, f"{reviewer_url}/models")
+        comfy_future = pool.submit(_probe, f"{comfy_url}/system_stats")
+        workers_future = pool.submit(_worker_report)
+        # The cross-stage assumption checks. Same report `darkness doctor`
+        # prints, because a mismatch that only shows up in the CLI is a
+        # mismatch the browser user still runs into three stages later.
+        preflight_future = pool.submit(_preflight_report)
+        localdeploy, localdeploy_detail = localdeploy_future.result()
+        comfy, comfy_detail = comfy_future.result()
+        workers = workers_future.result()
+        hardware, checks, recommendation = preflight_future.result()
     config = load_local_config()
-    configured = sorted(config.workers) if config else []
+    ready = sum(1 for item in workers if item.get("ready") is True)
+    rows = "".join(
+        f'<li><strong>{html.escape(str(item["worker_id"]))}</strong> '
+        f'<span class="badge{"" if item.get("ready") else " needs"}">'
+        f'{"ready" if item.get("ready") else "not ready"}</span> '
+        f'<span class=muted>{html.escape(str(item.get("executable") or item.get("health_error") or item.get("declared_lifecycle") or ""))}</span></li>'
+        for item in workers
+    )
     return (
         '<section class="card hero"><h1>Local production system</h1><div class=health>'
-        f'<span class="{"" if localdeploy else "down"}">Qwen / LocalDeploy: {html.escape(localdeploy_detail)}</span>'
-        f'<span class="{"" if comfy else "down"}">ComfyUI: {html.escape(comfy_detail)}</span>'
-        f'<span class="{"" if config else "down"}">Darkness config: {"loaded" if config else "missing"}</span>'
-        '</div><h2 style="margin-top:18px">Configured deterministic workers</h2>'
-        f'<pre>{html.escape(json.dumps(configured, indent=2))}</pre>'
-        '<p class=muted>The browser is bound to loopback only. Qwen proposes structured decisions; it never executes code or edits artifacts.</p></section>'
+        f'<span class="{"" if localdeploy else "down"}">Qwen reviewer ({html.escape(reviewer_url)}): {html.escape(localdeploy_detail)}</span>'
+        f'<span class="{"" if comfy else "down"}">ComfyUI ({html.escape(comfy_url)}): {html.escape(comfy_detail)}</span>'
+        f'<span class="{"" if config else "down"}">Darkness config: {"loaded" if config else "missing (copy machine.example.toml to config.local.toml)"}</span>'
+        f'<span class="{"" if ready else "down"}">Workers ready: {ready}/{len(workers)}</span>'
+        f'<span class="{"" if hardware.detected else "down"}">GPU: '
+        f'{html.escape((hardware.primary.name if hardware.primary else "not detected"))}'
+        f'{f" &mdash; {hardware.vram_total_gb} GB" if hardware.vram_total_gb else ""}</span>'
+        '</div>'
+        + _preflight_html(hardware, checks, recommendation)
+        + '<h2 style="margin-top:18px">Deterministic worker preflight</h2>'
+        f'<ul class="decisions">{rows or "<li>No worker manifests were found.</li>"}</ul>'
+        '<p class=muted>Studio binds to loopback by default. The Docker profile uses an explicit container-only bind and publishes it on host loopback. Qwen proposes structured decisions; it never executes code or edits artifacts.</p></section>'
     )
 
 
@@ -388,6 +1169,7 @@ def build_server(
     *,
     host: str = "127.0.0.1",
     port: int = 8766,
+    allow_non_loopback: bool = False,
     coordinator_factory=None,
 ) -> StudioServer:
     """Construct the Studio HTTP server without running it.
@@ -400,8 +1182,11 @@ def build_server(
     built on a different store than the request handlers use would race on
     run.json writes.
     """
-    if host not in {"127.0.0.1", "::1", "localhost"}:
-        raise ValueError("Darkness Studio may bind only to a loopback address")
+    if host not in {"127.0.0.1", "::1", "localhost"} and not allow_non_loopback:
+        raise ValueError(
+            "Darkness Studio may bind only to a loopback address unless "
+            "allow_non_loopback=True is explicitly set"
+        )
     store = StudioStore(workspace)
     recovered = store.recover_interrupted_runs()
     coordinator = (coordinator_factory or StudioCoordinator)(store)
@@ -421,8 +1206,8 @@ def build_server(
             )
             self.end_headers()
 
-        def page(self, title: str, body: str, status: HTTPStatus = HTTPStatus.OK, refresh: bool = False) -> None:
-            payload = _page(title, body, refresh=refresh)
+        def page(self, title: str, body: str, status: HTTPStatus = HTTPStatus.OK) -> None:
+            payload = _page(title, body)
             self._headers(status, "text/html; charset=utf-8", len(payload))
             self.wfile.write(payload)
 
@@ -434,17 +1219,37 @@ def build_server(
 
         def do_GET(self) -> None:
             try:
-                path = urlparse(self.path).path
+                parsed = urlparse(self.path)
+                path = parsed.path
                 if path == "/":
-                    self.page("Darkness Studio", _dashboard(store))
+                    show_archived = parse_qs(parsed.query).get("archived", [""])[0] == "1"
+                    self.page("Darkness Studio", _dashboard(store, show_archived=show_archived))
                 elif path == "/new":
                     self.page("New asset", _new_form(csrf))
                 elif path == "/doctor":
                     self.page("System", _doctor())
+                elif path == "/favicon.ico":
+                    self._headers(HTTPStatus.NO_CONTENT, "image/x-icon", 0)
                 elif path.startswith("/run/"):
-                    run_id = unquote(path.split("/", 2)[2])
-                    body, refresh = _run_page(store, coordinator, run_id, csrf)
-                    self.page("Production run", body, refresh=refresh)
+                    parts = path.split("/")
+                    if len(parts) >= 5 and parts[3] == "stage":
+                        run_id = unquote(parts[2])
+                        stage_id = unquote(parts[4])
+                        self.page("Stage detail", _stage_page(store, run_id, stage_id))
+                    else:
+                        run_id = unquote(parts[2])
+                        self.page("Production run", _run_page(store, coordinator, run_id, csrf))
+                elif path == "/static/studio.js":
+                    payload = STUDIO_JS.encode("utf-8")
+                    self._headers(HTTPStatus.OK, "text/javascript; charset=utf-8", len(payload))
+                    self.wfile.write(payload)
+                elif path == "/api/setup/options":
+                    profile = parse_qs(parsed.query).get("profile", ["simple"])[0]
+                    if profile not in _available_profiles():
+                        raise ValueError(f"unknown configuration profile: {profile}")
+                    payload = json.dumps(_setup_options(profile)).encode("utf-8")
+                    self._headers(HTTPStatus.OK, "application/json; charset=utf-8", len(payload))
+                    self.wfile.write(payload)
                 elif path.startswith("/api/run/"):
                     run_id = unquote(path.split("/", 3)[3])
                     payload = store.load(run_id).model_dump_json(indent=2).encode("utf-8")
@@ -477,12 +1282,17 @@ def build_server(
                     if len(description) < 20:
                         raise ValueError("description must contain at least 20 characters")
                     profile = values.get("profile", "simple").strip() or "simple"
-                    resolved = resolve_settings(profile=profile)
+                    # resolve_settings() turns this straight into a
+                    # profiles/<name>.toml path, so accept only a profile the
+                    # selector actually offers rather than any string a form
+                    # post happens to carry.
+                    if profile not in _available_profiles():
+                        raise ValueError(f"unknown configuration profile: {profile}")
                     run_id = _slug()
                     store.create(
                         run_id,
                         description,
-                        {**studio_overrides(resolved), "profile": profile},
+                        {**_new_run_overrides(values, profile), "profile": profile},
                     )
                     coordinator.submit(run_id)
                     self.redirect("/run/" + quote(run_id))
@@ -539,6 +1349,14 @@ def build_server(
                     run_id = unquote(path.split("/")[2])
                     coordinator.submit(run_id)
                     self.redirect("/run/" + quote(run_id))
+                elif path.startswith("/run/") and path.endswith("/archive"):
+                    run_id = unquote(path.split("/")[2])
+                    store.set_archived(run_id, True)
+                    self.redirect("/")
+                elif path.startswith("/run/") and path.endswith("/unarchive"):
+                    run_id = unquote(path.split("/")[2])
+                    store.set_archived(run_id, False)
+                    self.redirect("/run/" + quote(run_id))
                 else:
                     self.page("Not found", "<h1>Not found</h1>", HTTPStatus.NOT_FOUND)
             except (KeyError, FileNotFoundError, ValueError) as exc:
@@ -566,8 +1384,14 @@ def serve(
     host: str = "127.0.0.1",
     port: int = 8766,
     open_browser: bool = False,
+    allow_non_loopback: bool = False,
 ) -> None:
-    studio = build_server(workspace, host=host, port=port)
+    studio = build_server(
+        workspace,
+        host=host,
+        port=port,
+        allow_non_loopback=allow_non_loopback,
+    )
     if studio.recovered:
         print(f"Darkness Studio recovered interrupted runs: {', '.join(studio.recovered)}")
     print(f"Darkness Studio: {studio.url}")

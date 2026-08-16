@@ -116,13 +116,76 @@ def _parser() -> argparse.ArgumentParser:
 
     subparsers.add_parser("workers", help="print strict worker manifests and live preflight state")
 
+    doctor = subparsers.add_parser(
+        "doctor",
+        help="check this machine's hardware and every cross-stage assumption before a run",
+    )
+    doctor.add_argument("--profile", default="simple")
+    doctor.add_argument(
+        "--deep",
+        action="store_true",
+        help="also launch Blender to verify its render engine and the donor motion's bone names",
+    )
+    doctor.add_argument("--json", action="store_true", help="machine-readable output")
+    doctor.add_argument(
+        "--asset-height-m",
+        type=float,
+        default=1.8,
+        help="height of the asset you intend to build; voxel sizing depends on it",
+    )
+
     studio = subparsers.add_parser(
-        "studio", help="launch the standalone description-to-character browser control plane"
+        "studio",
+        help="launch the standalone description-to-character browser control plane, "
+        "or drive it headlessly with a subcommand",
     )
     studio.add_argument("--workspace", type=Path)
     studio.add_argument("--host", default="127.0.0.1")
     studio.add_argument("--port", type=int, default=8766)
     studio.add_argument("--open-browser", action="store_true")
+    studio.add_argument(
+        "--allow-non-loopback",
+        action="store_true",
+        help="permit a non-loopback bind (intended for a container whose published port is host-loopback only)",
+    )
+    # No subcommand (just `darkness studio --workspace ... [--open-browser]`)
+    # keeps launching the browser control plane exactly as before -- these
+    # subcommands are additive, not a replacement, so existing invocations in
+    # README.md and machine setup docs keep working unchanged.
+    studio_sub = studio.add_subparsers(dest="studio_command")
+
+    studio_list = studio_sub.add_parser("list", help="list studio runs as JSON")
+    studio_list.add_argument("--workspace", type=Path)
+    studio_list.add_argument(
+        "--include-archived", action="store_true", help="also list runs hidden from the dashboard"
+    )
+
+    studio_show = studio_sub.add_parser("show", help="print one run's full persisted state as JSON")
+    studio_show.add_argument("--workspace", type=Path)
+    studio_show.add_argument("--run-id", required=True)
+
+    studio_decide = studio_sub.add_parser(
+        "decide",
+        help="record one human decision at a stage gate and, by default, drive the pipeline "
+        "to its next stopping point",
+    )
+    studio_decide.add_argument("--workspace", type=Path)
+    studio_decide.add_argument("--run-id", required=True)
+    studio_decide.add_argument("--stage-id", required=True)
+    studio_decide.add_argument(
+        "--decision", required=True, choices=("approve", "reject", "retry", "edit", "skip", "rollback")
+    )
+    studio_decide.add_argument("--comment", default="")
+    studio_decide.add_argument("--selected-evidence-id", default=None)
+    studio_decide.add_argument(
+        "--overrides", default=None, help='JSON object, for example \'{"seed": 42}\''
+    )
+    studio_decide.add_argument("--target-stage-id", default=None)
+    studio_decide.add_argument(
+        "--no-resume",
+        action="store_true",
+        help="record the decision only; do not drive the pipeline afterward",
+    )
 
     worker = subparsers.add_parser("run-worker", help="run one configured worker through the validated file contract")
     worker.add_argument("--worker-id", required=True)
@@ -168,17 +231,108 @@ def _parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _studio_workspace(args: argparse.Namespace) -> Path:
+    config = load_local_config()
+    workspace = args.workspace or (Path(config.workspace_root) if config else None)
+    if workspace is None:
+        raise SystemExit("--workspace is required when config.local.toml is missing")
+    return workspace
+
+
 def main(argv: list[str] | None = None) -> int:
     args = _parser().parse_args(argv)
     if args.command == "studio":
-        from .studio_web import serve
+        studio_command = getattr(args, "studio_command", None)
+        if studio_command is None:
+            from .studio_web import serve
 
-        config = load_local_config()
-        workspace = args.workspace or (Path(config.workspace_root) if config else None)
-        if workspace is None:
-            raise SystemExit("--workspace is required when config.local.toml is missing")
-        serve(workspace, host=args.host, port=args.port, open_browser=args.open_browser)
-        return 0
+            serve(
+                _studio_workspace(args),
+                host=args.host,
+                port=args.port,
+                open_browser=args.open_browser,
+                allow_non_loopback=args.allow_non_loopback,
+            )
+            return 0
+        from .studio_cli import decide, list_runs, show_run
+        from .studio_store import StudioStore
+
+        store = StudioStore(_studio_workspace(args))
+        if studio_command == "list":
+            print(json.dumps(list_runs(store, include_archived=args.include_archived), indent=2))
+            return 0
+        if studio_command == "show":
+            print(json.dumps(show_run(store, args.run_id), indent=2))
+            return 0
+        if studio_command == "decide":
+            overrides = None
+            if args.overrides:
+                try:
+                    overrides = json.loads(args.overrides)
+                except json.JSONDecodeError as exc:
+                    raise SystemExit(f"--overrides must be valid JSON: {exc.msg}") from exc
+                if not isinstance(overrides, dict):
+                    raise SystemExit('--overrides must be a JSON object, for example {"seed": 42}')
+            result = decide(
+                store,
+                args.run_id,
+                args.stage_id,
+                args.decision,
+                args.comment,
+                args.selected_evidence_id,
+                overrides=overrides,
+                target_stage_id=args.target_stage_id,
+                resume=not args.no_resume,
+            )
+            print(json.dumps(result, indent=2))
+            return 0
+    if args.command == "doctor":
+        from .preflight import run_preflight
+        from .hardware import recommend_stack
+
+        hardware, checks = run_preflight(
+            profile=args.profile, deep=args.deep, asset_height_m=args.asset_height_m
+        )
+        recommendation = recommend_stack(hardware, asset_height_m=args.asset_height_m)
+        if args.json:
+            print(
+                json.dumps(
+                    {
+                        "hardware": hardware.model_dump(mode="json"),
+                        "recommendation": recommendation.model_dump(mode="json"),
+                        "checks": [check.model_dump(mode="json") for check in checks],
+                    },
+                    indent=2,
+                )
+            )
+        else:
+            gpu = hardware.primary
+            print("HARDWARE")
+            print(f"  source        {hardware.source}")
+            print(f"  gpu           {gpu.name if gpu else 'none detected'}")
+            if gpu:
+                print(f"  vram          {gpu.vram_total_gb} GB total, {gpu.vram_free_gb} GB free")
+            print(f"  system ram    {hardware.system_ram_gb} GB")
+            print()
+            print(f"RECOMMENDED STACK  (profile {recommendation.profile})")
+            print(f"  reviewer      {recommendation.reviewer_size}-class vision model")
+            print(f"  spec_strategy {recommendation.spec_strategy}")
+            print(f"  vram_handoff  {recommendation.vram_handoff}")
+            print(f"  voxel_fraction {recommendation.voxel_fraction}")
+            for reason in recommendation.reasons:
+                print(f"    - {reason}")
+            for warning in recommendation.warnings:
+                print(f"    ! {warning}")
+            print()
+            print("PREFLIGHT")
+            for check in checks:
+                print(f"  [{check.status.upper():4}] {check.name}")
+                if check.detail:
+                    print(f"         {check.detail}")
+                if check.remedy and check.status in {"fail", "warn"}:
+                    print(f"      fix: {check.remedy}")
+        failures = [check for check in checks if check.status == "fail"]
+        return 1 if failures else 0
     if args.command == "workers":
         config = load_local_config()
         result = {}

@@ -80,7 +80,13 @@ def configure_scene(config):
     scene = bpy.context.scene
     render_width, render_height = config["render_size"]
     try:
-        scene.render.engine = "BLENDER_EEVEE_NEXT"
+        # Blender 4.2 called this BLENDER_EEVEE_NEXT; 5.x renamed it back to
+        # BLENDER_EEVEE. Pick whichever this build offers.
+        scene.render.engine = next(
+            (name for name in ("BLENDER_EEVEE_NEXT", "BLENDER_EEVEE")
+             if name in bpy.types.RenderSettings.bl_rna.properties["engine"].enum_items.keys()),
+            "BLENDER_EEVEE",
+        )
     except TypeError:
         scene.render.engine = "BLENDER_EEVEE"
     scene.render.resolution_x = int(render_width)

@@ -3,6 +3,50 @@
 Every model here is free and open source, and the whole chain fits on a
 consumer laptop GPU. No API keys, no subscriptions, no cloud.
 
+## Automated setup on Windows, Linux, and macOS
+
+The repository-root launcher automates the core environment, Ollama reviewer,
+ComfyUI runtime, Qwen Image or SDXL concept path, Hunyuan3D, Blender
+discovery/installation, local config, smoke check, and Studio startup. Windows
+uses the official ComfyUI portable runtime:
+
+```powershell
+.\asset-forge.ps1
+```
+
+Linux and macOS use ComfyUI's supported manual layout in its own isolated
+environment:
+
+```bash
+bash ./asset-forge.sh
+```
+
+Choose the recommended Qwen stack in the prompt. For an unattended first
+install, explicitly accept the separate SDXL and Hunyuan model terms:
+
+```powershell
+.\asset-forge.ps1 -Action install -AiStack qwen -NonInteractive `
+  -AcceptSdxlLicense -AcceptHunyuanLicense
+.\asset-forge.ps1 -AiStack existing
+```
+
+```bash
+bash ./asset-forge.sh install --ai-stack qwen --non-interactive \
+  --accept-sdxl-license --accept-hunyuan-license
+bash ./asset-forge.sh start --ai-stack existing
+```
+
+After installation, the normal launcher is idempotent: it skips a current
+environment and starts the installed services plus Studio. Use `doctor` for
+readiness, `repair` for bounded reinstall attempts, or the platform's
+no-elevation option to prohibit its final administrator fallback. The
+no-browser option keeps both service and Studio tabs closed. Existing
+`config.local.toml` is preserved. Run `docker compose up --build` for the
+containerized Studio + reviewer path; the root README describes its persistent
+volumes, NVIDIA overlay, loopback binding, and host-native ComfyUI connection.
+The manual sections below remain useful for custom locations, specialized
+workers, and troubleshooting.
+
 ## Why this stack
 
 The pipeline was originally qualified against an RTX 5090 (32 GB). On an 8 GB
@@ -120,7 +164,70 @@ Describe your asset, then:
   growing the background inward from the image border, then flattens it to
   white. A busy or cluttered background leaves fragments that the 3D model
   will faithfully reconstruct as slabs around your asset.
-- **Language-model stages want a bigger model than 8 GB fits.** The qualified
-  reviewer is a 27B model. Smaller local models fail the typed contracts
-  loudly rather than silently — which is correct, but it means D0 and the
-  review stages want either a larger machine or a hosted endpoint.
+- **D0 needs `spec_strategy = "chunked"` on a small model.** The qualified
+  reviewer is a 27B model, and the default one-shot spec compile assumes it.
+  On 8 GB, see "Compiling the spec on a 7–8B model" below — this is solved,
+  not merely a warning.
+- **The review stages still want a bigger model than 8 GB fits.** D0 is
+  handled by chunking; the *vision* review gates (D1's critic, D2/D3's
+  assessors) have not been given the same treatment yet and remain the
+  weakest link on a small local model.
+
+## Compiling the spec on a 7–8B model
+
+D0 turns your description into a typed `StudioAssetSpec`: seventeen fields,
+two arrays of nested objects, six enums, in one grammar-constrained call.
+A 27B model does that fine. Measured here on an RTX 3080 Laptop, an 8B model
+does not — `qwen3-vl:8b-instruct` and `gemma3:12b` both took ~119 s and
+returned schema-valid JSON with `equipment: []`, which fails the handedness
+contract and stops the run at D0.
+
+That is not a knowledge problem, and it is fixable without a bigger model.
+Two published results explain why:
+
+- [*Let Me Speak Freely?*](https://aclanthology.org/2024.emnlp-industry.91/)
+  (EMNLP 2024) measures that format restriction degrades reasoning, and that
+  tighter constraints degrade it further. One giant schema is close to the
+  worst case.
+- [llama.cpp/Ollama compile the schema to a GBNF grammar](https://deepwiki.com/ggml-org/llama.cpp/8.1-grammar-and-structured-output)
+  and mask invalid tokens. That guarantees *shape*, never *content* — an
+  empty array is perfectly grammatical, which is exactly what came back.
+
+`darkness/chunked_spec.py` implements the alternative. Set:
+
+```toml
+[studio_defaults]          # in config.local.toml
+spec_strategy = "chunked"
+llm_timeout_seconds = 600
+```
+
+It works in four moves:
+
+1. **Decompose** — one small call per field group, so no call is near the
+   model's structured-output limit.
+2. **Reason first, constrain second** — judgement-heavy chunks answer in free
+   prose, then a second constrained call extracts from that prose. This is
+   the paper's own mitigation, and it is what moved a supply crate from
+   `environment` to `prop`.
+3. **Make emptiness ungrammatical** — `minItems` in the chunk schema survives
+   into the grammar, so `[]` becomes unreachable rather than retried. Use the
+   *minimum viable* floor (1), never an aspirational one: asked for two
+   silhouette phrases when it had one, the model padded the slot with
+   `"%20%20%20…"`.
+4. **Never make the model spell the contract** — it reports
+   `held_in="right_hand"`; Python maps that to
+   `side/socket/grip = right / hand_right.grip / palm_and_fingers`. Ids and
+   clip names are slugified in code too.
+
+Measured on the same hardware and model, compiling the same knight:
+
+| | monolithic | chunked |
+|---|---|---|
+| knight | ~119 s, **failed** (`equipment: []`) | **~18 s**, sword right / shield left correct |
+| goblin | timed out | ~14 s |
+| static crate | — | ~9 s |
+| hinged gate | — | ~19 s, 4 movable parts |
+
+The result is validated by the same `StudioAssetSpec` and the same
+`_validate_explicit_handedness` check the 27B path uses. It is a different
+route to the contract, not a lower bar.

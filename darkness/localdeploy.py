@@ -48,6 +48,32 @@ class LocalDeployStructuredClient(Generic[T]):
                 ) from exc
             return response.json()
 
+    def complete(
+        self,
+        *,
+        model: str,
+        messages: list[dict[str, Any]],
+        temperature: float = 0.2,
+        max_tokens: int = 512,
+    ) -> str:
+        """One unconstrained completion, returned as plain text.
+
+        The schema-constrained `request()` is the normal path. This exists for
+        callers that deliberately want the model to answer *without* a grammar
+        first -- see darkness/chunked_spec.py, where free prose is generated
+        and then a second, constrained call extracts from it. It goes through
+        the same `_sender`, so an injected test sender intercepts both.
+        """
+        envelope = self._sender(
+            {
+                "model": model,
+                "messages": [dict(message) for message in messages],
+                "temperature": temperature,
+                "max_tokens": max_tokens,
+            }
+        )
+        return str(envelope["choices"][0]["message"]["content"])
+
     def request(
         self,
         *,

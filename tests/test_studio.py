@@ -2228,3 +2228,307 @@ def test_artifact_paths_cannot_escape_run(tmp_path: Path) -> None:
     outside.write_text("secret", encoding="utf-8")
     with pytest.raises(FileNotFoundError):
         store.artifact_path("footman-v3", "../../../outside.txt")
+
+
+def test_invalidating_work_does_not_reopen_a_contract_skipped_stage(tmp_path: Path) -> None:
+    """Regression: _invalidate_from() reset every downstream stage to pending
+    unconditionally, including the ones D0's compiled contract had marked not
+    applicable. Rejecting the concept of a static prop therefore un-skipped
+    D4-D7 and sent a chair through skeleton, rig, skinning, and motion."""
+    store = StudioStore(tmp_path)
+    run = store.create("static-prop-reject", DESCRIPTION)
+    run.stage("D0").state = "approved"
+    for stage_id in ("D4", "D5", "D6", "D7"):
+        stage = run.stage(stage_id)
+        stage.state = "skipped"
+        stage.applicable = False
+        stage.progress = 1
+        stage.message = "Static assets do not require skeleton, rig, deformation, or motion."
+    store.save(run)
+    run, item = _awaiting_stage_with_one_candidate(store, "static-prop-reject", "D1")
+
+    decided = store.decide(run.run_id, "D1", "reject", "Legs read as too thin.", item.evidence_id)
+
+    for stage_id in ("D4", "D5", "D6", "D7"):
+        stage = decided.stage(stage_id)
+        assert stage.state == "skipped", f"{stage_id} was reopened by an upstream rejection"
+        assert stage.applicable is False
+        assert stage.message.startswith("Static assets"), "the skip reason was overwritten"
+    # ...while the stages that do apply are invalidated exactly as before.
+    assert decided.stage("D2").state == "pending"
+    assert decided.stage("D8").state == "pending"
+    assert StudioCoordinator._next_stage(decided).stage_id == "D1"
+
+
+def test_rollback_past_a_contract_skipped_stage_leaves_it_skipped(tmp_path: Path) -> None:
+    """The same defect through the rollback path: a rollback to D2 must not
+    schedule the rig stages a static asset's contract already excluded."""
+    store = StudioStore(tmp_path)
+    run = store.create("static-prop-rollback", DESCRIPTION)
+    for stage_id in ("D0", "D1", "D2", "D3"):
+        run.stage(stage_id).state = "approved"
+    for stage_id in ("D4", "D5", "D6", "D7"):
+        run.stage(stage_id).state = "skipped"
+        run.stage(stage_id).applicable = False
+    store.save(run)
+    run, item = _awaiting_stage_with_one_candidate(store, "static-prop-rollback", "D8")
+
+    decided = store.decide(
+        run.run_id, "D8", "rollback", "the cleanup lost a leg", item.evidence_id, target_stage_id="D2"
+    )
+
+    assert decided.current_stage == "D2"
+    assert [stage.state for stage in decided.stages[4:8]] == ["skipped"] * 4
+    # D3 -> D8 directly, never through the excluded articulation stages.
+    decided.stage("D2").state = "approved"
+    decided.stage("D3").state = "approved"
+    assert StudioCoordinator._next_stage(decided).stage_id == "D8"
+
+
+def test_recompiling_d0_reopens_a_previously_skipped_stage(tmp_path: Path) -> None:
+    """Because _invalidate_from() now preserves contract skips, D0 is the only
+    thing that can lift one -- so re-running it against a differently shaped
+    spec must reset applicability rather than inherit the old contract's."""
+    chair = StudioAssetSpec(
+        asset_id="oak_chair",
+        title="Original Oak Chair",
+        description="A simple original sturdy wooden dining chair with a straight back.",
+        creative_direction="Readable original cottage-style furniture.",
+        asset_kind="prop",
+        behavior="static",
+        anatomy_family=None,
+        height_m=0.9,
+        dimensions_m=[0.45, 0.9, 0.45],
+        silhouette=["straight back"],
+        materials=["oak wood"],
+        animations=[],
+        locked_features=["four legs"],
+        negative_constraints=["no copied franchise motifs"],
+        gameplay_readability=["silhouette reads at prop scale"],
+    )
+    store = StudioStore(tmp_path)
+    run = store.create("recompiled-v1", chair.description)
+    coordinator = StudioCoordinator(store, qwen_factory=lambda run: _SpecQwen(chair))
+    coordinator._run_d0(run)
+    assert run.stage("D7").state == "skipped" and run.stage("D7").applicable is False
+
+    # The human rolls back to D0 and Qwen now compiles an animated creature.
+    StudioStore._invalidate_from(run, 0, "Reopened by a rollback from D1.")
+    assert run.stage("D7").state == "skipped", "a contract skip survives invalidation"
+    coordinator._qwen_factory = lambda run: _SpecQwen(footman_spec())
+    coordinator._run_d0(run)
+
+    for stage_id in ("D4", "D5", "D6", "D7"):
+        stage = run.stage(stage_id)
+        assert stage.applicable is True, f"{stage_id} kept the previous contract's exclusion"
+        assert stage.state == "pending", f"{stage_id} stayed skipped under a spec that needs it"
+
+
+def test_stop_flag_is_retired_once_the_stopped_job_ends(tmp_path: Path) -> None:
+    """Regression: _stop_requested was only cleared by the next submit(), so
+    after a stop finished the console kept reporting "waiting for the active
+    worker to reach a safe stop point" beside an idle Resume button."""
+    store = StudioStore(tmp_path)
+    _awaiting_d1_run(store, "stop-clears")
+    comfy = BlockingControlFakeComfy()
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        coordinator = StudioCoordinator(
+            store,
+            qwen_factory=lambda run: FakeQwen(),
+            comfy_factory=lambda run: comfy,
+            executor=executor,
+        )
+        assert coordinator.submit_manual_qwen_image(
+            "stop-clears",
+            "Render a natural original footman with an opaque shield and clearly gripped sword.",
+        )
+        assert comfy.started.wait(timeout=2)
+        assert coordinator.stop("stop-clears")[0] is True
+        assert coordinator.stopping("stop-clears") is True
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline and coordinator.busy("stop-clears"):
+            time.sleep(0.02)
+        assert coordinator.busy("stop-clears") is False
+        assert coordinator.stopping("stop-clears") is False, "the stop request outlived its job"
+
+
+def test_direct_render_at_a_closed_gate_is_refused_not_failed(tmp_path: Path) -> None:
+    """Regression: the gate precondition was only checked inside the worker
+    thread, where its failure ran the generic handler and marked the D1 gate
+    "failed" -- destroying a gate that was legitimately waiting for a human."""
+    store = StudioStore(tmp_path)
+    _awaiting_d1_run(store, "closed-gate")
+    run = store.load("closed-gate")
+    run.stage("D1").state = "approved"
+    run.current_stage = "D2"
+    store.save(run)
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        coordinator = StudioCoordinator(store, qwen_factory=lambda run: FakeQwen(), executor=executor)
+        with pytest.raises(ValueError, match="awaits review"):
+            coordinator.submit_manual_qwen_image("closed-gate", "Render a wholly different footman please.")
+    unchanged = store.load("closed-gate")
+    assert unchanged.stage("D1").state == "approved"
+    assert unchanged.state != "failed"
+
+
+def test_run_root_rejects_a_relative_path_segment(tmp_path: Path) -> None:
+    """Regression: run_root() accepted any string of [a-z0-9._-], so ".."
+    resolved to the studio root and /artifact/%2e%2e/<path> read files from
+    outside the run directory."""
+    store = StudioStore(tmp_path)
+    for bad in ("..", ".", "...", "-nope"):
+        with pytest.raises(ValueError, match="invalid run id"):
+            store.run_root(bad)
+    with pytest.raises(ValueError, match="invalid run id"):
+        store.artifact_path("..", "runs")
+
+
+def test_recovery_does_not_re_report_an_already_recovered_run(tmp_path: Path) -> None:
+    """Regression: the recovery message itself matched the phrase recovery
+    scanned for, so a failed-and-recovered run was 'recovered' again, and
+    given another stage_recovered event, on every Studio launch."""
+    store = StudioStore(tmp_path)
+    run = store.create("interrupted-v1", DESCRIPTION)
+    run.state = "running"
+    run.stage("D2").state = "running"
+    run.current_stage = "D2"
+    store.save(run)
+
+    assert store.recover_interrupted_runs() == ["interrupted-v1"]
+    events_after_first = len(store.read_events("interrupted-v1"))
+    assert store.recover_interrupted_runs() == []
+    assert len(store.read_events("interrupted-v1")) == events_after_first
+
+
+def test_d4_retry_overrides_reach_the_blender_rig_worker(tmp_path: Path) -> None:
+    """Regression: D4's non-rigid path always sent landmark_adjustments={}
+    and weight_adjustments=[] to the Blender worker, and render_size /
+    maximum_material_change_fraction / maximum_bone_influences were read only
+    from settings -- a human correction at the D4 gate had no way to reach
+    the worker that actually proposes the rig."""
+    store = StudioStore(tmp_path)
+    worker = FakeWorkerExecutor()
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        coordinator = StudioCoordinator(
+            store,
+            qwen_factory=lambda run: FakeQwen(),
+            comfy_factory=lambda run: FakeComfy(),
+            worker_executor=worker,
+            executor=executor,
+        )
+        store.create("d4-override-v1", DESCRIPTION)
+        coordinator.submit("d4-override-v1")
+        _approve_gate(store, coordinator, "d4-override-v1", "D1")
+        run = wait_for(store, "d4-override-v1", "awaiting_review")
+        assert run.current_stage == "D4"
+        candidate = next(
+            item for item in run.stage("D4").evidence if item.metrics.get("selectable") is True
+        )
+        store.decide(
+            "d4-override-v1",
+            "D4",
+            "edit",
+            "The left shoulder landmark sits too low; nudge it up and rebalance the weight split.",
+            candidate.evidence_id,
+            overrides={
+                "landmark_adjustments": {"left_shoulder": [0.0, 0.0, 0.02]},
+                "weight_adjustments": [
+                    {
+                        "joint_pair": "shoulder_left",
+                        "direction": "parent_to_child",
+                        "transfer_fraction": 0.1,
+                        "radius_fraction": 0.1,
+                    }
+                ],
+                "render_size": 640,
+            },
+        )
+        coordinator.submit("d4-override-v1")
+        wait_for(store, "d4-override-v1", "awaiting_review")
+
+    rig_requests = [
+        item for item in worker.requests if item.operation_id == "blender.propose_short_biped_rig"
+    ]
+    assert len(rig_requests) == 2, "the edit must trigger exactly one more D4 worker attempt"
+    second = rig_requests[-1]
+    assert second.parameters["landmark_adjustments"] == {"left_shoulder": [0.0, 0.0, 0.02]}
+    assert second.parameters["weight_adjustments"] == [
+        {
+            "joint_pair": "shoulder_left",
+            "direction": "parent_to_child",
+            "transfer_fraction": 0.1,
+            "radius_fraction": 0.1,
+        }
+    ]
+    assert second.parameters["render_size"] == 640
+    # consumed exactly once
+    assert store.load("d4-override-v1").stage("D4").pending_overrides == {}
+    # and an ordinary (non-override) attempt is unaffected -- the first
+    # request must not have carried anything from the future correction
+    first = rig_requests[0]
+    assert first.parameters["landmark_adjustments"] == {}
+    assert first.parameters["weight_adjustments"] == []
+
+
+def test_d4_landmark_adjustment_shape_is_validated_at_the_gate(tmp_path: Path) -> None:
+    store = StudioStore(tmp_path)
+    run, item = _awaiting_stage_with_one_candidate(store, "d4-bad-override-v1", "D4")
+    with pytest.raises(ValueError, match="landmark_adjustments"):
+        store.decide(
+            run.run_id,
+            "D4",
+            "edit",
+            "fix it",
+            item.evidence_id,
+            overrides={"landmark_adjustments": {"left_shoulder": [0.0, 0.02]}},
+        )
+    with pytest.raises(ValueError, match="weight_adjustments"):
+        store.decide(
+            run.run_id,
+            "D4",
+            "edit",
+            "fix it",
+            item.evidence_id,
+            overrides={"weight_adjustments": [1, 2, 3]},
+        )
+    with pytest.raises(ValueError, match="render_size"):
+        store.decide(
+            run.run_id, "D4", "edit", "fix it", item.evidence_id, overrides={"render_size": 8}
+        )
+
+
+def test_archiving_a_run_is_reversible_and_does_not_touch_state(tmp_path: Path) -> None:
+    store = StudioStore(tmp_path)
+    run = store.create("archive-v1", DESCRIPTION)
+    assert run.archived is False
+
+    archived = store.set_archived("archive-v1", True)
+    assert archived.archived is True
+    assert archived.state == "created"  # unrelated to the state machine
+    assert "run_archived" in [item["event_type"] for item in store.read_events("archive-v1")]
+
+    unarchived = store.set_archived("archive-v1", False)
+    assert unarchived.archived is False
+    assert "run_unarchived" in [item["event_type"] for item in store.read_events("archive-v1")]
+
+    # setting the same value again is a no-op, not a duplicate event
+    before = len(store.read_events("archive-v1"))
+    store.set_archived("archive-v1", False)
+    assert len(store.read_events("archive-v1")) == before
+
+
+def test_archived_runs_are_still_returned_by_list_and_still_recoverable(tmp_path: Path) -> None:
+    """Archiving must only affect what the dashboard/CLI list chooses to show
+    -- StudioStore.list() itself, and anything built on it like
+    recover_interrupted_runs(), must keep seeing every run regardless."""
+    store = StudioStore(tmp_path)
+    store.create("archive-v2", DESCRIPTION)
+    store.set_archived("archive-v2", True)
+    assert "archive-v2" in [item.run_id for item in store.list()]
+
+    run = store.load("archive-v2")
+    run.state = "running"
+    run.stage("D2").state = "running"
+    run.current_stage = "D2"
+    store.save(run)
+    assert store.recover_interrupted_runs() == ["archive-v2"], "archiving must not hide a run from recovery"
