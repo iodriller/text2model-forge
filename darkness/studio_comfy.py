@@ -733,12 +733,11 @@ def make_chroma_alpha(
     pass any green test, so the flood fill could not even seed there and half
     the background survived into the mesh.
 
-    So the background is defined by *connectivity and similarity* instead:
-    seed from the border, then grow while each pixel stays close either to
-    the border's own median colour or to the neighbour that reached it. That
-    tracks a smooth vignette or gradient all the way into the corners while
-    still stopping hard at the subject's silhouette, and it works for a grey
-    or blue backdrop as well as a green one.
+    The safe fallback is deliberately narrower than learned segmentation:
+    flood-fill only edge-connected pixels that retain measured green-screen
+    channel ratios. A grey or blue result therefore fails closed instead of
+    guessing where a similarly coloured subject ends. Reject or retry such a
+    concept at D1; never promote an opaque or destructively guessed D2 seed.
     """
     with Image.open(source).convert("RGB") as image:
         width, height = image.size
