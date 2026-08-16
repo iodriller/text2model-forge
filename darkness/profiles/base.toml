@@ -1,4 +1,4 @@
-# Asset Forge base configuration.
+# VettedMesh base configuration.
 #
 # Every setting the tool understands, with its default value and meaning,
 # lives in this file. profiles/simple.toml and profiles/advanced.toml (or a
@@ -26,9 +26,9 @@ comfy_url = "http://127.0.0.1:8188"
 localdeploy_url = "http://127.0.0.1:8000/v1"
 concept_backend = "auto"              # auto | qwen_image_2512 | qwen_image_edit_2511 | sdxl
 checkpoint = "dreamshaper_xl_v2_turbo.safetensors"
-style_lora = "Warcraft style.safetensors"
+style_lora = ""                         # Optional user-supplied SDXL style LoRA; disabled by default
 style_lora_strength = 0.8
-style_lora_trigger = "World of Warcraft cinematic style"
+style_lora_trigger = ""                 # Trigger text for style_lora; disabled by default
 prop_lora = ""
 prop_lora_strength = 0.6
 # How D0 turns the description into a StudioAssetSpec.
@@ -157,6 +157,15 @@ manifold_policy = "weld_only"
 # is recovered at D8's texture bake; separated fingers cannot be recovered
 # at all once fused, which is why this errs fine.
 voxel_fraction = 0.003
+# Face budget applied AFTER the remesh, by collapse decimation. 0 disables it.
+# Voxel size and vertex count pull opposite ways and both matter: the voxel
+# must be finer than the smallest feature that has to stay separate (fingers),
+# but a 5.4 mm voxel on a 1.97 m character produced 668,406 vertices and
+# Blender's bone-heat weighting then failed outright at D4 -- every vertex
+# unweighted, maximum_influences 0. The same pipeline succeeded at 151k. So
+# remesh fine to decide topology, then collapse to decide density; D8's
+# texture bake recovers the surface detail either step gives up.
+voxel_target_faces = 180000
 # Visual-change budget that applies ONLY when a voxel remesh actually ran.
 # maximum_material_change_fraction above assumes cleanup barely moves a
 # vertex, which is true of remove_doubles and false of a rebuild. Measured on

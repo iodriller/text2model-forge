@@ -67,7 +67,7 @@ def main():
         for failure in failures:
             print(f"FAIL: {failure}")
         return 1
-    print(f"Asset Forge validation passed: {len(checked)} sheets")
+    print(f"VettedMesh validation passed: {len(checked)} sheets")
     return 0
 
 

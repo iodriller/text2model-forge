@@ -1,18 +1,28 @@
-# Asset Forge
+# VettedMesh
 
-Text in, human-gated 3D asset out. Describe a character, creature, prop, or piece
-of architecture; Asset Forge takes it through concept art, 3D generation, cleanup,
-rigging, skinning, motion, surface painting, sprite rendering, and runtime
-validation, stopping at named human gates so you stay in control of every stage.
+VettedMesh is a developer preview of an auditable, human-gated compiler for
+local AI-assisted 3D assets. It records every candidate, review decision,
+correction, model lineage, and downstream invalidation across eleven named
+stages. The deterministic orchestration and browser control plane are tested;
+the complete live generation chain is still experimental.
 
-This repository was extracted from [EmberDefense](https://github.com/iodriller/EmberDefense),
-where the `darkness` compiler and the older `assetforge` sprite renderer it reuses
-were originally built. It is still used there, now as a pinned dependency rather
-than embedded game code.
+The first supported product target is a static-prop path:
 
-**Runs free and local on an 8 GB GPU.** Concept art through SDXL, image-to-3D
-through ComfyUI's native Hunyuan3D-2 (~5 GB), rigging through MIT-licensed
-UniRig. No API keys. See [docs/free-local-8gb-setup.md](docs/free-local-8gb-setup.md).
+`description → approved concept → generated geometry → cleanup → surface → validated GLB`
+
+Rigging, skinning, motion, directional sprites, and Unity validation remain
+available as research stages, not as production-ready promises. No real asset
+has yet completed the entire D0–D10 chain on one machine; see
+[Known gaps](#known-gaps) and [the support matrix](SUPPORT.md) before installing
+large models.
+
+The control plane is free and local. An 8 GB NVIDIA profile exists for a
+specific sequential ComfyUI workflow, but it is experimental until the
+published golden corpus passes on independently reproduced 8 GB hardware.
+Optional models have their own licenses and territorial restrictions; see
+[Third-party and model terms](THIRD_PARTY_LICENSES.md). The deliberately cold
+[public-readiness assessment](docs/public-readiness.md) compares the closest
+open repositories and defines the release gates used here.
 
 ## The pipeline
 
@@ -33,6 +43,21 @@ D10 Runtime validation  [gate] -- an isolated Unity smoke check
 Static assets (props, architecture, materials) skip the stages that only apply to
 animated, rigged things -- see `asset_kind` and `behavior` in a run's spec.
 
+| Scope | Current evidence |
+|---|---|
+| Contracts, gates, retries, lineage, configuration, browser UI | Automated matrix targets Windows, Ubuntu, and macOS; current hosted result pending |
+| D0–D10 deterministic demo | Uses real parseable fixtures and fake generation providers |
+| Individual Blender and geometry workers | Partial qualification records under `qualifications/` |
+| Complete static-prop live chain | Golden-corpus qualification pending |
+| Complete animated live chain | Not qualified |
+
+The live threshold is executable, not a prose promise: `python -m darkness
+golden show` prints ten versioned static-prop prompts, and `python -m darkness
+golden evaluate --workspace <runs> --results <report.json> --html
+golden-report.html` verifies the underlying completed runs, final hash-bound
+human approvals, exact model revisions, 8 GB environment, and an 8/10 minimum.
+The checked-in example report intentionally fails until real evidence exists.
+
 ## Quick start
 
 ### One-command setup and start
@@ -40,13 +65,13 @@ animated, rigged things -- see `asset_kind` and `behavior` in a run's spec.
 On Windows, run the PowerShell launcher from a fresh checkout:
 
 ```powershell
-.\asset-forge.ps1
+.\vettedmesh.ps1
 ```
 
 On Linux or macOS, use the native Bash launcher:
 
 ```bash
-bash ./asset-forge.sh
+bash ./vettedmesh.sh
 ```
 
 The launchers check for Python 3.12+, create the reusable `.venv`, install
@@ -68,19 +93,19 @@ Large model downloads show progress and require accepting their own model
 terms. For unattended setup, make every choice explicit:
 
 ```powershell
-.\asset-forge.ps1 -Action install -AiStack qwen -NonInteractive `
+.\vettedmesh.ps1 -Action install -AiStack qwen -NonInteractive `
   -AcceptSdxlLicense -AcceptHunyuanLicense
-.\asset-forge.ps1 -AiStack existing       # later runs: check core, then start
-.\asset-forge.ps1 -Action repair           # retry/repair the selected setup
-.\asset-forge.ps1 -Action doctor           # concise service + worker readiness
+.\vettedmesh.ps1 -AiStack existing       # later runs: check core, then start
+.\vettedmesh.ps1 -Action repair           # retry/repair the selected setup
+.\vettedmesh.ps1 -Action doctor           # concise service + worker readiness
 ```
 
 ```bash
-bash ./asset-forge.sh install --ai-stack qwen --non-interactive \
+bash ./vettedmesh.sh install --ai-stack qwen --non-interactive \
   --accept-sdxl-license --accept-hunyuan-license
-bash ./asset-forge.sh start --ai-stack existing
-bash ./asset-forge.sh repair
-bash ./asset-forge.sh doctor
+bash ./vettedmesh.sh start --ai-stack existing
+bash ./vettedmesh.sh repair
+bash ./vettedmesh.sh doctor
 ```
 
 Package setup is bounded by three attempts by default (`-MaxAttempts` on
@@ -116,17 +141,28 @@ and Apple Silicon can each use their supported GPU runtime. The supplied
 container config looks for it at `host.docker.internal:8188`; a host ComfyUI
 instance must use a container-reachable bind, with the host firewall keeping
 8188 private. Override the mounted typed config with
-`ASSET_FORGE_DOCKER_CONFIG=/absolute/path/config.local.toml` when services live
+`VETTEDMESH_DOCKER_CONFIG=/absolute/path/config.local.toml` when services live
 elsewhere. `docker compose config` is a fast configuration check, and
 `docker compose down` stops the stack without deleting either named volume.
 
 ### Manual/core-only setup
 
-```bash
+Windows PowerShell:
+
+```powershell
 python -m venv .venv
-# Windows: .venv\Scripts\python -m pip install -r requirements.txt
-# Linux/macOS: .venv/bin/python -m pip install -r requirements.txt
-python -m darkness studio --workspace ./AssetForgeRuns --open-browser
+.venv\Scripts\python -m pip install --require-hashes -r requirements.lock
+.venv\Scripts\python -m pip install --no-deps --no-build-isolation -e .
+.venv\Scripts\python -m darkness studio --workspace ./VettedMeshRuns --open-browser
+```
+
+Linux or macOS:
+
+```bash
+python3 -m venv .venv
+.venv/bin/python -m pip install --require-hashes -r requirements.lock
+.venv/bin/python -m pip install --no-deps --no-build-isolation -e .
+.venv/bin/python -m darkness studio --workspace ./VettedMeshRuns --open-browser
 ```
 
 This opens the local browser control plane at `http://127.0.0.1:8766`. Describe
@@ -143,7 +179,7 @@ itself; those are only needed when a real worker actually runs. To see the
 orchestration substrate work end to end without any of them:
 
 ```powershell
-python -m darkness demo --workspace C:/AssetForgeRuns/demo
+python -m darkness demo --workspace C:/VettedMeshRuns/demo
 ```
 
 ## Check the machine first
@@ -258,9 +294,9 @@ without a subcommand launches it exactly as before; three subcommands drive
 the same `StudioStore`/`StudioCoordinator` without it:
 
 ```powershell
-python -m darkness studio list --workspace C:/AssetForgeRuns
-python -m darkness studio show --workspace C:/AssetForgeRuns --run-id asset-...
-python -m darkness studio decide --workspace C:/AssetForgeRuns --run-id asset-... `
+python -m darkness studio list --workspace C:/VettedMeshRuns
+python -m darkness studio show --workspace C:/VettedMeshRuns --run-id asset-...
+python -m darkness studio decide --workspace C:/VettedMeshRuns --run-id asset-... `
   --stage-id D1 --decision approve --selected-evidence-id d1-i01-candidate-1 `
   --comment "Looks good."
 ```
@@ -317,10 +353,10 @@ Stated plainly so nobody discovers these the hard way:
   a recognizable chair comes out. Expect the D1 concept stage in particular to
   need work for non-character subjects -- it is built around turnarounds,
   OpenPose ControlNet, and equipment layout.
-- **Retry/edit override values reach D1 only.** The mechanism is generic
-  (`_begin()` returns a stage's pending overrides), but D1 is the only stage
-  that reads them today. D2 additionally has no human gate, so a stage-level
-  override could not reach it through the review flow regardless.
+- **Retry/edit override values are intentionally limited to D1 and the
+  non-rigid D4 path.** Those are the stages with real per-attempt controls.
+  D2 has no human gate, while D7, D8, and D10 currently improve through the
+  correction comment rather than unimplemented numeric knobs.
 - **A human retry is not subject to the automatic iteration budget.** D1 stops
   Qwen's own correction loop after six iterations, but an explicit human retry
   resets the stage to `pending` and bypasses that ceiling. This is deliberate
@@ -330,9 +366,10 @@ Stated plainly so nobody discovers these the hard way:
   Those values mirror the argparse defaults of standalone scripts under
   `adapters/` that you invoke by hand. Editing them changes nothing; only
   `[studio]`, `[quality.*]`, and `[stages.*]` are read by the pipeline.
-- **Coverage is ~72%.** The untested remainder is concentrated in code that
-  talks to real services: `darkness/studio_qwen.py`'s live LLM calls (52%),
-  `external_worker.py`'s real subprocess path (22%), and `cli.py` (26%).
+- **Coverage is measured in CI, but is not a live-worker qualification.** The
+  least-covered paths are the ones that talk to real model services and
+  subprocess workers. A line-coverage percentage cannot substitute for the
+  versioned live corpus above.
 
 ## Repository layout
 
@@ -360,23 +397,27 @@ tests/                   Both packages' test suites (pytest).
 
 ```powershell
 python -m venv .venv
-.venv\Scripts\python -m pip install -r requirements-dev.txt
-python -m pytest tests -q
-python -m darkness demo --workspace C:/AssetForgeRuns/demo
+.venv\Scripts\python -m pip install --require-hashes -r requirements-dev.lock
+.venv\Scripts\python -m pip install --no-deps --no-build-isolation -e .
+.venv\Scripts\python -m pytest tests -q
+.venv\Scripts\python -m darkness demo --workspace C:/VettedMeshRuns/demo
 ```
 
-`requirements.txt`, `requirements-dev.txt`, and
-`requirements-local-ai.txt` are thin entry points; dependency versions live
-in `pyproject.toml` so the launchers, local installs, and Docker build share one
-source of truth.
+`pyproject.toml` declares supported dependency ranges. `uv.lock` is the full
+cross-platform resolution, and the four `requirements*.lock` exports pin every
+artifact by SHA-256 for runtime, development, local-AI, and combined installs.
+The launchers, Dockerfile, and CI use those lock exports. The three unpinned
+`requirements*.txt` files remain convenience entry points for dependency
+upgrades; do not use them for release or CI installs. See
+[`docs/packaging.md`](docs/packaging.md) for the refresh procedure.
 
 The demo command exercises the full D0-D10 orchestration substrate
 deterministically, without a GPU or any of the real generation workers -- it is
 the fast regression check for anything that touches the compiler.
 
 Anything that touches Blender, ComfyUI, Ollama/LocalDeploy, WSL2, or Unity needs
-those tools installed and running locally. Everything else runs in CI on both
-Windows and Ubuntu (`.github/workflows/ci.yml`), which also enforces two
+those tools installed and running locally. Everything else runs in CI on
+Windows, Ubuntu, and macOS (`.github/workflows/ci.yml`), which also enforces two
 coupling guards: no reference to a specific consuming project, and no
 pre-extraction repo-root path assumptions.
 
@@ -413,16 +454,15 @@ Two rules worth keeping, because both caught real bugs:
 
 ```
 # requirements.txt or pyproject.toml dependency
-asset-forge @ git+https://github.com/iodriller/asset-forge@v0.1.0
+vettedmesh @ git+https://github.com/iodriller/vettedmesh@v0.2.0-rc.1
 ```
 
-Pin a tag, not a branch. Because `adapters/`, `workers/`, `blender/`,
-`qualifications/`, and the other resource directories are real repo-relative
-files (worker subprocess scripts and manifests, not pure importable Python),
-install in **editable** mode so they resolve correctly:
+Pin a tag, not a branch. The wheel carries `adapters/`, `workers/`, `blender/`,
+`qualifications/`, and the other runtime resources under the environment's
+`share/vettedmesh` directory, so an ordinary VCS install is supported:
 
 ```powershell
-pip install -e "git+https://github.com/iodriller/asset-forge@v0.1.0#egg=asset-forge"
+pip install "vettedmesh @ git+https://github.com/iodriller/vettedmesh@v0.2.0-rc.1"
 ```
 
 A consuming project that wants its own profile overrides can add a

@@ -1,4 +1,4 @@
-"""Contracts for the from-scratch Asset Forge "Genesis" branch.
+"""Contracts for the from-scratch VettedMesh "Genesis" branch.
 
 Genesis deliberately separates a disposable anatomy target from the mesh that may
 eventually ship.  The target may be voxel-remeshed because its only job is to

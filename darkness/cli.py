@@ -4,6 +4,7 @@ from __future__ import annotations
 import argparse
 import json
 from pathlib import Path
+from vettedmesh_paths import resource_root
 
 from .compiler import DarknessCompiler
 from .config import load_local_config, worker_binding
@@ -28,11 +29,11 @@ from .workers import WorkerManager
 
 def _demo_brief() -> AssetBrief:
     return AssetBrief(
-        asset_id="darkness_goblin_demo",
+        asset_id="vettedmesh_fixture_demo",
         asset_type="character",
-        title="Darkness Goblin Demo",
-        description="Original short-biped stylized fantasy goblin used to prove compiler orchestration.",
-        style="chunky heroic dark fantasy with ember accents",
+        title="VettedMesh Fixture Demo",
+        description="Neutral static fixture used to prove compiler orchestration.",
+        style="clear stylized production asset",
         anatomy_family="short_biped",
         height_m=1.25,
         components=[
@@ -69,7 +70,7 @@ def run_demo(workspace: Path, run_id: str) -> dict:
 
     for target_stage in list(AssetStage)[1:]:
         compiler.advance(run_id)
-        artifact_id = f"darkness_goblin_demo.{target_stage.name}.v1"
+        artifact_id = f"vettedmesh_fixture_demo.{target_stage.name}.v1"
         created = compiler.execute_candidate(
             run_id,
             operation_id="fake.advance",
@@ -99,7 +100,7 @@ def run_demo(workspace: Path, run_id: str) -> dict:
 
 
 def _parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(prog="darkness", description="Asset Forge Darkness compiler")
+    parser = argparse.ArgumentParser(prog="vettedmesh", description="VettedMesh asset compiler")
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     demo = subparsers.add_parser("demo", help="run the deterministic D0-D10 orchestration fixture")
@@ -136,7 +137,7 @@ def _parser() -> argparse.ArgumentParser:
 
     studio = subparsers.add_parser(
         "studio",
-        help="launch the standalone description-to-character browser control plane, "
+        help="launch the standalone description-to-asset browser control plane, "
         "or drive it headlessly with a subcommand",
     )
     studio.add_argument("--workspace", type=Path)
@@ -228,6 +229,20 @@ def _parser() -> argparse.ArgumentParser:
     package.add_argument("--output", type=Path, required=True)
     package.add_argument("--qualification", type=Path, required=True)
     package.add_argument("--mode", choices=("research", "release"), default="research")
+
+    golden = subparsers.add_parser(
+        "golden", help="inspect or fail-closed evaluate the live static-prop qualification corpus"
+    )
+    golden_sub = golden.add_subparsers(dest="golden_command", required=True)
+    golden_show = golden_sub.add_parser("show", help="print the versioned corpus as JSON")
+    golden_show.add_argument("--corpus", type=Path, default=None)
+    golden_evaluate = golden_sub.add_parser(
+        "evaluate", help="verify live run evidence and human assessments against the corpus threshold"
+    )
+    golden_evaluate.add_argument("--workspace", type=Path, required=True)
+    golden_evaluate.add_argument("--results", type=Path, required=True)
+    golden_evaluate.add_argument("--corpus", type=Path, default=None)
+    golden_evaluate.add_argument("--html", type=Path, default=None, help="write a portable evidence gallery")
     return parser
 
 
@@ -241,6 +256,20 @@ def _studio_workspace(args: argparse.Namespace) -> Path:
 
 def main(argv: list[str] | None = None) -> int:
     args = _parser().parse_args(argv)
+    if args.command == "golden":
+        from .golden import evaluate, load_corpus, load_report, write_gallery
+
+        corpus_path = args.corpus or (resource_root() / "golden" / "static-props.json")
+        corpus = load_corpus(corpus_path)
+        if args.golden_command == "show":
+            print(corpus.model_dump_json(indent=2))
+            return 0
+        report = load_report(args.results)
+        result = evaluate(corpus, report, args.workspace)
+        if args.html:
+            write_gallery(result, args.workspace, args.html)
+        print(result.model_dump_json(indent=2))
+        return 0 if result.eligible else 1
     if args.command == "studio":
         studio_command = getattr(args, "studio_command", None)
         if studio_command is None:
@@ -378,7 +407,7 @@ def main(argv: list[str] | None = None) -> int:
             print(json.dumps(report, indent=2, sort_keys=True))
         return 0
     if args.command == "package":
-        registry_path = Path(__file__).resolve().parents[1] / "registry" / "candidates.json"
+        registry_path = resource_root() / "registry" / "candidates.json"
         manifest = build_delivery_package(
             package_id=args.package_id,
             candidate_id=args.candidate_id,

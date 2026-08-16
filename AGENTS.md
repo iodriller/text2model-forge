@@ -2,7 +2,7 @@
 
 ## Project
 
-Asset Forge is a text-to-3D asset compiler: a description goes in, and a
+VettedMesh is a text-to-3D asset compiler: a description goes in, and a
 human-gated animated (or static) asset comes out through eleven named stages,
 D0 through D10. `darkness/` is the compiler -- orchestration, contracts,
 worker protocol, human gates, config resolution, and the browser control

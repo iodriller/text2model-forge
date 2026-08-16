@@ -1,4 +1,4 @@
-"""Asset Forge Studio: local-first, provenance-aware sprite production."""
+"""VettedMesh Studio: local-first, provenance-aware sprite production."""
 
 from .core import ForgeError
 

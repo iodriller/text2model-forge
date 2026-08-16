@@ -11,12 +11,12 @@
 # TOML key, quoted below, not a nested table path.
 
 schema_version = 1
-workspace_root = "C:/AssetForgeRuns"
+workspace_root = "C:/VettedMeshRuns"
 
 [workers."instant_meshes.retopology"]
 command_prefix = [
   "C:/path/to/python.exe",
-  "C:/path/to/asset-forge/adapters/instant_meshes_retopology_worker.py",
+  "C:/path/to/vettedmesh/adapters/instant_meshes_retopology_worker.py",
 ]
 [workers."instant_meshes.retopology".environment]
 DARKNESS_INSTANT_MESHES_EXE = "C:/path/to/Instant Meshes.exe"
@@ -24,7 +24,7 @@ DARKNESS_INSTANT_MESHES_EXE = "C:/path/to/Instant Meshes.exe"
 [workers.autoremesher]
 command_prefix = [
   "C:/path/to/python.exe",
-  "C:/path/to/asset-forge/adapters/autoremesher_worker.py",
+  "C:/path/to/vettedmesh/adapters/autoremesher_worker.py",
 ]
 [workers.autoremesher.environment]
 DARKNESS_AUTOREMESHER_EXE = "C:/path/to/autoremesher-1.0.0/autoremesher.exe"
@@ -36,7 +36,7 @@ command_prefix = [
   "--factory-startup",
   "--offline-mode",
   "--python-exit-code", "23",
-  "--python", "C:/path/to/asset-forge/adapters/blender_worker.py",
+  "--python", "C:/path/to/vettedmesh/adapters/blender_worker.py",
   "--",
 ]
 [workers.blender.environment]
@@ -44,27 +44,27 @@ command_prefix = [
 [workers."triposg.1.5b"]
 command_prefix = [
   "C:/path/to/TripoSG/.venv/Scripts/python.exe",
-  "C:/path/to/asset-forge/adapters/triposg_worker.py",
+  "C:/path/to/vettedmesh/adapters/triposg_worker.py",
 ]
 [workers."triposg.1.5b".environment]
 DARKNESS_TRIPOSG_SOURCE = "C:/path/to/TripoSG"
 DARKNESS_TRIPOSG_WEIGHTS = "C:/path/to/TripoSG/pretrained_weights/TripoSG"
-DARKNESS_TRIPOSG_COMPAT = "C:/path/to/asset-forge/compat/diso"
+DARKNESS_TRIPOSG_COMPAT = "C:/path/to/vettedmesh/compat/diso"
 
 [workers."canonical.short_biped"]
 command_prefix = [
   "C:/path/to/python.exe",
-  "C:/path/to/asset-forge/adapters/canonical_short_biped_worker.py",
+  "C:/path/to/vettedmesh/adapters/canonical_short_biped_worker.py",
 ]
 [workers."canonical.short_biped".environment]
 
 [workers."trellis2.4b"]
 command_prefix = [
   "C:/path/to/python.exe",
-  "C:/path/to/asset-forge/adapters/wsl_launch.py",
+  "C:/path/to/vettedmesh/adapters/wsl_launch.py",
   "--distro", "Ubuntu-24.04",
   "--wsl-python", "/home/<user>/miniconda3/envs/trellis2/bin/python",
-  "--wsl-script", "/mnt/c/path/to/asset-forge/adapters/trellis2_worker.py",
+  "--wsl-script", "/mnt/c/path/to/vettedmesh/adapters/trellis2_worker.py",
   "--env", "DARKNESS_TRELLIS2_WEIGHTS=microsoft/TRELLIS.2-4B",
   "--env", "DARKNESS_TRELLIS2_SOURCE=/home/<user>/AssetForgeDarknessWorkers/TRELLIS.2",
   "--env", "DARKNESS_TRELLIS2_SOURCE_REVISION=<git-rev-parse-HEAD-of-cloned-TRELLIS.2>",
@@ -77,10 +77,10 @@ command_prefix = [
 [workers."instantmesh.large"]
 command_prefix = [
   "C:/path/to/python.exe",
-  "C:/path/to/asset-forge/adapters/wsl_launch.py",
+  "C:/path/to/vettedmesh/adapters/wsl_launch.py",
   "--distro", "Ubuntu-24.04",
   "--wsl-python", "/home/<user>/miniconda3/envs/instantmesh/bin/python",
-  "--wsl-script", "/mnt/c/path/to/asset-forge/adapters/instantmesh_worker.py",
+  "--wsl-script", "/mnt/c/path/to/vettedmesh/adapters/instantmesh_worker.py",
   "--env", "DARKNESS_INSTANTMESH_SOURCE=/home/<user>/AssetForgeDarknessWorkers/InstantMesh",
   "--env", "DARKNESS_INSTANTMESH_SOURCE_REVISION=<git-rev-parse-HEAD-of-cloned-InstantMesh>",
   "--env", "PATH=/usr/local/cuda-12.4/bin:/usr/bin:/bin",

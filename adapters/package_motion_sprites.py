@@ -17,6 +17,8 @@ def _arguments(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--frames-root", type=Path, required=True)
     parser.add_argument("--source-id", default="darkness_short_biped_candidate")
+    parser.add_argument("--asset-id", default="short_biped_motion_candidate")
+    parser.add_argument("--display-name", default="Short-biped motion candidate")
     parser.add_argument("--output-directory", type=Path, required=True)
     parser.add_argument("--master", type=Path, required=True)
     return parser.parse_args(argv)
@@ -146,8 +148,8 @@ def main(argv: list[str] | None = None) -> int:
     manifest = {
         "schema_version": 1,
         "quality_gate_version": 2,
-        "asset_id": "darkness_triposg_goblin_motion_candidate",
-        "display_name": "Darkness TripoSG Goblin Motion Candidate",
+        "asset_id": args.asset_id,
+        "display_name": args.display_name,
         "status": "human_review_candidate",
         "default_facing": "south",
         "cell_width": 256,

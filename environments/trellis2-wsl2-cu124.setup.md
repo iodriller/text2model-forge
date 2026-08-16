@@ -83,9 +83,9 @@ which python   # -> the --wsl-python value for the worker binding
 ```
 
 `--wsl-script` is the absolute Linux path to `adapters/trellis2_worker.py` as seen from inside WSL2. WSL2's default
-DrvFS mount exposes a Windows checkout at `C:\path\to\asset-forge` as `/mnt/c/path/to/asset-forge`, so if this repo
-lives at `C:\path\to\asset-forge`, the worker script is
-`/mnt/c/path/to/asset-forge/adapters/trellis2_worker.py`.
+DrvFS mount exposes a Windows checkout at `C:\path\to\vettedmesh` as `/mnt/c/path/to/vettedmesh`, so if this repo
+lives at `C:\path\to\vettedmesh`, the worker script is
+`/mnt/c/path/to/vettedmesh/adapters/trellis2_worker.py`.
 
 `DARKNESS_TRELLIS2_WEIGHTS` may stay as the default `microsoft/TRELLIS.2-4B` Hugging Face repo id (downloaded and
 cached on first run) or point at a local snapshot directory once one is pinned.
@@ -104,8 +104,8 @@ python -m darkness run-worker --worker-id trellis2.4b --request C:/path/to/reque
 ```
 
 Until this has actually been run once and produced a valid GLB, `workers/trellis2.json` must stay at
-`lifecycle: "discovered"`, not `"research_ready"` — see the original master plan's Section 7.1 (an EmberDefense-side
-design document from before this repository's extraction, not included here).
+`lifecycle: "discovered"`, not `"research_ready"`; a worker advances only after a
+repository qualification record captures the real execution evidence.
 Record the result (peak VRAM, elapsed time, mesh health) as a `WorkerRuntimeQualification` next to
 `qualifications/triposg-1.5b_windows_rtx5090.json`.
 

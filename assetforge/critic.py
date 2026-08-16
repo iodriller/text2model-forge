@@ -7,7 +7,7 @@ identity across frames and sheets — as measurable gates, so a build that drift
 neon, washes out, flickers identity, or turns to mush at 96 px fails IN the pipeline
 instead of in front of the owner.  The human reviews winners, not iterations.
 
-Taste that cannot be measured lives in docs/asset-forge-rubric.md and is applied by
+Taste that cannot be measured lives in docs/vettedmesh-rubric.md and is applied by
 the art-directing agent on the acceptance board; every owner rejection must be added
 there so no complaint is ever made twice.
 """
@@ -163,7 +163,7 @@ def critique_unit(config_path: Path, repo_root: Path, report_path: Path) -> dict
         "unit": unit,
         "passed": not failures,
         "thresholds": thresholds,
-        "rubric": "docs/asset-forge-rubric.md",
+        "rubric": "docs/vettedmesh-rubric.md",
         "sheets": sheets_report,
         "failures": failures,
         "completed_utc": utc_now(),

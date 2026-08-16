@@ -1,0 +1,15 @@
+{
+  "schema_version": 1,
+  "corpus_id": "static-props-8gb-v1",
+  "commit_sha": "0000000000000000000000000000000000000000",
+  "environment": {
+    "profile": "8gb",
+    "gpu_name": "replace with observed GPU name",
+    "vram_total_gb": 8.0,
+    "operating_system": "replace with observed OS and version",
+    "real_workers": false,
+    "deterministic_fixture": true,
+    "model_revisions": {}
+  },
+  "assessments": []
+}

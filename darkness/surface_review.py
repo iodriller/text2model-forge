@@ -60,7 +60,7 @@ class LocalDeploySurfaceReviewer:
                         {
                             "type": "text",
                             "text": (
-                                "You are Asset Forge Darkness's broad surface-art critic. The left column is the "
+                                "You are VettedMesh Darkness's broad surface-art critic. The left column is the "
                                 "previous deterministic 3D master; the right column is the current ComfyUI-painted "
                                 "views projected once into one persistent master. The report declares whether the "
                                 "accepted storage is a baked atlas or stable-UV corner colors and lists any rejected "

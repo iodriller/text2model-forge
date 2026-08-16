@@ -57,18 +57,10 @@ def _summary(report: dict[str, object]) -> dict[str, object]:
             for name in ("idle", "walk", "attack", "death")
         },
         "history": [
-            "raw absolute-pose transfer left arms open and made Punch_Cross poorly readable",
-            "idle-relative neutral calibration corrected idle/walk arm posture",
-            "Punch_Cross was replaced by Sword_Attack after direct human-visible evidence showed weak readability",
-            "human review rejected the empty-handed Sword_Attack because a weapon-authored clip needs equipment",
-            "club iteration 1 proved the rigid hand socket but its short round silhouette read as a mace/spoon",
-            "club iteration 2 improved the taper but exposed a pre-deformation body-height measurement mismatch",
-            "club iteration 3 attached to equal-suffix hand_r, but human review identified that the source and target side conventions are mirrored and the open hand did not grasp the handle",
-            "club iteration 4 fixed the physical side but its radial squeeze made a closed blob rather than a convincing grip, so human review rejected it before downstream packaging",
-            "club iteration 5 preserved the goblin hand morphology by curling two detected claw branches separately; Qwen and its referee accepted the wrap, but close visual review found the 2.2%-of-body shaft too thick for the palm opening",
-            "club iteration 6 kept the accepted branch curl and reduced the handle radius to 1.8% of body height; comparative Qwen/referee review accepted the clearer shaft clearance",
-            "club iteration 7 corrected the public anatomical hand_right socket, but human review rejected its mesh-only curl because it still had no explicit digit landmarks/bones and the shaft missed the actual claw opening",
-            "current iteration 8 derives base/joint/tip landmarks from both claw branches, adds four local deform bones plus a dedicated grip socket, places the shaft through the detected opening, and solves both digit chains around it",
+            "absolute-pose transfer was replaced by idle-relative neutral calibration",
+            "source and target sides are resolved from rest-space position rather than suffix spelling",
+            "weapon-authored motion requires declared equipment at the target socket",
+            "the current research fixture derives local digit landmarks and a dedicated grip socket",
         ],
     }
 

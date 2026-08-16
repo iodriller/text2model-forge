@@ -1,6 +1,6 @@
 {
   "id": "humanoid_template",
-  "source": "artifacts/asset-forge-template/source/humanoid_template.blend",
+  "source": "artifacts/vettedmesh-template/source/humanoid_template.blend",
   "animation_object": "Armature",
   "cell_size": [128, 128],
   "render_size": [256, 256],
@@ -18,5 +18,5 @@
     "hit": { "actions": ["hit"], "frames": 2, "loop": false },
     "death": { "actions": ["death"], "frames": 6, "loop": false }
   },
-  "output_path_pattern": "artifacts/asset-forge-template/sheets/humanoid_template_{animation}_{direction}_sheet.png"
+  "output_path_pattern": "artifacts/vettedmesh-template/sheets/humanoid_template_{animation}_{direction}_sheet.png"
 }

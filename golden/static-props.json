@@ -1,0 +1,70 @@
+{
+  "schema_version": 1,
+  "corpus_id": "static-props-8gb-v1",
+  "title": "Static prop live qualification on an 8 GB GPU",
+  "target_profile": "8gb",
+  "required_attempts": 10,
+  "minimum_passing_cases": 8,
+  "cases": [
+    {
+      "case_id": "wooden-stool",
+      "category": "furniture",
+      "prompt": "A single sturdy three-legged wooden workshop stool with a round worn seat, simple joinery, no moving parts, and neutral studio presentation.",
+      "required_features": ["three visible legs", "round seat", "wood construction"]
+    },
+    {
+      "case_id": "stone-well",
+      "category": "architecture",
+      "prompt": "A small circular fieldstone well with a timber roof, fixed iron crank, coiled rope, and weathered mortar, presented as one static game asset.",
+      "required_features": ["circular stone wall", "timber roof", "iron crank and rope"]
+    },
+    {
+      "case_id": "ceramic-vase",
+      "category": "decor",
+      "prompt": "A single hand-thrown ceramic floor vase with two small loop handles, a cobalt geometric glaze, a stable base, and no surrounding scene.",
+      "required_features": ["two loop handles", "cobalt geometric glaze", "stable closed vessel"]
+    },
+    {
+      "case_id": "cargo-crate",
+      "category": "industrial",
+      "prompt": "A sealed science-fiction cargo crate with reinforced corners, two recessed side handles, restrained hazard markings, and a clean rectangular silhouette.",
+      "required_features": ["reinforced corners", "two recessed handles", "sealed rectangular body"]
+    },
+    {
+      "case_id": "iron-lantern",
+      "category": "lighting",
+      "prompt": "A freestanding wrought-iron oil lantern with four glass panes, a top carry ring, an enclosed unlit wick, and a readable static silhouette.",
+      "required_features": ["four glass panes", "top carry ring", "enclosed wick"]
+    },
+    {
+      "case_id": "oak-barrel",
+      "category": "container",
+      "prompt": "A closed oak storage barrel with six dark iron hoops, uneven hand-cut staves, one small bung, and no labels or surrounding objects.",
+      "required_features": ["wooden staves", "six iron hoops", "single bung"]
+    },
+    {
+      "case_id": "park-bench",
+      "category": "furniture",
+      "prompt": "A standalone park bench made from five weathered timber slats on two cast-iron supports, with intact feet and no environment around it.",
+      "required_features": ["five timber slats", "two iron supports", "four stable feet"]
+    },
+    {
+      "case_id": "fire-hydrant",
+      "category": "street",
+      "prompt": "A compact red cast-iron fire hydrant with one domed top, two capped side outlets, a bolted base flange, and chipped municipal paint.",
+      "required_features": ["domed top", "two capped outlets", "bolted base flange"]
+    },
+    {
+      "case_id": "treasure-chest",
+      "category": "container",
+      "prompt": "A closed static treasure chest with a curved oak lid, blackened iron straps, a centered key plate, and no visible contents or extra props.",
+      "required_features": ["curved closed lid", "iron straps", "centered key plate"]
+    },
+    {
+      "case_id": "blacksmith-anvil",
+      "category": "tool",
+      "prompt": "A single blacksmith anvil with a square hardy hole, round pritchel hole, tapered horn, stepped base, and visibly used steel surface.",
+      "required_features": ["tapered horn", "hardy and pritchel holes", "stepped base"]
+    }
+  ]
+}

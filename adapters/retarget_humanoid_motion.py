@@ -69,7 +69,7 @@ CRITICAL_BONES = {
 
 EQUIPMENT = {
     "iteration": 8,
-    "component_id": "darkness.club.short_biped.v1",
+    "component_id": "fixture.weapon.short_biped.v1",
     "archetype": "one_handed_club",
     "socket": "hand_right",
     "bone": "hand_l",
@@ -78,7 +78,7 @@ EQUIPMENT = {
     "source_weapon_bone": "hand_r",
     "side_resolution_method": "source_motion_dominance_plus_rest_x_alignment_v1",
     "rig_policy": "articulated_digit_grip_v1",
-    "object_name": "DarknessClub",
+    "object_name": "VettedMeshWeapon",
     "shield": None,
 }
 
@@ -95,7 +95,7 @@ def _arguments() -> argparse.Namespace:
     parser.add_argument(
         "--character-spec",
         type=Path,
-        help="Optional Darkness Studio character_spec.json; defaults to the historical club fixture.",
+        help="Studio character_spec.json for equipment semantics; omit only for the research fixture.",
     )
     return parser.parse_args(argv)
 
@@ -301,7 +301,7 @@ def _build_articulated_grip(
     body_height: float,
     handle_radius: float,
 ) -> dict[str, object]:
-    """Landmark, rig, skin, and pose the goblin's two modeled claws.
+    """Landmark, rig, skin, and pose the target's modeled digit branches.
 
     The generated target has two real topology branches but no digit bones.
     Treating those branches as a generic vertex cloud produced a fist-shaped
@@ -357,7 +357,7 @@ def _build_articulated_grip(
     distal_components.sort(key=len, reverse=True)
     if not 2 <= len(distal_components) <= 4:
         raise RuntimeError(
-            f"grip topology did not resolve the expected goblin digit branches: "
+            f"grip topology did not resolve the expected target digit branches: "
             f"{[len(component) for component in distal_components]}"
         )
 
@@ -431,7 +431,7 @@ def _build_articulated_grip(
 
     # Place the shaft through the opening actually formed by the two digit-tip
     # landmarks. The legacy hand-bone origin is not the center of this generated
-    # goblin's palm, which is why earlier socket-only attempts visibly missed.
+    # target's palm, which is why earlier socket-only attempts visibly missed.
     grip_center = Vector(
         (
             sum(float(branch["tip_before"].x) for branch in branches) / len(branches),

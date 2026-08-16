@@ -338,7 +338,7 @@ def inpaint_workflow(
 
 
 def make_humanoid_openpose_guide(output_directory: Path) -> Path:
-    """Create a deterministic OpenPose-like guide for a frontal equipped footman."""
+    """Create a deterministic OpenPose-like guide for a frontal humanoid."""
     output_directory.mkdir(parents=True, exist_ok=True)
     width, height = 768, 1024
     pose = Image.new("RGB", (width, height), "black")
@@ -398,7 +398,7 @@ def make_humanoid_openpose_guide(output_directory: Path) -> Path:
     return pose_path
 
 
-def make_footman_equipment_layout_guide(output: Path) -> Path:
+def make_humanoid_equipment_layout_guide(output: Path) -> Path:
     """Draw a softly rendered layout reference for Qwen Image Edit.
 
     It encodes only one body and the equipment sides.  It deliberately avoids hard
@@ -466,6 +466,10 @@ def make_footman_equipment_layout_guide(output: Path) -> Path:
     output.parent.mkdir(parents=True, exist_ok=True)
     canvas.convert("RGB").resize((width, height), Image.Resampling.LANCZOS).save(output)
     return output
+
+
+# Compatibility alias for integrations created before the public rename.
+make_footman_equipment_layout_guide = make_humanoid_equipment_layout_guide
 
 
 class StudioComfyClient:

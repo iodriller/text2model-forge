@@ -22,14 +22,14 @@ header{padding:24px 32px;border-bottom:1px solid var(--line);background:#11191dd
 
 
 def page(title: str, body: str) -> bytes:
-    document = f"""<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>{html.escape(title)}</title><style>{STYLE}</style></head><body><header><h1>ASSET FORGE STUDIO</h1><nav><a href="/">Dashboard</a><a href="/new">New asset</a><a href="/doctor">Setup</a></nav></header><main class="wrap">{body}</main></body></html>"""
+    document = f"""<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>{html.escape(title)}</title><style>{STYLE}</style></head><body><header><h1>VETTEDMESH STUDIO</h1><nav><a href="/">Dashboard</a><a href="/new">New asset</a><a href="/doctor">Setup</a></nav></header><main class="wrap">{body}</main></body></html>"""
     return document.encode("utf-8")
 
 
 class StudioState:
     def __init__(self, workspace: Path):
         self.workspace = workspace.resolve()
-        self.executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="asset-forge-gpu")
+        self.executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="vettedmesh-gpu")
         self.jobs: dict[str, dict[str, object]] = {}
         self.lock = threading.Lock()
 
@@ -135,7 +135,7 @@ def serve(workspace: Path, host: str = "127.0.0.1", port: int = 8765) -> None:
             try:
                 path = urlparse(self.path).path
                 if path == "/":
-                    self.send_page("Asset Forge Studio", dashboard(state))
+                    self.send_page("VettedMesh Studio", dashboard(state))
                 elif path == "/new":
                     self.send_page("New asset", new_asset_form())
                 elif path.startswith("/asset/"):
@@ -147,7 +147,7 @@ def serve(workspace: Path, host: str = "127.0.0.1", port: int = 8765) -> None:
                 else:
                     self.send_page("Not found", "<h2>Not found</h2>", HTTPStatus.NOT_FOUND)
             except ForgeError as error:
-                self.send_page("Asset Forge error", f'<section class="card"><h2 class="error">Error</h2><pre>{html.escape(str(error))}</pre></section>', HTTPStatus.BAD_REQUEST)
+                self.send_page("VettedMesh error", f'<section class="card"><h2 class="error">Error</h2><pre>{html.escape(str(error))}</pre></section>', HTTPStatus.BAD_REQUEST)
 
         def do_POST(self) -> None:
             try:
@@ -179,13 +179,13 @@ def serve(workspace: Path, host: str = "127.0.0.1", port: int = 8765) -> None:
                 else:
                     self.send_page("Not found", "<h2>Not found</h2>", HTTPStatus.NOT_FOUND)
             except (ForgeError, KeyError, ValueError) as error:
-                self.send_page("Asset Forge error", f'<section class="card"><h2 class="error">Error</h2><pre>{html.escape(str(error))}</pre></section>', HTTPStatus.BAD_REQUEST)
+                self.send_page("VettedMesh error", f'<section class="card"><h2 class="error">Error</h2><pre>{html.escape(str(error))}</pre></section>', HTTPStatus.BAD_REQUEST)
 
         def log_message(self, format: str, *args: object) -> None:
             print(f"Studio {self.address_string()}: {format % args}")
 
     server = ThreadingHTTPServer((host, port), Handler)
-    print(f"Asset Forge Studio: http://{host}:{port}")
+    print(f"VettedMesh Studio: http://{host}:{port}")
     try:
         server.serve_forever()
     finally:

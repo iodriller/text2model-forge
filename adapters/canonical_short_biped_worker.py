@@ -321,7 +321,7 @@ def build_glb(mesh, path, joint_specs=JOINTS):
     animation("death", [("hips", "rotation", [identity, quat((0, 0, 1), 45), quat((0, 0, 1), 90)])])
 
     document = {
-        "asset": {"version": "2.0", "generator": "Asset Forge Darkness canonical short-biped v1"},
+        "asset": {"version": "2.0", "generator": "VettedMesh Darkness canonical short-biped v1"},
         "scene": 0,
         "scenes": [{"nodes": [0, mesh_node]}],
         "nodes": nodes,

@@ -82,7 +82,7 @@ def test_standalone_unity_bundle_builds_and_ingests_hash_bound_result(tmp_path: 
     with zipfile.ZipFile(tmp_path / "bundle.zip") as zipped:
         assert "bundle_manifest.json" in zipped.namelist()
         assert "UnitySmokeProject/Assets/Editor/DarknessCandidateValidator.cs" in zipped.namelist()
-        assert "UnitySmokeProject/Assets/Editor/DarknessGoblinReviewWindow.cs" in zipped.namelist()
+        assert "UnitySmokeProject/Assets/Editor/DarknessCandidateReviewWindow.cs" in zipped.namelist()
 
     result = bundle / "result"
     result.mkdir()

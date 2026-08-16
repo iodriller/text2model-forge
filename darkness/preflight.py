@@ -30,6 +30,7 @@ import subprocess
 import urllib.request
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from vettedmesh_paths import resource_root
 from typing import Any, Literal
 
 from pydantic import Field
@@ -163,6 +164,81 @@ def check_llm_endpoint(settings: dict[str, Any]) -> Check:
             remedy=f"ollama pull {model}   (served: {', '.join(sorted(available)[:6]) or 'none'})",
         )
     return Check(name="LLM endpoint", status="ok", detail=f"{url} serving {model}")
+
+
+
+# A vision review sends two images plus the spec and history. Measured on a
+# real D3 review: 4,197 tokens. Ollama's default served context is 4,096, so
+# the request is refused with an HTTP 400 that names a token count and
+# nothing else -- several stages into a run, after the GPU work is done.
+MINIMUM_REVIEWER_CONTEXT = 8192
+
+# ...and an upper bound, because context is not free. The KV cache is part of
+# the model's resident footprint, so raising the window raises VRAM: measured
+# on the 4B reviewer, 4,096 tokens cost 3.6 GB and 16,384 cost 5.09 GB. It
+# still "fit" at 16,384 -- ollama reported it fully on GPU -- but it left only
+# ~1.1 GB for the vision encoder's working memory on an 8 GB card, and the
+# same D4 review that takes 49 s at 8,192 ran past 600 s. Fitting and being
+# fast are different properties; this bound protects the second one.
+MAXIMUM_REVIEWER_CONTEXT_SMALL_CARD = 8192
+
+
+def check_reviewer_context(settings: dict[str, Any]) -> Check:
+    """Is the reviewer *served* with enough context for a vision review?
+
+    Distinct from what the model supports: qwen3-vl is trained to 262,144
+    tokens but Ollama serves 4,096 unless told otherwise, and the shortfall
+    only shows up as a 400 from a stage that already spent its GPU budget.
+    """
+    url = str(settings.get("localdeploy_url", "")).rstrip("/")
+    model = str(settings.get("model", ""))
+    if not url or not model:
+        return Check(name="reviewer context window", status="skip", detail="no endpoint configured")
+    root = url[: -len("/v1")] if url.endswith("/v1") else url
+    served: int | None = None
+    running = _http_json(root + "/api/ps", timeout=6)
+    if isinstance(running, dict):
+        for item in running.get("models") or []:
+            if str(item.get("name")) == model and item.get("context_length"):
+                served = int(item["context_length"])
+    if served is None:
+        return Check(
+            name="reviewer context window",
+            status="warn",
+            detail=f"{model} is not loaded, so its served context could not be read",
+            remedy=f"Run one request to load it, then re-check. It must serve at least "
+            f"{MINIMUM_REVIEWER_CONTEXT} tokens.",
+        )
+    if served < MINIMUM_REVIEWER_CONTEXT:
+        return Check(
+            name="reviewer context window",
+            status="fail",
+            detail=(
+                f"{model} is served with only {served} tokens of context. A vision review "
+                "(two images plus the spec and history) measured 4,197 tokens and is refused "
+                "with HTTP 400 mid-run."
+            ),
+            remedy=f"Set OLLAMA_CONTEXT_LENGTH={MINIMUM_REVIEWER_CONTEXT} and restart Ollama. "
+            "The model itself supports far more; this is only the served window.",
+        )
+    hardware = detect_hardware(url)
+    total = hardware.vram_total_gb or 0
+    if total and total < 12 and served > MAXIMUM_REVIEWER_CONTEXT_SMALL_CARD:
+        return Check(
+            name="reviewer context window",
+            status="warn",
+            detail=(
+                f"{model} is served with {served} tokens on a {total:.0f} GB card. The KV cache "
+                "is resident VRAM, so a large window crowds out the vision encoder's working "
+                "memory: measured, the same review took 49 s at 8,192 and over 600 s at 16,384."
+            ),
+            remedy=f"Set OLLAMA_CONTEXT_LENGTH={MAXIMUM_REVIEWER_CONTEXT_SMALL_CARD} and restart Ollama.",
+        )
+    return Check(
+        name="reviewer context window",
+        status="ok",
+        detail=f"{model} served with {served} tokens",
+    )
 
 
 def check_comfy_nodes(settings: dict[str, Any], stages: dict[str, Any]) -> Check:
@@ -497,7 +573,7 @@ def run_preflight(
     asset_height_m: float = 1.8,
 ) -> tuple[HardwareProfile, list[Check]]:
     """Every cross-stage assumption, checked concurrently."""
-    root = repo_root or Path(__file__).resolve().parents[1]
+    root = repo_root or resource_root()
     resolved = resolve_settings(profile=profile)
     settings = resolved.values.get("studio", {}) or {}
     stages = resolved.values.get("stages", {}) or {}
@@ -508,6 +584,7 @@ def run_preflight(
             pool.submit(check_reviewer_fits, hardware, settings),
             pool.submit(check_spec_strategy, settings),
             pool.submit(check_llm_endpoint, settings),
+            pool.submit(check_reviewer_context, settings),
             pool.submit(check_comfy_nodes, settings, stages),
             pool.submit(check_comfy_checkpoints, settings, stages),
             pool.submit(check_voxel_vs_grip, stages, asset_height_m),

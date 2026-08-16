@@ -2532,3 +2532,62 @@ def test_archived_runs_are_still_returned_by_list_and_still_recoverable(tmp_path
     run.current_stage = "D2"
     store.save(run)
     assert store.recover_interrupted_runs() == ["archive-v2"], "archiving must not hide a run from recovery"
+
+
+def test_an_escalated_automatic_gate_can_actually_be_approved(tmp_path: Path) -> None:
+    """Regression: when D2 exhausted its automatic retry budget it set
+    gate_required and awaiting_review, and pointed its review at the latest
+    diagnostic -- but never marked any evidence selectable. StudioStore.decide()
+    refuses to approve unselectable evidence AND refuses to fall back to the
+    recommendation for the same reason, so the human was handed a gate they
+    could only reject or roll back. Escalating to a human must always leave
+    something the human can say yes to."""
+    store = StudioStore(tmp_path)
+    run = store.create("escalated-v1", DESCRIPTION)
+    stage = run.stage("D2")
+    stage.gate_required = True
+    stage.state = "awaiting_review"
+    stage.iteration = 3
+    diagnostic = store.run_root(run.run_id) / "D2_geometry" / "diagnostic.png"
+    diagnostic.parent.mkdir(parents=True, exist_ok=True)
+    Image.new("RGB", (8, 8), "grey").save(diagnostic)
+    item = store.evidence(
+        run,
+        "D2",
+        diagnostic,
+        evidence_id="d2-i03-diagnostic",
+        label="Geometry diagnostic",
+        media_type="image/png",
+        # exactly what _run_d2 writes when it escalates
+        metrics={"iteration": 3, "selectable": True},
+    )
+    store.save(run)
+
+    decided = store.decide(run.run_id, "D2", "approve", "Critic was too strict.", item.evidence_id)
+    assert decided.stage("D2").state == "approved"
+    assert decided.stage("D2").human_decisions[-1].selected_evidence_id == "d2-i03-diagnostic"
+
+
+def test_unselectable_evidence_still_cannot_be_approved(tmp_path: Path) -> None:
+    """The complement: the selectable flag must keep meaning something, so a
+    report or comparison board is still refused."""
+    store = StudioStore(tmp_path)
+    run = store.create("escalated-v2", DESCRIPTION)
+    stage = run.stage("D2")
+    stage.gate_required = True
+    stage.state = "awaiting_review"
+    report = store.run_root(run.run_id) / "D2_geometry" / "report.json"
+    report.parent.mkdir(parents=True, exist_ok=True)
+    report.write_text("{}", encoding="utf-8")
+    item = store.evidence(
+        run,
+        "D2",
+        report,
+        evidence_id="d2-i03-report",
+        label="Report",
+        media_type="application/json",
+        metrics={"iteration": 3, "selectable": False},
+    )
+    store.save(run)
+    with pytest.raises(ValueError, match="production candidate"):
+        store.decide(run.run_id, "D2", "approve", "", item.evidence_id)

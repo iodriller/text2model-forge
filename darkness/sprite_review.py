@@ -57,11 +57,11 @@ class LocalDeploySpriteReviewer:
                         {
                             "type": "text",
                             "text": (
-                                "You are Asset Forge Darkness's broad directional-sprite critic. Review this four-clip "
+                                "You are VettedMesh Darkness's broad directional-sprite critic. Review this four-clip "
                                 "manual pipeline checkpoint at gameplay scale. You may freely explain important "
                                 "silhouette, scale, pose, direction, or readability defects, but do not edit files or "
                                 "emit code. The exact alpha/edge-clipping gates and visible-size measurements are "
-                                "authoritative. When equipment metrics are supplied, explicitly check whether the club "
+                                "authoritative. When equipment metrics are supplied, explicitly check whether the held item "
                                 "remains recognizable in idle/walk, strengthens attack readability, stays attached, "
                                 "and remains coherent through death across the shown directions. "
                                 "A deliberately wider death camera is acceptable if the death remains "

@@ -1,5 +1,5 @@
 # Container-local defaults. Override the mounted file with
-# ASSET_FORGE_DOCKER_CONFIG=/absolute/path/to/another-config.local.toml.
+# VETTEDMESH_DOCKER_CONFIG=/absolute/path/to/another-config.local.toml.
 schema_version = 1
 workspace_root = "/workspace"
 

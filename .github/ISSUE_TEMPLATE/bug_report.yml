@@ -1,0 +1,31 @@
+name: Bug report
+description: Report a reproducible VettedMesh defect.
+title: "[Bug]: "
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: Redact tokens, usernames, private prompts, proprietary assets, and machine-specific paths.
+  - type: input
+    id: version
+    attributes: {label: Version or commit, placeholder: v0.2.0-rc.1 or commit SHA}
+    validations: {required: true}
+  - type: input
+    id: environment
+    attributes: {label: Environment, placeholder: Windows 11, Python 3.12, RTX 3080 8 GB}
+    validations: {required: true}
+  - type: input
+    id: backend
+    attributes: {label: Stage and backend, placeholder: D2 / Hunyuan3D / ComfyUI revision}
+  - type: textarea
+    id: reproduce
+    attributes: {label: Reproduction steps}
+    validations: {required: true}
+  - type: textarea
+    id: expected
+    attributes: {label: Expected behavior}
+    validations: {required: true}
+  - type: textarea
+    id: actual
+    attributes: {label: Actual behavior and redacted logs}
+    validations: {required: true}

@@ -170,7 +170,7 @@ def create_review_media(config: dict[str, Any], repo_root: Path, review_root: Pa
         cells as the portable/test fallback.  Approval should expose real face detail
         instead of enlarging a 256 px shipping cell after the fact."""
         raw = (
-            repo_root / "artifacts" / "asset-forge-work" / str(config["id"]) /
+            repo_root / "artifacts" / "vettedmesh-work" / str(config["id"]) /
             "frames" / str(config["id"]) / action_name / direction / f"{frame_index:02d}.png"
         )
         if raw.is_file():
@@ -395,7 +395,7 @@ def package_production_unit(
         # that the baked master the sheets were rendered from is the one the recorded
         # bake produced, with registered models and the persistent anchor.
         bake_report_path = (
-            repo_root / "artifacts" / "asset-forge-work" / str(config.get("id")) /
+            repo_root / "artifacts" / "vettedmesh-work" / str(config.get("id")) /
             "bake" / "bake-provenance.json"
         )
         if not bake_report_path.is_file():
@@ -415,7 +415,7 @@ def package_production_unit(
                 failures.append("bake provenance is missing the persistent anchor hash")
     elif isinstance(overpaint, dict) and overpaint.get("enabled"):
         overpaint_report_path = (
-            repo_root / "artifacts" / "asset-forge-work" / str(config.get("id")) /
+            repo_root / "artifacts" / "vettedmesh-work" / str(config.get("id")) /
             "frames" / f"{config.get('id')}-overpaint.json"
         )
         if not overpaint_report_path.is_file():

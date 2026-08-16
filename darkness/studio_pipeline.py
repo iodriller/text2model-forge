@@ -11,6 +11,7 @@ import sys
 import threading
 from typing import Any, Protocol
 import urllib.request
+from vettedmesh_paths import resource_root
 
 from PIL import Image, ImageDraw, ImageFilter, ImageOps, ImageStat
 
@@ -64,7 +65,7 @@ def _motion_catalog_path() -> Path | None:
     the same working-directory-first rule profiles/ uses."""
     for candidate in (
         Path.cwd() / "motion_library" / "catalog.json",
-        Path(__file__).resolve().parents[1] / "motion_library" / "catalog.json",
+        resource_root() / "motion_library" / "catalog.json",
     ):
         if candidate.is_file():
             return candidate
@@ -236,7 +237,7 @@ def _limb_repair_box(side: str) -> list[float]:
 
 def _deferred_shield_repair_prompts(item) -> tuple[str, str]:
     positive = (
-        "World of Warcraft cinematic style, close-up of a chunky heroic armored footman's arm and hand, "
+        "close-up production concept of the existing character's armored arm and hand, "
         f"(one complete flat round shield, disc-shaped, strapped to the forearm and gripped by the hand, "
         f"{item.description}:1.5), matching the existing armor color and lighting, sharp focus"
     )
@@ -1958,7 +1959,7 @@ class StudioCoordinator:
             worker_diagnostics = dict(response.diagnostics)
         self._progress(run, "D2", 0.78, "Building deterministic four-view geometry evidence.")
         diagnostic = attempt_root / "geometry_diagnostic.png"
-        script = Path(__file__).resolve().parents[1] / "adapters" / "render_glb_diagnostic.py"
+        script = resource_root() / "adapters" / "render_glb_diagnostic.py"
         completed = self._run_script(
             [sys.executable, str(script), "--input", str(geometry_output), "--output", str(diagnostic)],
             timeout=300,
@@ -2030,6 +2031,15 @@ class StudioCoordinator:
             stage.gate_required = True
             stage.state = "awaiting_review"
             stage.message = "Three geometry attempts are preserved. Human direction is required before more GPU work."
+            # Without this the gate is unactionable: StudioStore.decide()
+            # refuses to approve evidence whose metrics do not say
+            # selectable, and refuses to fall back to the recommendation for
+            # the same reason -- so a human handed this gate could reject,
+            # retry or roll back, but could never say "the automatic critic
+            # was too strict, this mesh is fine". D3's identical escalation
+            # already does this; D2's did not, which made a legitimate
+            # override impossible exactly when the pipeline had given up.
+            diagnostic_evidence.metrics["selectable"] = True
             run.state = "awaiting_review"
             review.recommended_evidence_id = diagnostic_evidence.evidence_id
             self.store.event(run, "human_gate_ready", {"stage_id": "D2", "iteration": stage.iteration})
@@ -2071,6 +2081,7 @@ class StudioCoordinator:
                 # "if_needed" leaves an already-clean mesh completely alone.
                 "manifold_policy": settings.get("manifold_policy", "weld_only"),
                 "voxel_fraction": settings.get("voxel_fraction", 0.006),
+                "voxel_target_faces": settings.get("voxel_target_faces", 0),
                 "maximum_material_change_fraction_remeshed": settings.get(
                     "maximum_material_change_fraction_remeshed", 0.25
                 ),
@@ -2487,7 +2498,7 @@ class StudioCoordinator:
         motion_source = self._resolve_donor_motion(run, Path(config.workspace_root))
         spec_path = self._latest_evidence_path(run, "D0", media_type="application/json")
         chain_root = self.store.run_root(run.run_id) / "D7_D10_chain"
-        script = Path(__file__).resolve().parents[1] / "adapters" / "run_motion_candidate_pipeline.py"
+        script = resource_root() / "adapters" / "run_motion_candidate_pipeline.py"
         command = [
             sys.executable,
             str(script),
@@ -2502,7 +2513,7 @@ class StudioCoordinator:
             "--blender",
             str(blender),
             "--repo-root",
-            str(Path(__file__).resolve().parents[1]),
+            str(resource_root()),
             "--model",
             run.model,
             "--comfy-url",
@@ -2672,7 +2683,7 @@ class StudioCoordinator:
         effective_spec = attempt_root / "effective_asset_spec.json"
         _write_json(effective_spec, spec_value)
         blender = self._configured_blender()
-        script = Path(__file__).resolve().parents[1] / "adapters" / "bake_darkness_surface.py"
+        script = resource_root() / "adapters" / "bake_darkness_surface.py"
         command = [
             sys.executable,
             str(script),
@@ -2685,7 +2696,7 @@ class StudioCoordinator:
             "--blender",
             str(blender),
             "--repo-root",
-            str(Path(__file__).resolve().parents[1]),
+            str(resource_root()),
             "--comfy-url",
             run.comfy_url,
             "--checkpoint",
@@ -2698,7 +2709,7 @@ class StudioCoordinator:
         completed = self._run_script(command, timeout=3600)
         if completed.returncode != 0:
             raise RuntimeError(f"D8 surface bake failed: {(completed.stdout + completed.stderr)[-5000:]}")
-        review_script = Path(__file__).resolve().parents[1] / "adapters" / "review_surface_master.py"
+        review_script = resource_root() / "adapters" / "review_surface_master.py"
         reviewed = self._run_script(
             [sys.executable, str(review_script), "--surface-directory", str(surface), "--model", run.model],
             timeout=300,

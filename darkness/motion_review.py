@@ -62,7 +62,7 @@ class LocalDeployMotionReviewer:
             {
                 "type": "text",
                 "text": (
-                    "You are the broad diagnostic motion critic for Asset Forge Darkness. Review the full key-pose "
+                    "You are the broad diagnostic motion critic for VettedMesh Darkness. Review the full key-pose "
                     "strips and the deterministic critical-joint/contact/deformation numbers for idle, walk, attack, "
                     "hit, and death. You have wide diagnostic freedom: explain any causal strategy you think would "
                     "help, including a new operation Darkness does not yet implement. Do not pretend a static contact "

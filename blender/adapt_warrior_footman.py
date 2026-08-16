@@ -1,4 +1,4 @@
-"""Adapt the CC0 Quaternius Warrior into the Ember Defense footman master.
+"""Adapt the CC0 Quaternius Warrior into a generic shield-bearing biped master.
 
 The Warrior contributes what the primitive factory could not: real anatomy, a
 deformation rig, and professionally keyed actions (Sword_Attack, RecieveHit, Death,
@@ -69,8 +69,8 @@ def main():
     args = parse_args()
     armature = bpy.data.objects["CharacterArmature"]
 
-    # The pack authors the character facing -Y; Ember Defense fronts face +Y (south
-    # camera). Rotate the whole rig so direction labels stay semantically true.
+    # The pack authors the character facing -Y; the renderer's south camera
+    # expects +Y. Rotate the whole rig so direction labels stay semantically true.
     armature.rotation_euler = (0.0, 0.0, math.radians(180.0))
     bpy.context.view_layer.update()
 

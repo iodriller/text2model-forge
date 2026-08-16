@@ -3,7 +3,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 VALIDATOR = ROOT / "unity_smoke_template/Assets/Editor/DarknessCandidateValidator.cs"
-REVIEW_WINDOW = ROOT / "unity_smoke_template/Assets/Editor/DarknessGoblinReviewWindow.cs"
+REVIEW_WINDOW = ROOT / "unity_smoke_template/Assets/Editor/DarknessCandidateReviewWindow.cs"
 
 
 def test_unity_candidate_validator_is_non_promoting_and_hash_bound() -> None:

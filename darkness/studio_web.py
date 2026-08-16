@@ -1,4 +1,4 @@
-"""Local-first browser UI for Darkness Studio runs and human gates."""
+"""Local-first browser UI for VettedMesh Studio runs and human gates."""
 from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor
@@ -31,6 +31,7 @@ STYLE = """
 .decisions{list-style:none;padding:0;margin:6px 0 0}.decisions li{border-left:2px solid var(--line);padding:6px 0 6px 12px;margin:6px 0}.decisions .approve{border-left-color:var(--ok)}.decisions .reject,.decisions .rollback{border-left-color:var(--bad)}.decisions .edit,.decisions .retry{border-left-color:var(--steel)}.decisions .skip{border-left-color:var(--muted)}
 .run-card .bar{margin:12px 0 6px}.needs{background:var(--wait)!important;color:#1b1405!important}.crumb{display:flex;gap:10px;align-items:center;margin-bottom:12px}.crumb a{color:#c8dce5}
 .bar.overall{height:12px;margin:8px 0 4px}.bar span{background:linear-gradient(90deg,var(--ember),#f0a154);transition:width .35s ease}.progress-label{display:flex;justify-content:space-between;gap:12px;color:var(--muted);font-size:13px}select{width:100%;padding:11px;border:1px solid var(--line);border-radius:7px;background:#0d1417;color:var(--text)}.options{margin-top:18px;border:1px solid var(--line);border-radius:9px;padding:12px;background:#10191d}.options summary{cursor:pointer;font-weight:650}.option-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:4px 14px}.service-status{margin-top:10px;padding:9px 11px;border-radius:7px;background:#0d1417}.service-status.good{border-left:3px solid var(--ok)}.service-status.warning{border-left:3px solid var(--wait)}
+.glb-preview{display:block;width:100%;height:420px;touch-action:none;cursor:grab;background:radial-gradient(circle,#263238,#080c0e 70%);border:1px solid var(--line);border-radius:8px}.glb-preview:active{cursor:grabbing}.viewer-note{font-size:12px;color:var(--muted)}
 @media(max-width:800px){.wrap{padding:15px}header{padding:14px}.hero{padding:18px}}
 """
 
@@ -40,9 +41,9 @@ def _page(title: str, body: str) -> bytes:
         "<!doctype html><html><head><meta charset=utf-8>"
         '<meta name="viewport" content="width=device-width,initial-scale=1">'
         f"<title>{html.escape(title)}</title><style>{STYLE}</style></head>"
-        '<body><header><h1>DARKNESS STUDIO</h1><a href="/">Runs</a><a href="/new">New asset</a>'
-        '<a href="/doctor">System</a></header><main class="wrap">'
-        f"{body}</main></body></html>"
+        '<body><header><h1>VETTEDMESH STUDIO</h1><a href="/">Runs</a><a href="/new">New asset</a>'
+        '<a href="/golden">Golden corpus</a><a href="/doctor">System</a></header><main class="wrap">'
+        f'{body}</main><script src="/static/glb-viewer.js" defer></script></body></html>'
     ).encode("utf-8")
 
 
@@ -173,6 +174,56 @@ STUDIO_JS = """
 
   initRunProgress();
   initSetupOptions();
+})();
+"""
+
+
+# Dependency-free local GLB preview. It reads mesh POSITION/index accessors and
+# draws a sampled, depth-sorted shaded view on Canvas 2D. This is intentionally
+# a review aid rather than a replacement for Blender or the D10 runtime gate.
+GLB_VIEWER_JS = r"""
+(function () {
+  function components(type) { return {SCALAR:1,VEC2:2,VEC3:3,VEC4:4,MAT4:16}[type] || 1; }
+  function componentBytes(type) { return {5120:1,5121:1,5122:2,5123:2,5125:4,5126:4}[type]; }
+  function readComponent(view, offset, type) {
+    if (type===5120) return view.getInt8(offset); if (type===5121) return view.getUint8(offset);
+    if (type===5122) return view.getInt16(offset,true); if (type===5123) return view.getUint16(offset,true);
+    if (type===5125) return view.getUint32(offset,true); return view.getFloat32(offset,true);
+  }
+  function parseGlb(buffer) {
+    var file=new DataView(buffer); if(file.getUint32(0,true)!==0x46546c67||file.getUint32(4,true)!==2) throw Error('Only GLB 2.0 is supported');
+    var offset=12,json=null,binary=null;
+    while(offset+8<=buffer.byteLength){var length=file.getUint32(offset,true),type=file.getUint32(offset+4,true);offset+=8;
+      if(type===0x4e4f534a) json=JSON.parse(new TextDecoder().decode(new Uint8Array(buffer,offset,length)));
+      if(type===0x004e4942) binary=buffer.slice(offset,offset+length); offset+=length;}
+    if(!json||!binary) throw Error('GLB has no JSON or binary chunk');
+    function accessor(index){var a=json.accessors[index],b=json.bufferViews[a.bufferView],count=components(a.type),size=componentBytes(a.componentType),stride=b.byteStride||count*size;
+      var data=new DataView(binary),start=(b.byteOffset||0)+(a.byteOffset||0),out=new Array(a.count*count);
+      for(var i=0;i<a.count;i++) for(var c=0;c<count;c++) out[i*count+c]=readComponent(data,start+i*stride+c*size,a.componentType); return out;}
+    var triangles=[];
+    (json.meshes||[]).forEach(function(mesh){(mesh.primitives||[]).forEach(function(p){if(!p.attributes||p.attributes.POSITION===undefined||(p.mode!==undefined&&p.mode!==4))return;
+      var xyz=accessor(p.attributes.POSITION),indices=p.indices===undefined?null:accessor(p.indices),count=indices?indices.length:xyz.length/3;
+      var step=Math.max(3,Math.ceil(count/150000/3)*3);
+      for(var i=0;i+2<count;i+=step){var ia=indices?indices[i]:i,ib=indices?indices[i+1]:i+1,ic=indices?indices[i+2]:i+2;
+        triangles.push([[xyz[ia*3],xyz[ia*3+1],xyz[ia*3+2]],[xyz[ib*3],xyz[ib*3+1],xyz[ib*3+2]],[xyz[ic*3],xyz[ic*3+1],xyz[ic*3+2]]]);}});});
+    if(!triangles.length) throw Error('No triangle POSITION data was found'); return triangles;
+  }
+  function start(canvas){var context=canvas.getContext('2d'),triangles,yaw=-0.6,pitch=-0.25,zoom=0.82,drag=null,status='Loading GLB preview…';
+    function resize(){var ratio=Math.min(devicePixelRatio||1,2),rect=canvas.getBoundingClientRect();canvas.width=Math.max(1,rect.width*ratio);canvas.height=Math.max(1,rect.height*ratio);draw();}
+    function draw(){var w=canvas.width,h=canvas.height;context.clearRect(0,0,w,h);context.fillStyle='#9fb0b7';context.font=(14*(devicePixelRatio||1))+'px system-ui';
+      if(!triangles){context.fillText(status,18,28);return;} var points=[],min=[Infinity,Infinity,Infinity],max=[-Infinity,-Infinity,-Infinity];
+      triangles.forEach(function(t){t.forEach(function(p){for(var k=0;k<3;k++){min[k]=Math.min(min[k],p[k]);max[k]=Math.max(max[k],p[k]);}});});
+      var center=[(min[0]+max[0])/2,(min[1]+max[1])/2,(min[2]+max[2])/2],extent=Math.max(max[0]-min[0],max[1]-min[1],max[2]-min[2],1e-6),cy=Math.cos(yaw),sy=Math.sin(yaw),cx=Math.cos(pitch),sx=Math.sin(pitch),scale=Math.min(w,h)*zoom/extent;
+      function project(p){var x=p[0]-center[0],y=p[1]-center[1],z=p[2]-center[2],rx=cy*x+sy*z,rz=-sy*x+cy*z,ry=cx*y-sx*rz;rz=sx*y+cx*rz;return [w/2+rx*scale,h/2-ry*scale,rz];}
+      triangles.forEach(function(t){var a=project(t[0]),b=project(t[1]),c=project(t[2]),cross=(b[0]-a[0])*(c[1]-a[1])-(b[1]-a[1])*(c[0]-a[0]);if(Math.abs(cross)<0.01)return;points.push({p:[a,b,c],z:(a[2]+b[2]+c[2])/3,light:Math.max(.16,Math.min(.9,.45+cross/(Math.abs(cross)+9000)*.4))});});
+      points.sort(function(a,b){return a.z-b.z;});points.forEach(function(t){var shade=Math.round(95+t.light*105);context.beginPath();context.moveTo(t.p[0][0],t.p[0][1]);context.lineTo(t.p[1][0],t.p[1][1]);context.lineTo(t.p[2][0],t.p[2][1]);context.closePath();context.fillStyle='rgb('+Math.round(shade*.72)+','+Math.round(shade*.86)+','+shade+')';context.fill();context.strokeStyle='rgba(8,14,17,.18)';context.stroke();});}
+    canvas.addEventListener('pointerdown',function(e){drag=[e.clientX,e.clientY];canvas.setPointerCapture(e.pointerId);});
+    canvas.addEventListener('pointermove',function(e){if(!drag)return;yaw+=(e.clientX-drag[0])*.01;pitch=Math.max(-1.5,Math.min(1.5,pitch+(e.clientY-drag[1])*.01));drag=[e.clientX,e.clientY];draw();});
+    canvas.addEventListener('pointerup',function(){drag=null;});canvas.addEventListener('wheel',function(e){e.preventDefault();zoom=Math.max(.2,Math.min(3,zoom*Math.exp(-e.deltaY*.001)));draw();},{passive:false});
+    fetch(canvas.dataset.glbSrc,{cache:'no-store'}).then(function(r){if(!r.ok)throw Error('HTTP '+r.status);return r.arrayBuffer();}).then(function(b){triangles=parseGlb(b);resize();}).catch(function(e){status='Preview unavailable: '+e.message;draw();});
+    addEventListener('resize',resize);resize();
+  }
+  document.querySelectorAll('canvas[data-glb-src]').forEach(start);
 })();
 """
 
@@ -422,6 +473,13 @@ def _evidence(run, stage, *, allow_selection: bool = True) -> tuple[str, list[st
                     f'<a href="{url}" target=_blank><img loading=lazy src="{url}" '
                     f'alt="{html.escape(item.label)}"></a>'
                 )
+            elif item.media_type in {"model/gltf-binary", "model/gltf+json"} or item.relative_path.lower().endswith(".glb"):
+                choice = ""
+                body = (
+                    f'<canvas class=glb-preview data-glb-src="{url}" aria-label="Interactive 3D preview of {html.escape(item.label)}"></canvas>'
+                    '<p class=viewer-note>Drag to orbit; use the wheel to zoom. This local sampled preview is for inspection only.</p>'
+                    f'<p><a class=button href="{url}" target=_blank>Download original GLB</a></p>'
+                )
             else:
                 choice = ""
                 body = f'<p><a class=button href="{url}" target=_blank>Open evidence</a></p>'
@@ -541,7 +599,7 @@ def _manual_qwen_image_form(run, stage, csrf: str, *, busy: bool) -> str:
         f'<form method=post action="/run/{html.escape(run.run_id)}/qwen-image">'
         f'<input type=hidden name=csrf value="{csrf}">'
         '<label>Visual prompt</label><textarea name=prompt minlength=12 required '
-        'placeholder="Example: premium hand-painted 3D fantasy footman with a solid opaque kite shield on his left forearm and a straight sword gripped in his right hand; neutral studio background, natural proportions."></textarea>'
+        'placeholder="Example: hand-painted clockwork courier with a canvas satchel on its left side and a brass lantern in its right hand; neutral studio background, clear proportions."></textarea>'
         '<label>Optional deterministic seed</label><input type=number name=seed min=0 step=1 placeholder="Leave blank for a fresh random seed">'
         '<div class=prompt-tools><button class=primary type=submit>Render direct Qwen candidate</button>'
         '<button class=secondary type=reset>Clear prompt and seed</button></div></form></section>'
@@ -582,7 +640,7 @@ def _studio_controls(run, stage, coordinator: StudioCoordinator, csrf: str, *, b
     )
     return (
         '<section class="card console"><div class=console-head><div><h2>Studio control console</h2>'
-        '<p class=muted>Controls apply only to the local Darkness Studio job and local ComfyUI service.</p></div>'
+        '<p class=muted>Controls apply only to the local VettedMesh Studio job and local ComfyUI service.</p></div>'
         f'<span class=badge>{"stopping" if stopping else "running" if busy else "idle"}</span></div>'
         f'<div id=status-line class="status-line {status_class}">{html.escape(status)}</div>'
         '<div class=control-grid><section class=control-action><h3>Current work</h3>'
@@ -805,7 +863,7 @@ def _dashboard(store: StudioStore, *, show_archived: bool = False) -> str:
     waiting = sum(1 for run in runs if run.state == "awaiting_review")
     cards = "".join(_run_card(run) for run in runs)
     if not cards:
-        cards = '<section class=card><h2>No runs yet</h2><p>Describe any asset; Darkness compiles the production contract.</p><a class="button primary" href=/new>Create asset</a></section>'
+        cards = '<section class=card><h2>No runs yet</h2><p>Describe any asset; VettedMesh compiles the production contract.</p><a class="button primary" href=/new>Create asset</a></section>'
     summary = (
         f"{len(runs)} run{'' if len(runs) == 1 else 's'}, "
         f"{waiting} waiting for your decision."
@@ -909,7 +967,7 @@ def _setup_options(profile: str) -> dict[str, Any]:
     }
 
 
-def _new_form(csrf: str) -> str:
+def _new_form(csrf: str, preset_description: str = "") -> str:
     profiles = _available_profiles()
     default = "simple" if "simple" in profiles else profiles[0]
     defaults = studio_overrides(resolve_settings(profile=default))
@@ -929,7 +987,8 @@ def _new_form(csrf: str) -> str:
         '<form method=post action=/runs data-setup-options>'
         f'<input type=hidden name=csrf value="{csrf}">'
         '<label>Description</label><textarea name=description minlength=20 required '
-        'placeholder="Examples: an original armored footman with a right-hand sword and left shield; or a worn stone gate with two hinged iron doors and open/close states..."></textarea>'
+        'placeholder="Examples: a weathered stone well with an iron crank; or a clockwork courier with a right-hand lantern and two walking states...">'
+        f'{html.escape(preset_description)}</textarea>'
         f'<label>Configuration profile</label><select name=profile>{options}</select>'
         '<details class=options open><summary>Text-to-2D and reviewer options</summary>'
         '<p class=muted>Leave any field blank to inherit the selected profile. Installed model names appear as suggestions when the local services are running.</p>'
@@ -1133,7 +1192,7 @@ def _doctor() -> str:
         '<section class="card hero"><h1>Local production system</h1><div class=health>'
         f'<span class="{"" if localdeploy else "down"}">Qwen reviewer ({html.escape(reviewer_url)}): {html.escape(localdeploy_detail)}</span>'
         f'<span class="{"" if comfy else "down"}">ComfyUI ({html.escape(comfy_url)}): {html.escape(comfy_detail)}</span>'
-        f'<span class="{"" if config else "down"}">Darkness config: {"loaded" if config else "missing (copy machine.example.toml to config.local.toml)"}</span>'
+        f'<span class="{"" if config else "down"}">VettedMesh config: {"loaded" if config else "missing (copy machine.example.toml to config.local.toml)"}</span>'
         f'<span class="{"" if ready else "down"}">Workers ready: {ready}/{len(workers)}</span>'
         f'<span class="{"" if hardware.detected else "down"}">GPU: '
         f'{html.escape((hardware.primary.name if hardware.primary else "not detected"))}'
@@ -1146,6 +1205,48 @@ def _doctor() -> str:
     )
 
 
+def _golden_dashboard(store: StudioStore) -> str:
+    from .golden import load_corpus
+    from vettedmesh_paths import resource_root
+
+    corpus = load_corpus(resource_root() / "golden" / "static-props.json")
+    runs_by_description: dict[str, list] = {}
+    for run in store.list():
+        runs_by_description.setdefault(run.description.strip(), []).append(run)
+    cards: list[str] = []
+    attempted = completed = 0
+    for case in corpus.cases:
+        matches = runs_by_description.get(case.prompt.strip(), [])
+        run = matches[0] if matches else None
+        if run is not None:
+            attempted += 1
+            completed += int(run.state == "completed")
+            progress = _run_progress(run)
+            action = f'<a class=button href="/run/{quote(run.run_id)}">Open latest run</a>'
+            state = html.escape(run.state)
+        else:
+            progress = 0
+            action = f'<a class="button primary" href="/new?prompt={quote(case.prompt)}">Start this case</a>'
+            state = "not attempted"
+        features = "".join(f"<li>{html.escape(item)}</li>" for item in case.required_features)
+        cards.append(
+            '<section class="card run-card">'
+            f'<h2>{html.escape(case.case_id)}</h2><p><span class=badge>{html.escape(case.category)}</span> '
+            f'<span class=badge>{state}</span></p><p>{html.escape(case.prompt)}</p>'
+            f'<ul>{features}</ul><div class=progress-label><span>Run progress</span><span>{progress:.0%}</span></div>'
+            f'{_progress_bar(progress, label=case.case_id + " corpus progress")}{action}</section>'
+        )
+    overall = completed / corpus.required_attempts
+    return (
+        '<section class="card hero"><h1>Live 8 GB static-prop qualification</h1>'
+        f'<p>{attempted}/{corpus.required_attempts} attempted; {completed}/{corpus.required_attempts} completed. '
+        f'Publication threshold: at least {corpus.minimum_passing_cases} human-reviewed passes after every case is attempted.</p>'
+        f'<div class=progress-label><span>Completed live runs</span><span>{overall:.0%}</span></div>'
+        f'{_progress_bar(overall, label="Golden corpus completion")} '
+        '<p class=muted>Completion alone is not a pass. Export the human assessment report and run '
+        '<code>vettedmesh golden evaluate</code>; the evaluator verifies the stored run evidence and fails closed.</p>'
+        '</section><div class=grid style="margin-top:16px">' + "".join(cards) + "</div>"
+    )
 class StudioServer(NamedTuple):
     """A constructed but not-yet-running Studio server, plus the pieces a
     caller needs to drive or inspect it. Split out of serve() so the HTTP
@@ -1184,7 +1285,7 @@ def build_server(
     """
     if host not in {"127.0.0.1", "::1", "localhost"} and not allow_non_loopback:
         raise ValueError(
-            "Darkness Studio may bind only to a loopback address unless "
+            "VettedMesh Studio may bind only to a loopback address unless "
             "allow_non_loopback=True is explicitly set"
         )
     store = StudioStore(workspace)
@@ -1223,9 +1324,12 @@ def build_server(
                 path = parsed.path
                 if path == "/":
                     show_archived = parse_qs(parsed.query).get("archived", [""])[0] == "1"
-                    self.page("Darkness Studio", _dashboard(store, show_archived=show_archived))
+                    self.page("VettedMesh Studio", _dashboard(store, show_archived=show_archived))
                 elif path == "/new":
-                    self.page("New asset", _new_form(csrf))
+                    preset = parse_qs(parsed.query).get("prompt", [""])[0]
+                    self.page("New asset", _new_form(csrf, preset))
+                elif path == "/golden":
+                    self.page("Golden corpus", _golden_dashboard(store))
                 elif path == "/doctor":
                     self.page("System", _doctor())
                 elif path == "/favicon.ico":
@@ -1241,6 +1345,10 @@ def build_server(
                         self.page("Production run", _run_page(store, coordinator, run_id, csrf))
                 elif path == "/static/studio.js":
                     payload = STUDIO_JS.encode("utf-8")
+                    self._headers(HTTPStatus.OK, "text/javascript; charset=utf-8", len(payload))
+                    self.wfile.write(payload)
+                elif path == "/static/glb-viewer.js":
+                    payload = GLB_VIEWER_JS.encode("utf-8")
                     self._headers(HTTPStatus.OK, "text/javascript; charset=utf-8", len(payload))
                     self.wfile.write(payload)
                 elif path == "/api/setup/options":
@@ -1361,13 +1469,13 @@ def build_server(
                     self.page("Not found", "<h1>Not found</h1>", HTTPStatus.NOT_FOUND)
             except (KeyError, FileNotFoundError, ValueError) as exc:
                 self.page(
-                    "Darkness Studio error",
+                    "VettedMesh Studio error",
                     f'<section class=card><h1 class=error>Could not apply that action</h1><pre>{html.escape(str(exc))}</pre><a class=button href="/">Back to runs</a></section>',
                     HTTPStatus.BAD_REQUEST,
                 )
 
         def log_message(self, format: str, *args: Any) -> None:
-            print(f"Darkness Studio {self.address_string()}: {format % args}")
+            print(f"VettedMesh Studio {self.address_string()}: {format % args}")
 
     return StudioServer(
         server=ThreadingHTTPServer((host, port), Handler),
@@ -1393,8 +1501,8 @@ def serve(
         allow_non_loopback=allow_non_loopback,
     )
     if studio.recovered:
-        print(f"Darkness Studio recovered interrupted runs: {', '.join(studio.recovered)}")
-    print(f"Darkness Studio: {studio.url}")
+        print(f"VettedMesh Studio recovered interrupted runs: {', '.join(studio.recovered)}")
+    print(f"VettedMesh Studio: {studio.url}")
     if open_browser:
         webbrowser.open(studio.url + "/new")
     try:

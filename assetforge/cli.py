@@ -73,11 +73,11 @@ def doctor(base_url: str) -> dict[str, object]:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(prog="assetforge", description="Asset Forge Studio local production CLI")
-    parser.add_argument("--version", action="version", version="Asset Forge Studio 0.1.0")
+    parser = argparse.ArgumentParser(prog="assetforge", description="VettedMesh Studio local production CLI")
+    parser.add_argument("--version", action="version", version="VettedMesh Studio 0.2.0rc1")
     sub = parser.add_subparsers(dest="command", required=True)
 
-    init = sub.add_parser("init", help="create a portable Asset Forge workspace")
+    init = sub.add_parser("init", help="create a portable VettedMesh workspace")
     init.add_argument("--workspace", type=Path, required=True)
     init.add_argument("--project-id", required=True)
     init.add_argument("--name", required=True)
@@ -305,7 +305,7 @@ def build_parser() -> argparse.ArgumentParser:
     compliance.add_argument("--asset-id", required=True)
     compliance.add_argument("--report", type=Path, required=True)
 
-    serve = sub.add_parser("serve", help="start the loopback-only Asset Forge Studio UI")
+    serve = sub.add_parser("serve", help="start the loopback-only VettedMesh Studio UI")
     serve.add_argument("--workspace", type=Path, required=True)
     serve.add_argument("--host", default="127.0.0.1")
     serve.add_argument("--port", type=int, default=8765)
@@ -517,8 +517,8 @@ def main(argv: list[str] | None = None) -> int:
             print_json(result)
         return 0
     except ForgeError as error:
-        print(f"Asset Forge error: {error}", file=sys.stderr)
+        print(f"VettedMesh error: {error}", file=sys.stderr)
         return 2
     except KeyboardInterrupt:
-        print("Asset Forge interrupted", file=sys.stderr)
+        print("VettedMesh interrupted", file=sys.stderr)
         return 130

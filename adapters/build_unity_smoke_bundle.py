@@ -145,7 +145,7 @@ $Project = Join-Path $Root "UnitySmokeProject"
 $env:DARKNESS_CANDIDATE_PACKAGE = Join-Path $Root "candidate"
 $Arguments = @("-projectPath", ('"' + $Project + '"'))
 Start-Process -FilePath $Unity -ArgumentList $Arguments
-Write-Output "Unity review project launched. The Goblin Review window opens automatically; use Darkness > Goblin Motion Review if it was closed."
+Write-Output "Unity review project launched. The Candidate Review window opens automatically; use Darkness > Candidate Review if it was closed."
 '''
 
 
@@ -168,7 +168,7 @@ def _review_html(manifest: dict[str, object]) -> str:
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Darkness Goblin Motion Review</title>
+<title>VettedMesh Candidate Motion Review</title>
 <style>
   :root {{ color-scheme: dark; font-family: Inter, Segoe UI, sans-serif; }}
   body {{ margin:0; background:#0a0e14; color:#e7edf4; display:grid; place-items:center; min-height:100vh; }}
@@ -186,7 +186,7 @@ def _review_html(manifest: dict[str, object]) -> str:
 </head>
 <body>
 <main>
-  <h1>Darkness Goblin — Human Motion Review</h1>
+  <h1>VettedMesh Candidate — Human Motion Review</h1>
   <div class="sub">{display_name} · real generated sprite sheets · non-promoting review</div>
   <div id="actions" class="row"></div>
   <div id="directions" class="row"></div>
@@ -232,7 +232,7 @@ modify one.
 - Open `review.html` for an immediate animation preview using the exact candidate sheets.
 - For the Unity-native viewer, ensure Unity `{UNITY_VERSION}` is licensed, then run
   `powershell -ExecutionPolicy Bypass -File .\\open_unity_review.ps1`.
-- The Unity Goblin Review window opens automatically. Reopen it from `Darkness > Goblin Motion Review` if needed.
+- The Unity Candidate Review window opens automatically. Reopen it from `Darkness > Candidate Review` if needed.
 
 Both viewers provide Idle, Walk, Attack, and Death buttons, four directions, auto-tour, pause, and restart.
 

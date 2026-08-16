@@ -165,7 +165,7 @@ def test_protected_overpaint_is_hash_locked_in_manifest(tmp_path: Path) -> None:
     }
     write_json(config_path, config)
     write_json(
-        tmp_path / "artifacts" / "asset-forge-work" / "unit" / "frames" / "unit-overpaint.json",
+        tmp_path / "artifacts" / "vettedmesh-work" / "unit" / "frames" / "unit-overpaint.json",
         {
             "schema_version": 3,
             "unit": "unit",

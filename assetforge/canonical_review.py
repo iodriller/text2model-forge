@@ -24,7 +24,7 @@ def compose_canonical_review(frames_root: Path, report_path: Path, output_path: 
     board = Image.new("RGB", (margin * 2 + columns * cell, header + margin + rows * (cell + 34)), (18, 21, 27))
     draw = ImageDraw.Draw(board)
     font = ImageFont.load_default()
-    draw.text((margin, 18), f"Asset Forge Genesis — {report.get('family')} canonical master", fill=(235, 225, 205), font=font)
+    draw.text((margin, 18), f"VettedMesh Genesis — {report.get('family')} canonical master", fill=(235, 225, 205), font=font)
     mesh = report.get("mesh") or {}
     motion = report.get("motion_audit") or {}
     weights = report.get("weights") or {}

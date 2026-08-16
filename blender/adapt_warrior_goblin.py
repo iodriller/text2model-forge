@@ -1,4 +1,4 @@
-"""Adapt the CC0 Quaternius Warrior into the Ember Defense goblin raider master.
+"""Adapt the CC0 Quaternius Warrior into a generic short-biped raider fixture.
 
 Same rig/action library as the footman adapter (the CC0 pack shares one skeleton and
 one professional action set across characters), but authored differently to read as

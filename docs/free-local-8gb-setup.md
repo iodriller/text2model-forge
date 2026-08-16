@@ -1,7 +1,9 @@
-# Running the whole pipeline free, locally, on an 8 GB GPU
+# Experimental local 8 GB path
 
-Every model here is free and open source, and the whole chain fits on a
-consumer laptop GPU. No API keys, no subscriptions, no cloud.
+This guide records a real 8 GB-class text-to-concept-to-geometry run and the
+settings derived from it. It does **not** qualify the complete D0–D10 pipeline
+on 8 GB, and it does not mean every optional model is open source. The control
+plane is local and needs no API key; each selected model has separate terms.
 
 ## Automated setup on Windows, Linux, and macOS
 
@@ -11,29 +13,29 @@ discovery/installation, local config, smoke check, and Studio startup. Windows
 uses the official ComfyUI portable runtime:
 
 ```powershell
-.\asset-forge.ps1
+.\vettedmesh.ps1
 ```
 
 Linux and macOS use ComfyUI's supported manual layout in its own isolated
 environment:
 
 ```bash
-bash ./asset-forge.sh
+bash ./vettedmesh.sh
 ```
 
 Choose the recommended Qwen stack in the prompt. For an unattended first
 install, explicitly accept the separate SDXL and Hunyuan model terms:
 
 ```powershell
-.\asset-forge.ps1 -Action install -AiStack qwen -NonInteractive `
+.\vettedmesh.ps1 -Action install -AiStack qwen -NonInteractive `
   -AcceptSdxlLicense -AcceptHunyuanLicense
-.\asset-forge.ps1 -AiStack existing
+.\vettedmesh.ps1 -AiStack existing
 ```
 
 ```bash
-bash ./asset-forge.sh install --ai-stack qwen --non-interactive \
+bash ./vettedmesh.sh install --ai-stack qwen --non-interactive \
   --accept-sdxl-license --accept-hunyuan-license
-bash ./asset-forge.sh start --ai-stack existing
+bash ./vettedmesh.sh start --ai-stack existing
 ```
 
 After installation, the normal launcher is idempotent: it skips a current
@@ -59,7 +61,7 @@ orchestration.
 | D1 text → 2D | SDXL / DreamShaper in ComfyUI | ~6 GB | open weights |
 | **D2 2D → 3D** | **Hunyuan3D-2 (native ComfyUI)** | **~5 GB mini, ~6 GB std** | Tencent community licence — see below |
 | D4–D6 rig + skin | [UniRig](https://github.com/VAST-AI-Research/UniRig) | ~8 GB | MIT |
-| D7 motion | Donor retarget (Quaternius/Mixamo CC0) | CPU + Blender | CC0 |
+| D7 motion | Donor retarget (Quaternius CC0 catalog entry) | CPU + Blender | CC0-1.0 |
 | D8–D9 surface, sprites | Blender | CPU/GPU | GPL |
 
 Total peak VRAM is set by whichever single stage is running, not the sum —
@@ -114,9 +116,10 @@ python -m darkness config show --profile simple    # what the run will ask for
 ## 3. Rigging (optional at first)
 
 UniRig is MIT-licensed and rigs an arbitrary mesh. It needs its own
-environment; see its README. Until it is installed, D4 falls back to the
-procedural short-biped worker, which produces a valid rig but ignores your
-mesh's actual proportions.
+environment; see its README. Until it is installed, D4 can use the procedural
+short-biped research fixture. That fixture proves contracts and deformation
+checks; because it does not preserve the generated mesh's fine identity, it is
+not a production fallback.
 
 ## 4. Point the Studio at it
 
@@ -127,7 +130,7 @@ copy machine.example.toml config.local.toml
 Fill in your Blender path. `workspace_root` is where runs are written.
 
 ```powershell
-python -m darkness studio --workspace C:/AssetForgeRuns --open-browser
+python -m darkness studio --workspace C:/VettedMeshRuns --open-browser
 ```
 
 ## What you get
@@ -140,16 +143,17 @@ Describe your asset, then:
    re-rendered behind your back.
 3. **D2** feeds it to Hunyuan3D and returns a mesh, then gates it on real
    geometry (vertex/face counts, watertightness, connected components).
-4. **D3 onward** cleans up, rigs, skins, animates, paints, and packages,
-   pausing at D4, D7, D8 and D10 for your approval.
+4. **D3 onward** is the experimental half of this profile: cleanup, rigging,
+   skinning, motion, surface work, sprites, and runtime validation still need a
+   complete live qualification on this hardware.
 
 ## Honest limits
 
 - **Hunyuan3D's licence is a community licence, not MIT/Apache.** It excludes
-  some territories (EU/UK/South Korea) from *output* use. Fine for personal
-  and local work; check it before shipping commercially. The lineage system
-  records this, and `export_policy.py` will block a release export that
-  depends on it. That refusal is deliberate, not a bug.
+  the EU, UK, and South Korea and imposes additional use and distribution
+  conditions. Do not download or run it where its terms do not grant you
+  permission. The lineage system records this, and `export_policy.py` blocks a
+  globally cleared release export that depends on it.
 - **ComfyUI's native Hunyuan3D support is shape-only.** Texture generation is
   not part of it; the full shape+texture path needs ~12 GB. Surface work
   happens at D8 instead, which is where this pipeline already does it.

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Native Linux/macOS installer, repair tool, doctor, and launcher for Asset Forge.
+# Native Linux/macOS installer, repair tool, doctor, and launcher for VettedMesh.
 
 set -Eeuo pipefail
 umask 022
@@ -8,8 +8,9 @@ REPO_ROOT="$(CDPATH='' cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
 ACTION="start"
 AI_STACK="auto"
 GPU="auto"
-WORKSPACE="${ASSET_FORGE_WORKSPACE:-${HOME}/AssetForgeRuns}"
-RUNTIME_ROOT="${ASSET_FORGE_RUNTIME_ROOT:-${REPO_ROOT}/runtime}"
+WORKSPACE="${VETTEDMESH_WORKSPACE:-${ASSET_FORGE_WORKSPACE:-${HOME}/VettedMeshRuns}}"
+RUNTIME_ROOT="${VETTEDMESH_RUNTIME_ROOT:-${ASSET_FORGE_RUNTIME_ROOT:-${REPO_ROOT}/runtime}}"
+export UV_PYTHON_INSTALL_DIR="${UV_PYTHON_INSTALL_DIR:-${RUNTIME_ROOT}/python}"
 REVIEWER_MODEL="qwen3-vl:8b-instruct"
 MAX_ATTEMPTS=3
 ACCEPT_SDXL_LICENSE=0
@@ -31,6 +32,8 @@ COMFY_ROOT="${RUNTIME_ROOT}/ComfyUI"
 COMFY_PYTHON="${COMFY_ROOT}/.venv/bin/python"
 COMFY_MODELS="${COMFY_ROOT}/models"
 UV_VERSION="0.11.32"
+PIP_VERSION="26.2.1"
+SETUPTOOLS_VERSION="84.0.0"
 UV_INSTALLER_URL="https://astral.sh/uv/${UV_VERSION}/install.sh"
 OLLAMA_INSTALLER_URL="https://ollama.com/install.sh"
 SDXL_URL="https://huggingface.co/stabilityai/stable-diffusion-xl-base-1.0/resolve/main/sd_xl_base_1.0.safetensors"
@@ -38,15 +41,15 @@ HUNYUAN_URL="https://huggingface.co/Comfy-Org/hunyuan3D_2.0_repackaged/resolve/m
 
 usage() {
     cat <<'EOF'
-Asset Forge setup and launcher for Linux and macOS
+VettedMesh setup and launcher for Linux and macOS
 
-Usage: ./asset-forge.sh [start|install|repair|doctor] [options]
+Usage: ./vettedmesh.sh [start|install|repair|doctor] [options]
 
 Options:
   --action ACTION             start, install, repair, or doctor
   --ai-stack STACK            auto, qwen, sdxl, existing, or core
   --gpu MODE                  auto, nvidia, or cpu
-  --workspace PATH            run workspace (default: ~/AssetForgeRuns)
+  --workspace PATH            run workspace (default: ~/VettedMeshRuns)
   --runtime-root PATH         managed tools/models root (default: ./runtime)
   --reviewer-model MODEL      Ollama reviewer model
   --max-attempts N            bounded retry count, 1-5 (default: 3)
@@ -64,16 +67,16 @@ EOF
 }
 
 die() {
-    printf '\nAsset Forge could not finish: %s\n' "$*" >&2
-    printf 'Run ./asset-forge.sh doctor for a readiness report.\n' >&2
+    printf '\nVettedMesh could not finish: %s\n' "$*" >&2
+    printf 'Run ./vettedmesh.sh doctor for a readiness report.\n' >&2
     exit 1
 }
 
 on_error() {
     local exit_code=$?
     local line_number=${1:-unknown}
-    printf '\nAsset Forge stopped at line %s (exit %s).\n' "$line_number" "$exit_code" >&2
-    printf 'Run ./asset-forge.sh doctor for a readiness report.\n' >&2
+    printf '\nVettedMesh stopped at line %s (exit %s).\n' "$line_number" "$exit_code" >&2
+    printf 'Run ./vettedmesh.sh doctor for a readiness report.\n' >&2
     exit "$exit_code"
 }
 trap 'on_error $LINENO' ERR
@@ -112,7 +115,7 @@ case "$GPU" in auto|nvidia|cpu) ;; *) die "invalid GPU mode: $GPU" ;; esac
 OS_NAME="$(uname -s)"
 case "$OS_NAME" in
     Linux|Darwin) ;;
-    *) die "this launcher supports Linux and macOS; on Windows run .\\asset-forge.ps1" ;;
+    *) die "this launcher supports Linux and macOS; on Windows run .\\vettedmesh.ps1" ;;
 esac
 
 # Re-resolve paths after argument parsing. mkdir + cd avoids a dependency on realpath.
@@ -286,8 +289,8 @@ install_system_package() {
 }
 
 ensure_core() {
-    local selected_stack=$1 extras=() install_target="." project_hash fingerprint marker installed="" import_works=0
-    write_step "Checking Python and the Asset Forge environment"
+    local selected_stack=$1 lock_name lock_path project_hash lock_hash fingerprint marker installed="" import_works=0
+    write_step "Checking Python and the VettedMesh environment"
     ensure_python || die "Python 3.12+ could not be installed or discovered"
 
     if ! python_is_compatible "$VENV_PYTHON"; then
@@ -305,25 +308,36 @@ ensure_core() {
         fi
     fi
 
-    [[ "$selected_stack" == qwen || "$selected_stack" == sdxl ]] && extras+=(local-ai)
-    (( INCLUDE_DEV )) && extras+=(dev)
-    if (( ${#extras[@]} )); then
-        local joined
-        joined="$(IFS=,; printf '%s' "${extras[*]}")"
-        install_target=".[${joined}]"
+    if [[ "$selected_stack" == qwen || "$selected_stack" == sdxl ]]; then
+        if (( INCLUDE_DEV )); then
+            lock_name="requirements-all.lock"
+        else
+            lock_name="requirements-local-ai.lock"
+        fi
+    elif (( INCLUDE_DEV )); then
+        lock_name="requirements-dev.lock"
+    else
+        lock_name="requirements.lock"
     fi
+    lock_path="${REPO_ROOT}/${lock_name}"
+    [[ -f "$lock_path" ]] || die "the committed dependency lock is missing: ${lock_path}"
     project_hash="$($VENV_PYTHON -c 'import hashlib, pathlib, sys; print(hashlib.sha256(pathlib.Path(sys.argv[1]).read_bytes()).hexdigest())' "${REPO_ROOT}/pyproject.toml")"
-    fingerprint="${project_hash}|${install_target}"
-    marker="${VENV_ROOT}/.asset-forge-pyproject.sha256"
+    lock_hash="$($VENV_PYTHON -c 'import hashlib, pathlib, sys; print(hashlib.sha256(pathlib.Path(sys.argv[1]).read_bytes()).hexdigest())' "$lock_path")"
+    fingerprint="${project_hash}|${lock_hash}|${lock_name}"
+    marker="${VENV_ROOT}/.vettedmesh-pyproject.sha256"
     [[ -f "$marker" ]] && installed="$(<"$marker")"
     "$VENV_PYTHON" -c 'import darkness, assetforge' >/dev/null 2>&1 && import_works=1
 
     if [[ "$ACTION" == repair || $import_works -eq 0 || "$installed" != "$fingerprint" ]]; then
-        printf 'Installing the editable project and its declared dependencies...\n'
-        with_retry "pip bootstrap" "$VENV_PYTHON" -m pip install --upgrade pip setuptools
+        printf 'Installing the editable project and its locked dependencies...\n'
+        with_retry "pip bootstrap" "$VENV_PYTHON" -m pip install --upgrade \
+            "pip==${PIP_VERSION}" "setuptools==${SETUPTOOLS_VERSION}"
         (
             cd -- "$REPO_ROOT"
-            with_retry "Asset Forge dependency install" "$VENV_PYTHON" -m pip install -e "$install_target"
+            with_retry "VettedMesh locked dependency install" "$VENV_PYTHON" -m pip install \
+                --require-hashes -r "$lock_path"
+            with_retry "VettedMesh editable install" "$VENV_PYTHON" -m pip install \
+                --no-deps --no-build-isolation -e .
         )
         printf '%s' "$fingerprint" > "$marker"
     else
@@ -445,7 +459,7 @@ ensure_comfyui() {
     fi
     gpu_mode="$(detect_comfy_gpu)"
     requirements_hash="$($VENV_PYTHON -c 'import hashlib, pathlib, sys; print(hashlib.sha256(pathlib.Path(sys.argv[1]).read_bytes()).hexdigest())' "${COMFY_ROOT}/requirements.txt")"
-    marker="${COMFY_ROOT}/.venv/.asset-forge-requirements.sha256"
+    marker="${COMFY_ROOT}/.venv/.vettedmesh-requirements.sha256"
     [[ -f "$marker" ]] && installed="$(<"$marker")"
     if [[ "$ACTION" == repair || "$installed" != "${requirements_hash}|${gpu_mode}" ]] || \
         ! "$COMFY_PYTHON" -c 'import torch' >/dev/null 2>&1; then
@@ -568,7 +582,7 @@ ensure_local_config() {
     fi
     canonical="${REPO_ROOT}/adapters/canonical_short_biped_worker.py"
     {
-        printf '# Generated once by asset-forge.sh. Machine-local and gitignored.\n'
+        printf '# Generated once by vettedmesh.sh. Machine-local and gitignored.\n'
         printf 'schema_version = 1\n'
         printf 'workspace_root = "%s"\n' "$(toml_escape "$WORKSPACE")"
         if [[ "$selected_stack" == qwen || "$selected_stack" == sdxl ]]; then
@@ -629,7 +643,7 @@ doctor_row() {
 
 show_doctor() {
     local found_python="" found_ollama="" found_blender="" ready
-    printf '\nAsset Forge doctor\n%-24s %-5s %s\n' COMPONENT READY DETAIL
+    printf '\nVettedMesh doctor\n%-24s %-5s %s\n' COMPONENT READY DETAIL
     find_python && found_python="$PYTHON_BIN" || true
     doctor_row "Python 3.12+" "$([[ -n "$found_python" ]] && echo 1 || echo 0)" "${found_python:-not found}"
     doctor_row "Project environment" "$(python_is_compatible "$VENV_PYTHON" && echo 1 || echo 0)" "$VENV_PYTHON"
@@ -686,7 +700,7 @@ main() {
     else
         (( install_only )) && TOTAL_STEPS=5 || TOTAL_STEPS=6
     fi
-    printf 'Asset Forge action: %s; AI stack: %s; workspace: %s\n' "$ACTION" "$selected_stack" "$WORKSPACE"
+    printf 'VettedMesh action: %s; AI stack: %s; workspace: %s\n' "$ACTION" "$selected_stack" "$WORKSPACE"
 
     ensure_core "$selected_stack"
     if (( full_stack )); then
@@ -707,7 +721,7 @@ main() {
     if (( install_only )); then
         write_step "Installation complete"
         show_doctor
-        printf '\nInstall complete. Run ./asset-forge.sh to start Studio.\n'
+        printf '\nInstall complete. Run ./vettedmesh.sh to start Studio.\n'
         return 0
     fi
 
@@ -719,7 +733,7 @@ main() {
         url_ready "http://127.0.0.1:8188/system_stats" && open_url "http://127.0.0.1:8188" || true
     fi
 
-    write_step "Starting Asset Forge Studio"
+    write_step "Starting VettedMesh Studio"
     studio_args=(-m darkness studio --workspace "$WORKSPACE")
     (( ! NO_BROWSER )) && studio_args+=(--open-browser)
     exec "$VENV_PYTHON" "${studio_args[@]}"

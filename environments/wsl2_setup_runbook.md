@@ -255,7 +255,7 @@ pip install "accelerate==0.24.1" -c ~/instantmesh_constraints.txt   # see trap 5
 
 ```powershell
 python adapters/build_smoke_request.py `
-  --image fixtures/concepts/darkness_goblin_tripsg_rgba_v1.png `
+  --image fixtures/concepts/short_biped_fixture_rgba_v1.png `
   --output-directory C:/AssetForgeDarknessRuns/smoke/trellis2/output `
   --job-id trellis2.smoke.v1 --run-id trellis2.smoke.run.v1 `
   --artifact-id concept.goblin.smoke.v1 `

@@ -1,4 +1,4 @@
-"""Build an original, rigged, four-direction Asset Forge character from JSON.
+"""Build an original, rigged, four-direction VettedMesh character from JSON.
 
 The factory intentionally uses only Blender primitives and project-authored data.  It
 is not a replacement for final art direction, but it provides a coherent owned master,

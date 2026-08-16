@@ -8,6 +8,7 @@ import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+from vettedmesh_paths import resource_root
 
 
 SCHEMA_VERSION = 1
@@ -93,7 +94,7 @@ def sha256_json(value: dict[str, Any]) -> str:
 
 
 def package_root() -> Path:
-    return Path(__file__).resolve().parents[1]
+    return resource_root()
 
 
 def project_path(workspace: Path) -> Path:
@@ -139,11 +140,11 @@ def init_workspace(
     root.mkdir(parents=True, exist_ok=True)
     destination = project_path(root)
     if destination.exists():
-        raise ForgeError(f"Asset Forge workspace already exists: {destination}")
+        raise ForgeError(f"VettedMesh workspace already exists: {destination}")
 
     project = {
         "schema_version": SCHEMA_VERSION,
-        "product": "Asset Forge Studio",
+        "product": "VettedMesh Studio",
         "project_id": project_id,
         "display_name": display_name,
         "created_utc": utc_now(),

@@ -21,7 +21,7 @@ Detection deliberately degrades rather than fails. In order:
 3. ``nvidia-smi``.
 4. torch, then psutil, for whatever is left.
 
-Asset Forge must run standalone, so LocalDeploy is never a dependency --
+VettedMesh must run standalone, so LocalDeploy is never a dependency --
 only an enrichment. A machine with none of the above still gets a
 HardwareProfile with ``detected=False``, and every caller treats that as
 "unknown, do not pretend", never as "zero".

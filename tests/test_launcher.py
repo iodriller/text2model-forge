@@ -7,8 +7,8 @@ import pytest
 
 
 ROOT = Path(__file__).resolve().parents[1]
-POWERSHELL = ROOT / "asset-forge.ps1"
-SHELL = ROOT / "asset-forge.sh"
+POWERSHELL = ROOT / "vettedmesh.ps1"
+SHELL = ROOT / "vettedmesh.sh"
 
 
 def test_windows_launcher_exposes_bounded_install_start_and_ai_choices() -> None:
@@ -21,6 +21,9 @@ def test_windows_launcher_exposes_bounded_install_start_and_ai_choices() -> None
     assert "$NoElevation" in source
     assert "Write-Progress" in source
     assert "local-ai" in source
+    assert '"requirements-all.lock"' in source
+    assert '"--require-hashes"' in source
+    assert '"--no-build-isolation"' in source
     assert "qwen_image_edit_models.py" in source
     assert "hunyuan3d-dit-v2_fp16.safetensors" in source
     assert "sd_xl_base_1.0.safetensors" in source
@@ -35,14 +38,18 @@ def test_unix_launcher_has_native_linux_macos_install_start_and_repair_paths() -
     assert "auto|qwen|sdxl|existing|core" in source
     assert "with_retry" in source
     assert "UV_NO_MODIFY_PATH=1" in source
+    assert 'UV_PYTHON_INSTALL_DIR="${UV_PYTHON_INSTALL_DIR:-${RUNTIME_ROOT}/python}"' in source
     assert "run_admin" in source and "sudo -n" in source
     assert "--no-elevation" in source
     assert "ComfyUI.git" in source
     assert "download.pytorch.org/whl/cu130" in source
     assert "qwen_image_edit_models.py" in source
+    assert 'lock_name="requirements-all.lock"' in source
+    assert "--require-hashes" in source
+    assert "--no-build-isolation" in source
     assert "hunyuan3d-dit-v2_fp16.safetensors" in source
     assert "Keeping the existing gitignored config.local.toml unchanged" in source
-    assert not (ROOT / "asset-forge.cmd").exists()
+    assert not (ROOT / "vettedmesh.cmd").exists()
 
 
 def test_dependency_manifests_share_pyproject_as_the_source_of_truth() -> None:
@@ -53,6 +60,15 @@ def test_dependency_manifests_share_pyproject_as_the_source_of_truth() -> None:
     assert (
         ROOT / "requirements-local-ai.txt"
     ).read_text(encoding="utf-8").splitlines()[-1] == "-e .[local-ai]"
+    for filename in (
+        "requirements.lock",
+        "requirements-dev.lock",
+        "requirements-local-ai.lock",
+        "requirements-all.lock",
+    ):
+        lock = (ROOT / filename).read_text(encoding="utf-8")
+        assert "--hash=sha256:" in lock
+        assert "--no-emit-project" in lock
 
 
 def test_docker_setup_is_local_only_persistent_and_uses_typed_config() -> None:
@@ -61,10 +77,11 @@ def test_docker_setup_is_local_only_persistent_and_uses_typed_config() -> None:
     nvidia = (ROOT / "compose.nvidia.yaml").read_text(encoding="utf-8")
     config = tomllib.loads((ROOT / "docker" / "config.local.toml").read_text(encoding="utf-8"))
 
-    assert "USER assetforge" in dockerfile
+    assert "USER vettedmesh" in dockerfile
+    assert "--require-hashes -r requirements.lock" in dockerfile
     assert '"--allow-non-loopback"' in dockerfile
-    assert '127.0.0.1:${ASSET_FORGE_PORT:-8766}:8766' in compose
-    assert "asset-forge-workspace:/workspace" in compose
+    assert '127.0.0.1:${VETTEDMESH_PORT:-8766}:8766' in compose
+    assert "vettedmesh-workspace:/workspace" in compose
     assert "condition: service_healthy" in compose
     assert "capabilities: [gpu]" in nvidia
     assert config["workspace_root"] == "/workspace"

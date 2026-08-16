@@ -211,14 +211,17 @@ def masks_equivalent(first_path: Path, second_path: Path) -> bool:
 
 def _registered_model_hash(config_path: Path, checkpoint: str) -> str | None:
     for parent in config_path.resolve().parents:
-        registry_path = parent / "asset_sources" / "ember-defense" / "models" / "model-registry.json"
-        if not registry_path.is_file():
-            continue
-        registry = json.loads(registry_path.read_text(encoding="utf-8"))
-        for model in registry.get("models", []):
-            if model.get("filename") == checkpoint:
-                value = model.get("installed_sha256")
-                return str(value) if value else None
+        for registry_path in (
+            parent / "models" / "model-registry.json",
+            parent / "model-registry.json",
+        ):
+            if not registry_path.is_file():
+                continue
+            registry = json.loads(registry_path.read_text(encoding="utf-8"))
+            for model in registry.get("models", []):
+                if model.get("filename") == checkpoint:
+                    value = model.get("installed_sha256")
+                    return str(value) if value else None
     return None
 
 

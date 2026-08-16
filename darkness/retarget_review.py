@@ -56,11 +56,11 @@ class LocalDeployRetargetReviewer:
             {
                 "type": "text",
                 "text": (
-                    "You are Asset Forge Darkness's broad motion-retarget critic. This is a manual pipeline check, "
-                    "not a request for perfection. Review only the supplied Quaternius-to-goblin idle, walk, attack, "
+                    "You are VettedMesh Darkness's broad motion-retarget critic. This is a manual pipeline check, "
+                    "not a request for perfection. Review only the supplied donor-to-target idle, walk, attack, "
                     "and death key poses plus exact numerical history. Pay special attention to hips, knees, ankles, "
                     "shoulders, elbows, and whether attack/death read at game scale. You have wide diagnostic freedom "
-                    "to judge declared equipment semantics, weapon-side consistency, club silhouette, and whether the "
+                    "to judge declared equipment semantics, weapon-side consistency, held-item silhouette, and whether the "
                     "weapon makes the attack's wind-up/contact/recovery readable. Treat source-hand motion/rest-X "
                     "metrics as authoritative for side selection and socket error as authoritative for attachment. "
                     "Those numbers do not prove a grasp: the dedicated close-up images are authoritative for whether "

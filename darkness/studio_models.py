@@ -6,6 +6,7 @@ import re
 from typing import Any, Literal
 
 from pydantic import Field, model_validator
+from vettedmesh_paths import source_revision
 
 from .schemas import StrictModel
 
@@ -272,8 +273,9 @@ class StudioStageState(StrictModel):
 class StudioRun(StrictModel):
     schema_version: Literal[1] = 1
     run_id: str = Field(pattern=r"^[a-z0-9][a-z0-9_.-]*$")
+    source_revision: str | None = Field(default=None, pattern=r"^[0-9a-f]{40}$")
     description: str = Field(min_length=1)
-    title: str = "New Darkness asset"
+    title: str = "New VettedMesh asset"
     state: Literal[
         "created", "running", "awaiting_review", "blocked", "failed", "completed"
     ] = "created"
@@ -288,9 +290,9 @@ class StudioRun(StrictModel):
     # usable on a machine that has not installed Qwen yet.
     concept_backend: Literal["auto", "qwen_image_2512", "qwen_image_edit_2511", "sdxl"] = "auto"
     checkpoint: str = "dreamshaper_xl_v2_turbo.safetensors"
-    style_lora: str | None = "Warcraft style.safetensors"
+    style_lora: str | None = None
     style_lora_strength: float = Field(default=0.8, ge=0.0, le=1.5)
-    style_lora_trigger: str | None = "World of Warcraft cinematic style"
+    style_lora_trigger: str | None = None
     prop_lora: str | None = None
     prop_lora_strength: float = Field(default=0.6, ge=0.0, le=1.5)
     # Defaults match concept_workflow()'s own long-standing steps/cfg defaults
@@ -344,6 +346,7 @@ def new_studio_run(
     return StudioRun(
         **(overrides or {}),
         run_id=run_id,
+        source_revision=source_revision(),
         description=description.strip(),
         stages=[
             StudioStageState(stage_id=stage_id, label=label, gate_required=gate)

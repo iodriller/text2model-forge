@@ -1,4 +1,4 @@
-"""Asset Forge Darkness foundation contracts."""
+"""VettedMesh Darkness foundation contracts."""
 
 from .artifacts import ArtifactStore
 from .compiler import DarknessCompiler

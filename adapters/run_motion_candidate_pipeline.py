@@ -233,7 +233,7 @@ def _write_review_index(root: Path, *, unity_state: str) -> Path:
             [
                 "# Darkness painted motion candidate — human review",
                 "",
-                "This is a non-promoting review checkpoint. It does not replace the live Unity goblin.",
+                "This is a non-promoting review checkpoint. It does not replace the final runtime gate.",
                 "",
                 "## Motion",
                 "",
@@ -285,6 +285,9 @@ def run(args: argparse.Namespace) -> dict[str, object]:
     target = args.target.resolve()
     motion_source = args.motion_source.resolve()
     character_spec = args.character_spec.resolve() if args.character_spec is not None else None
+    character_data = json.loads(character_spec.read_text(encoding="utf-8")) if character_spec else {}
+    asset_id = str(character_data.get("asset_id") or "short_biped_motion_candidate")
+    display_name = str(character_data.get("title") or asset_id.replace("_", " ").title())
     blender = args.blender.resolve() if args.blender is not None else None
     root = args.output_root.resolve()
     for path in (repo, target, motion_source, character_spec):
@@ -380,7 +383,7 @@ def run(args: argparse.Namespace) -> dict[str, object]:
                 "attack",
                 "death",
                 "--title",
-                "Quaternius CC0 retarget on Darkness goblin",
+                "Declared donor-motion retarget on the target asset",
             ],
             cwd=repo,
             timeout=120,
@@ -562,6 +565,10 @@ def run(args: argparse.Namespace) -> dict[str, object]:
                 str(frames),
                 "--source-id",
                 "darkness_short_biped_candidate",
+                "--asset-id",
+                asset_id,
+                "--display-name",
+                display_name,
                 "--output-directory",
                 str(package),
                 "--master",

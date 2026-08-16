@@ -1,6 +1,6 @@
 {
   "id": "fixture",
-  "source": "artifacts/asset-forge-fixture/source/fixture.blend",
+  "source": "artifacts/vettedmesh-fixture/source/fixture.blend",
   "animation_object": "CharacterRoot",
   "cell_size": [128, 128],
   "render_size": [256, 256],
@@ -17,6 +17,6 @@
     "hit": { "actions": ["hit"], "frames": 2, "loop": false },
     "death": { "actions": ["death"], "frames": 6, "loop": false }
   },
-  "output_path_pattern": "artifacts/asset-forge-fixture/sheets/fixture_{animation}_{direction}_sheet.png"
+  "output_path_pattern": "artifacts/vettedmesh-fixture/sheets/fixture_{animation}_{direction}_sheet.png"
 }
 

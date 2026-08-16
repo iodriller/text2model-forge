@@ -1,0 +1,29 @@
+name: Worker qualification
+description: Submit reproducible evidence for a model or external worker.
+title: "[Qualification]: "
+labels: [qualification]
+body:
+  - type: input
+    id: worker
+    attributes: {label: Worker and operation IDs}
+    validations: {required: true}
+  - type: textarea
+    id: revisions
+    attributes: {label: Code, model, dependency revisions, and SHA-256 values}
+    validations: {required: true}
+  - type: textarea
+    id: licenses
+    attributes: {label: Code, weight, input, output, territory, and distribution terms}
+    validations: {required: true}
+  - type: textarea
+    id: hardware
+    attributes: {label: OS, CPU, RAM, GPU, VRAM, driver, CUDA, and Python}
+    validations: {required: true}
+  - type: textarea
+    id: evidence
+    attributes: {label: Commands, timing, peak memory, artifact hashes, metrics, and visual review}
+    validations: {required: true}
+  - type: textarea
+    id: risks
+    attributes: {label: Failures, exclusions, limitations, and unresolved risks}
+    validations: {required: true}

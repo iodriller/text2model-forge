@@ -7,6 +7,7 @@ import shutil
 from pathlib import Path
 
 import httpx
+from vettedmesh_paths import resource_root
 
 from .schemas import WorkerManifest
 
@@ -16,7 +17,7 @@ class WorkerManifestError(ValueError):
 
 
 def manifest_root() -> Path:
-    return Path(__file__).resolve().parents[1] / "workers"
+    return resource_root() / "workers"
 
 
 def load_manifests(root: str | Path | None = None) -> dict[str, WorkerManifest]:

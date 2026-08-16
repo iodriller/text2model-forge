@@ -1,0 +1,8 @@
+VettedMesh
+Copyright 2026 Oney Erge
+
+Licensed under the Apache License, Version 2.0.
+
+This distribution contains integration code for optional third-party tools.
+Those tools, models, weights, and downloaded assets are not relicensed by the
+VettedMesh license. See THIRD_PARTY_LICENSES.md before enabling a backend.

@@ -29,12 +29,12 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
 if ([Environment]::OSVersion.Platform -ne [PlatformID]::Win32NT) {
-    throw "asset-forge.ps1 is the native Windows launcher. On Linux or macOS run ./asset-forge.sh."
+    throw "vettedmesh.ps1 is the native Windows launcher. On Linux or macOS run ./vettedmesh.sh."
 }
 
 $script:RepoRoot = [IO.Path]::GetFullPath($PSScriptRoot)
 if (-not $Workspace) {
-    $Workspace = Join-Path $env:USERPROFILE "AssetForgeRuns"
+    $Workspace = Join-Path $env:USERPROFILE "VettedMeshRuns"
 }
 if (-not $RuntimeRoot) {
     $RuntimeRoot = Join-Path $script:RepoRoot "runtime"
@@ -52,12 +52,14 @@ $PythonInstallerUrl = "https://www.python.org/ftp/python/3.12.10/python-3.12.10-
 $OllamaInstallerUrl = "https://ollama.com/download/OllamaSetup.exe"
 $SdxlUrl = "https://huggingface.co/stabilityai/stable-diffusion-xl-base-1.0/resolve/main/sd_xl_base_1.0.safetensors"
 $HunyuanUrl = "https://huggingface.co/Comfy-Org/hunyuan3D_2.0_repackaged/resolve/main/split_files/hunyuan3d-dit-v2_fp16.safetensors"
+$PipVersion = "26.2.1"
+$SetuptoolsVersion = "84.0.0"
 
 function Write-Step {
     param([string]$Activity)
     $script:Step++
     $percent = [Math]::Min(100, [Math]::Round(($script:Step / $script:TotalSteps) * 100))
-    Write-Progress -Id 1 -Activity "Asset Forge setup" -Status $Activity -PercentComplete $percent
+    Write-Progress -Id 1 -Activity "VettedMesh setup" -Status $Activity -PercentComplete $percent
     Write-Host "`n[$script:Step/$script:TotalSteps] $Activity" -ForegroundColor Cyan
 }
 
@@ -259,7 +261,7 @@ function Install-Python {
 
 function Ensure-Core {
     param([string]$SelectedStack)
-    Write-Step "Checking Python and the Asset Forge environment"
+    Write-Step "Checking Python and the VettedMesh environment"
     $systemPython = Find-Python
     if (-not $systemPython) { $systemPython = Install-Python }
     if (-not (Test-PythonExecutable $script:VenvPython)) {
@@ -274,13 +276,27 @@ function Ensure-Core {
             }
         }
     }
-    $extras = New-Object System.Collections.Generic.List[string]
-    if ($SelectedStack -in @("qwen", "sdxl")) { $extras.Add("local-ai") }
-    if ($IncludeDev) { $extras.Add("dev") }
-    $installTarget = if ($extras.Count) { ".[" + ($extras -join ",") + "]" } else { "." }
+    $includeLocalAi = $SelectedStack -in @("qwen", "sdxl")
+    $lockName = if ($includeLocalAi -and $IncludeDev) {
+        "requirements-all.lock"
+    }
+    elseif ($includeLocalAi) {
+        "requirements-local-ai.lock"
+    }
+    elseif ($IncludeDev) {
+        "requirements-dev.lock"
+    }
+    else {
+        "requirements.lock"
+    }
+    $lockPath = Join-Path $script:RepoRoot $lockName
+    if (-not (Test-Path -LiteralPath $lockPath -PathType Leaf)) {
+        throw "The committed dependency lock is missing: $lockPath"
+    }
     $projectHash = (Get-FileHash -Algorithm SHA256 (Join-Path $script:RepoRoot "pyproject.toml")).Hash
-    $installFingerprint = "$projectHash|$installTarget"
-    $marker = Join-Path $script:RepoRoot ".venv\.asset-forge-pyproject.sha256"
+    $lockHash = (Get-FileHash -Algorithm SHA256 $lockPath).Hash
+    $installFingerprint = "$projectHash|$lockHash|$lockName"
+    $marker = Join-Path $script:RepoRoot ".venv\.vettedmesh-pyproject.sha256"
     $installedHash = if (Test-Path -LiteralPath $marker) { (Get-Content -Raw $marker).Trim() } else { "" }
     $importWorks = $false
     try {
@@ -291,12 +307,22 @@ function Ensure-Core {
     if ($Action -eq "repair" -or -not $importWorks -or $installedHash -ne $installFingerprint) {
         Write-Host "Installing the editable project and its runtime dependencies..."
         Invoke-WithRetry "pip bootstrap" {
-            Invoke-Native $script:VenvPython @("-m", "pip", "install", "--upgrade", "pip", "setuptools")
+            Invoke-Native $script:VenvPython @(
+                "-m", "pip", "install", "--upgrade",
+                "pip==$PipVersion", "setuptools==$SetuptoolsVersion"
+            )
         }
         Push-Location $script:RepoRoot
         try {
-            Invoke-WithRetry "Asset Forge dependency install" {
-                Invoke-Native $script:VenvPython @("-m", "pip", "install", "-e", $installTarget)
+            Invoke-WithRetry "VettedMesh locked dependency install" {
+                Invoke-Native $script:VenvPython @(
+                    "-m", "pip", "install", "--require-hashes", "-r", $lockPath
+                )
+            }
+            Invoke-WithRetry "VettedMesh editable install" {
+                Invoke-Native $script:VenvPython @(
+                    "-m", "pip", "install", "--no-deps", "--no-build-isolation", "-e", "."
+                )
             }
         }
         finally { Pop-Location }
@@ -511,7 +537,7 @@ function Ensure-LocalConfig {
         return
     }
     $lines = New-Object System.Collections.Generic.List[string]
-    $lines.Add("# Generated once by asset-forge.ps1. Machine-local and gitignored.")
+    $lines.Add("# Generated once by vettedmesh.ps1. Machine-local and gitignored.")
     $lines.Add("schema_version = 1")
     $lines.Add("workspace_root = $(ConvertTo-TomlString $Workspace)")
     if ($SelectedStack -in @("qwen", "sdxl")) {
@@ -569,7 +595,7 @@ function Resolve-AiStack {
 }
 
 function Show-Doctor {
-    Write-Host "`nAsset Forge doctor" -ForegroundColor Cyan
+    Write-Host "`nVettedMesh doctor" -ForegroundColor Cyan
     $checks = @(
         [pscustomobject]@{ Component = "Python 3.12+"; Ready = [bool](Find-Python); Detail = (Find-Python) },
         [pscustomobject]@{ Component = "Project environment"; Ready = (Test-PythonExecutable $script:VenvPython); Detail = $script:VenvPython },
@@ -621,7 +647,7 @@ try {
     $fullStack = $selectedStack -in @("qwen", "sdxl")
     $installOnly = $Action -in @("install", "repair")
     $script:TotalSteps = if ($fullStack) { if ($installOnly) { 8 } else { 9 } } else { if ($installOnly) { 5 } else { 6 } }
-    Write-Host "Asset Forge action: $Action; AI stack: $selectedStack; workspace: $Workspace" -ForegroundColor White
+    Write-Host "VettedMesh action: $Action; AI stack: $selectedStack; workspace: $Workspace" -ForegroundColor White
     Ensure-Core $selectedStack
     New-Item -ItemType Directory -Force -Path $Workspace | Out-Null
 
@@ -659,8 +685,8 @@ try {
     if ($Action -eq "install" -or $Action -eq "repair") {
         Write-Step "Installation complete"
         [void](Show-Doctor)
-        Write-Progress -Id 1 -Activity "Asset Forge setup" -Completed
-        Write-Host "`nInstall complete. Run .\asset-forge.ps1 to start Studio." -ForegroundColor Green
+        Write-Progress -Id 1 -Activity "VettedMesh setup" -Completed
+        Write-Host "`nInstall complete. Run .\vettedmesh.ps1 to start Studio." -ForegroundColor Green
         exit 0
     }
 
@@ -674,15 +700,15 @@ try {
         }
     }
 
-    Write-Step "Starting Asset Forge Studio"
-    Write-Progress -Id 1 -Activity "Asset Forge setup" -Completed
+    Write-Step "Starting VettedMesh Studio"
+    Write-Progress -Id 1 -Activity "VettedMesh setup" -Completed
     $studioArguments = @("-m", "darkness", "studio", "--workspace", $Workspace)
     if (-not $NoBrowser) { $studioArguments += "--open-browser" }
     Invoke-Native $script:VenvPython $studioArguments
 }
 catch {
-    Write-Progress -Id 1 -Activity "Asset Forge setup" -Completed
-    Write-Host "`nAsset Forge could not finish: $($_.Exception.Message)" -ForegroundColor Red
-    Write-Host "Run .\asset-forge.ps1 -Action doctor for a readiness report." -ForegroundColor Yellow
+    Write-Progress -Id 1 -Activity "VettedMesh setup" -Completed
+    Write-Host "`nVettedMesh could not finish: $($_.Exception.Message)" -ForegroundColor Red
+    Write-Host "Run .\vettedmesh.ps1 -Action doctor for a readiness report." -ForegroundColor Yellow
     exit 1
 }

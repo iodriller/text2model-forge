@@ -7,9 +7,9 @@ import json
 from pathlib import Path
 import re
 import secrets
-from typing import Literal
+from typing import Annotated, Literal
 
-from pydantic import Field, model_validator
+from pydantic import Field, StringConstraints, model_validator
 
 from .localdeploy import LocalDeployStructuredClient
 from .schemas import StrictModel
@@ -20,6 +20,24 @@ from .studio_models import (
     StudioStageState,
     utc_now,
 )
+
+
+# Bounded prose for anything a reviewer writes.
+#
+# A grammar-constrained decoder generates an unbounded string until it decides
+# to stop; if max_tokens runs out first, the response is cut mid-string and the
+# whole object fails as invalid JSON. That is not hypothetical -- it killed D1
+# (ConceptPlan ran to ~8.5k characters) and then D3 (AutomaticAssessment) in
+# the same run, each time surfacing as "Invalid JSON: EOF while parsing a
+# string" long after the GPU work was done.
+#
+# Verified on this stack that JSON Schema maxLength IS compiled into the
+# grammar (a maxLength=40 field returned exactly 40 characters), so these caps
+# are enforced during sampling rather than merely requested in the prompt.
+# They are generous for their purpose: a gate review is read by a human in a
+# card, not published.
+_ReviewSummary = Annotated[str, StringConstraints(min_length=1, max_length=700)]
+_ReviewPoint = Annotated[str, StringConstraints(min_length=1, max_length=240)]
 
 
 class ConceptPlan(StrictModel):
@@ -102,12 +120,12 @@ class ConceptCorrectionPlan(StrictModel):
 
 class GateAssessment(StrictModel):
     schema_version: Literal[1] = 1
-    summary: str = Field(min_length=1)
-    strengths: list[str] = Field(default_factory=list)
-    issues: list[str] = Field(default_factory=list)
-    candidate_ranking: list[str] = Field(min_length=1)
+    summary: _ReviewSummary
+    strengths: list[_ReviewPoint] = Field(default_factory=list, max_length=6)
+    issues: list[_ReviewPoint] = Field(default_factory=list, max_length=6)
+    candidate_ranking: list[str] = Field(min_length=1, max_length=8)
     recommended_evidence_id: str
-    recommended_changes: list[str] = Field(default_factory=list)
+    recommended_changes: list[_ReviewPoint] = Field(default_factory=list, max_length=6)
     confidence: float = Field(ge=0, le=1)
     hard_requirements_satisfied: bool
     request_human_review: bool = True
@@ -115,27 +133,27 @@ class GateAssessment(StrictModel):
 
 class RevisionPlan(StrictModel):
     schema_version: Literal[1] = 1
-    diagnosis: str = Field(min_length=1)
-    changes: list[str] = Field(min_length=1, max_length=8)
-    preserve: list[str] = Field(default_factory=list)
+    diagnosis: _ReviewSummary
+    changes: list[_ReviewPoint] = Field(min_length=1, max_length=8)
+    preserve: list[_ReviewPoint] = Field(default_factory=list, max_length=8)
     stop_reason: str | None = None
 
 
 class GeometrySeedPlan(StrictModel):
     schema_version: Literal[1] = 1
-    positive_prompt: str = Field(min_length=80)
-    negative_prompt: str = Field(min_length=20)
+    positive_prompt: str = Field(min_length=80, max_length=1400)
+    negative_prompt: str = Field(min_length=20, max_length=700)
     seed: int = Field(ge=0)
-    rationale: str = Field(min_length=1)
+    rationale: _ReviewSummary
 
 
 class AutomaticAssessment(StrictModel):
     schema_version: Literal[1] = 1
     goal_satisfied: bool
-    summary: str = Field(min_length=1)
-    strengths: list[str] = Field(default_factory=list)
-    issues: list[str] = Field(default_factory=list)
-    recommended_changes: list[str] = Field(default_factory=list)
+    summary: _ReviewSummary
+    strengths: list[_ReviewPoint] = Field(default_factory=list, max_length=6)
+    issues: list[_ReviewPoint] = Field(default_factory=list, max_length=6)
+    recommended_changes: list[_ReviewPoint] = Field(default_factory=list, max_length=6)
     confidence: float = Field(ge=0, le=1)
 
 
@@ -355,7 +373,7 @@ class StudioQwen:
 
     def _compile_spec_monolithic(self, description: str) -> StudioAssetSpec:
         prompt = f"""
-You are Qwen in ASSET ARCHITECT mode for Asset Forge Darkness. Convert the user's single description into one original,
+You are Qwen in ASSET ARCHITECT mode for VettedMesh Darkness. Convert the user's single description into one original,
 production-ready StudioAssetSpec. First classify asset_kind and behavior. The system accepts characters, creatures,
 props, architecture such as doors and walls, environments, materials, and VFX; never force a non-character into a
 character schema. Describe named components, their connections, and whether each is static, rigidly articulated,

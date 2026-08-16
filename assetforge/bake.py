@@ -25,7 +25,7 @@ from typing import Any
 from PIL import Image, ImageFilter
 
 from .comfy import ComfyClient
-from .core import ForgeError, sha256_file, sha256_json, utc_now, write_json
+from .core import ForgeError, package_root, sha256_file, sha256_json, utc_now, write_json
 from .overpaint import (
     BACKGROUND,
     DEPTH_CONTROLNET,
@@ -36,7 +36,7 @@ from .overpaint import (
     build_overpaint_workflow,
 )
 
-BAKE_SCRIPT = Path(__file__).resolve().parent.parent / "blender" / "bake_texture_master.py"
+BAKE_SCRIPT = package_root() / "blender" / "bake_texture_master.py"
 
 
 def _texture_block(config: dict[str, Any]) -> dict[str, Any]:
@@ -149,7 +149,7 @@ def bake_texture_master(
     work = (
         Path(work_value).resolve()
         if work_value
-        else repo_root / "artifacts" / "asset-forge-work" / unit / "bake"
+        else repo_root / "artifacts" / "vettedmesh-work" / unit / "bake"
     )
     views_folder = work / "views"
     provenance_path = work / "bake-provenance.json"
@@ -307,7 +307,7 @@ def bake_texture_master(
     icons_folder = (
         Path(icons_value).resolve()
         if icons_value
-        else repo_root / "asset_sources" / "ember-defense" / "assets" / unit / "icons"
+        else work / "icons"
     )
     _run_blender(blender, baked, "icons", config_path, work, repo_root, output=icons_folder)
 

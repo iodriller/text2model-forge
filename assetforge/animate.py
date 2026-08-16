@@ -287,7 +287,7 @@ def generate_animation(
             item["final_sha256"] = sha256_file(final_path)
 
         job = {
-            "engine": "AssetForge Motion Storyboard Prototype",
+            "engine": "VettedMesh Motion Storyboard Prototype",
             "production_eligible": False,
             "production_blocker": "diffusion_frame_sequence_has_no_single_master_identity_lock",
             "workflow_type": "pose-controlled-img2img",

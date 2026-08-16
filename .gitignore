@@ -25,7 +25,9 @@ workspaces/
 
 # Local run output, never checked in.
 /AssetForgeRuns/
+/VettedMeshRuns/
 
 # Machine-local recovery notes produced while repairing a ComfyUI install.
 /.comfyui-revert-to.txt
 /.comfyui-torch-before.txt
+/motion_library/catalog.json

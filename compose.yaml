@@ -1,19 +1,21 @@
-name: asset-forge
+name: vettedmesh
 
 services:
   studio:
     build:
       context: .
       dockerfile: Dockerfile
+      args:
+        VETTEDMESH_SOURCE_REVISION: ${VETTEDMESH_SOURCE_REVISION:-}
     init: true
     restart: unless-stopped
     ports:
       # Studio has no account system. Keep it reachable only from this host.
-      - "127.0.0.1:${ASSET_FORGE_PORT:-8766}:8766"
+      - "127.0.0.1:${VETTEDMESH_PORT:-8766}:8766"
     volumes:
-      - asset-forge-workspace:/workspace
+      - vettedmesh-workspace:/workspace
       - type: bind
-        source: ${ASSET_FORGE_DOCKER_CONFIG:-./docker/config.local.toml}
+        source: ${VETTEDMESH_DOCKER_CONFIG:-./docker/config.local.toml}
         target: /app/config.local.toml
         read_only: true
     extra_hosts:
@@ -24,13 +26,13 @@ services:
         condition: service_healthy
 
   ollama:
-    image: ollama/ollama:0.32.4
+    image: ollama/ollama:0.32.4@sha256:10c13eb515db310990527d36ca14a136da4bcc0fbf2bf3b15e9c1f111e9d3cd4
     init: true
     restart: unless-stopped
     ports:
-      - "127.0.0.1:${ASSET_FORGE_OLLAMA_PORT:-11434}:11434"
+      - "127.0.0.1:${VETTEDMESH_OLLAMA_PORT:-11434}:11434"
     volumes:
-      - asset-forge-ollama:/root/.ollama
+      - vettedmesh-ollama:/root/.ollama
     healthcheck:
       test: ["CMD", "ollama", "list"]
       interval: 5s
@@ -39,7 +41,7 @@ services:
       start_period: 10s
 
   reviewer-model:
-    image: ollama/ollama:0.32.4
+    image: ollama/ollama:0.32.4@sha256:10c13eb515db310990527d36ca14a136da4bcc0fbf2bf3b15e9c1f111e9d3cd4
     restart: "no"
     environment:
       OLLAMA_HOST: http://ollama:11434
@@ -49,5 +51,5 @@ services:
         condition: service_healthy
 
 volumes:
-  asset-forge-workspace:
-  asset-forge-ollama:
+  vettedmesh-workspace:
+  vettedmesh-ollama:

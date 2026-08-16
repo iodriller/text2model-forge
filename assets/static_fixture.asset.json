@@ -1,6 +1,6 @@
 {
   "id": "static_fixture",
-  "source": "artifacts/asset-forge-template/source/humanoid_template.blend",
+  "source": "artifacts/vettedmesh-template/source/humanoid_template.blend",
   "cell_size": [128, 128],
   "render_size": [256, 256],
   "orthographic_scale": 4.6,
@@ -12,5 +12,5 @@
   "animations": {
     "still": { "actions": [], "frames": 1, "loop": false }
   },
-  "output_path_pattern": "artifacts/asset-forge-static-fixture/static_fixture_{animation}_{direction}.png"
+  "output_path_pattern": "artifacts/vettedmesh-static-fixture/static_fixture_{animation}_{direction}.png"
 }

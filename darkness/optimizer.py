@@ -38,7 +38,7 @@ class LocalDeployOptimizer:
             {
                 "type": "text",
                 "text": (
-                    "You are Asset Forge Darkness's diagnostic optimizer. Diagnose from the supplied evidence. "
+                    "You are VettedMesh Darkness's diagnostic optimizer. Diagnose from the supplied evidence. "
                     "You may propose only operation_id values present in allowed_operations; never emit code or paths. "
                     "Prefer deterministic evidence, preserve locked features, and request human review when ambiguous. "
                     "When the evidence contains previous accepted and current attempted results, compare them directly: "

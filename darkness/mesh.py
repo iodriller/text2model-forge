@@ -99,7 +99,7 @@ class TriangleMesh:
         return cls(vertices=vertices, faces=faces)
 
     def to_obj(self) -> str:
-        lines = ["# Asset Forge Darkness deterministic OBJ"]
+        lines = ["# VettedMesh Darkness deterministic OBJ"]
         lines.extend(f"v {x:.9g} {y:.9g} {z:.9g}" for x, y, z in self.vertices)
         lines.extend(f"f {a + 1} {b + 1} {c + 1}" for a, b, c in self.faces)
         return "\n".join(lines) + "\n"

@@ -1,0 +1,20 @@
+name: Feature request
+description: Propose a scoped capability with evidence and acceptance criteria.
+title: "[Feature]: "
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes: {label: Problem and affected workflow}
+    validations: {required: true}
+  - type: textarea
+    id: proposal
+    attributes: {label: Proposed contract-level change}
+    validations: {required: true}
+  - type: textarea
+    id: acceptance
+    attributes: {label: Measurable acceptance criteria}
+    validations: {required: true}
+  - type: textarea
+    id: licensing
+    attributes: {label: New dependencies, services, models, or licensing implications}

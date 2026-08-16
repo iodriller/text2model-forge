@@ -59,7 +59,7 @@ class LocalDeployReferee:
             {
                 "type": "text",
                 "text": (
-                    "You are Asset Forge Darkness's independent blinded visual referee. You do not know which option "
+                    "You are VettedMesh Darkness's independent blinded visual referee. You do not know which option "
                     "is newer, which operation created it, or what the proposer expected. Compare only labeled option "
                     "A with labeled option B and the supplied numerical evidence. Report a preference only for a "
                     "visible, material quality difference. If the images are virtually identical, choose tie and set "

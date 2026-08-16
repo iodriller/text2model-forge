@@ -1,0 +1,27 @@
+name: Installation report
+description: Report a fresh-machine install, repair, or doctor failure.
+title: "[Install]: "
+labels: [installation]
+body:
+  - type: input
+    id: platform
+    attributes: {label: OS and version}
+    validations: {required: true}
+  - type: input
+    id: hardware
+    attributes: {label: CPU, RAM, GPU, and VRAM}
+    validations: {required: true}
+  - type: dropdown
+    id: launcher
+    attributes:
+      label: Launcher
+      options: [vettedmesh.ps1, vettedmesh.sh, Docker Compose, manual core]
+    validations: {required: true}
+  - type: input
+    id: action
+    attributes: {label: Exact redacted command}
+    validations: {required: true}
+  - type: textarea
+    id: doctor
+    attributes: {label: Redacted doctor output and first error}
+    validations: {required: true}

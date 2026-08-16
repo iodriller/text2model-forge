@@ -36,7 +36,7 @@ def export_asset(
         outputs.append({"path": str(target), "sha256": source_hash})
     manifest = {
         "schema_version": 1,
-        "product": "Asset Forge Studio",
+        "product": "VettedMesh Studio",
         "project_id": project["project_id"],
         "asset_id": asset_id,
         "kind": asset["kind"],

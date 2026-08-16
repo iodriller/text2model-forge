@@ -38,9 +38,11 @@ llm_timeout_seconds = 900
 quality = "standard"
 
 [stages.D2]
-# Hunyuan3D-2 is the only image-to-3D backend that fits in 8 GB; TRELLIS.2-4B
-# needs 16-24 GB. It is an isosurface generator, which is what makes the D3
-# settings below necessary.
+# Hunyuan3D-2 is the image-to-3D backend measured on this project's 8 GB-class
+# ComfyUI path. That observation does not qualify every card or the complete
+# D0-D10 chain. TRELLIS.2-4B's official requirement is substantially higher.
+# Hunyuan is an isosurface generator, which makes the D3 settings below
+# necessary, and its community license must be accepted separately.
 backend = "hunyuan3d"
 checkpoint = "hunyuan3d-dit-v2_fp16.safetensors"
 

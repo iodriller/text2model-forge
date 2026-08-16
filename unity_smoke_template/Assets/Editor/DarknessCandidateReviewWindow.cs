@@ -11,7 +11,7 @@ namespace Darkness.EditorTools
     /// It reads the immutable sheets beside the standalone project and never imports
     /// them into a game project.
     /// </summary>
-    public sealed class DarknessGoblinReviewWindow : EditorWindow
+    public sealed class DarknessCandidateReviewWindow : EditorWindow
     {
         [Serializable]
         private sealed class ManifestAction
@@ -53,11 +53,11 @@ namespace Darkness.EditorTools
         private bool _paused;
         private bool _autoTour = true;
 
-        [MenuItem("Darkness/Goblin Motion Review", priority = 1)]
+        [MenuItem("Darkness/Candidate Motion Review", priority = 1)]
         public static void ShowReview()
         {
-            var window = GetWindow<DarknessGoblinReviewWindow>();
-            window.titleContent = new GUIContent("Goblin Review");
+            var window = GetWindow<DarknessCandidateReviewWindow>();
+            window.titleContent = new GUIContent("Candidate Review");
             window.minSize = new Vector2(520f, 660f);
             window.Show();
         }
@@ -275,7 +275,7 @@ namespace Darkness.EditorTools
         {
             HandleShortcuts();
             EditorGUILayout.Space(8f);
-            EditorGUILayout.LabelField("Darkness Goblin — Human Motion Review", EditorStyles.boldLabel);
+            EditorGUILayout.LabelField("Darkness Candidate — Human Motion Review", EditorStyles.boldLabel);
             EditorGUILayout.LabelField(
                 _manifest == null ? "Portable candidate" : _manifest.display_name,
                 EditorStyles.miniLabel);
@@ -353,9 +353,9 @@ namespace Darkness.EditorTools
     }
 
     [InitializeOnLoad]
-    internal static class DarknessGoblinReviewStartup
+    internal static class DarknessCandidateReviewStartup
     {
-        static DarknessGoblinReviewStartup()
+        static DarknessCandidateReviewStartup()
         {
             EditorApplication.delayCall += OpenWhenPortableCandidateExists;
         }
@@ -370,7 +370,7 @@ namespace Darkness.EditorTools
 
             if (File.Exists(Path.Combine(package, "candidate_unit_manifest.json")))
             {
-                DarknessGoblinReviewWindow.ShowReview();
+                DarknessCandidateReviewWindow.ShowReview();
             }
         }
     }

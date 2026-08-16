@@ -35,7 +35,7 @@ def _default_machine_path() -> Path:
 
 def bundled_profiles_dir() -> Path:
     """Default profiles shipped inside the installed package (package data),
-    always present regardless of how asset-forge was installed."""
+    always present regardless of how vettedmesh was installed."""
     return Path(__file__).resolve().parent / "profiles"
 
 

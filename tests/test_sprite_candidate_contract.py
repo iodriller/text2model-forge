@@ -30,7 +30,7 @@ def test_sprite_render_config_contains_current_four_clip_checkpoint() -> None:
 
 def test_sword_attack_candidate_resolves_physical_side_and_builds_digit_grip_rig() -> None:
     source = (ROOT / "adapters/retarget_humanoid_motion.py").read_text(encoding="utf-8")
-    assert '"darkness.club.short_biped.v1"' in source
+    assert '"fixture.weapon.short_biped.v1"' in source
     assert '"articulated_digit_grip_v1"' in source
     assert '"source_weapon_bone": "hand_r"' in source
     assert '"bone": "hand_l"' in source

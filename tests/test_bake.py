@@ -40,6 +40,8 @@ class BakeScriptTests(unittest.TestCase):
         source = BAKE_SCRIPT.parent.parent.joinpath("assetforge", "bake.py").read_text(encoding="utf-8")
         self.assertIn('block.get("work_root")', source)
         self.assertIn('block.get("icons_output")', source)
+        self.assertIn('else work / "icons"', source)
+        self.assertNotIn("ember-defense", source.lower())
 
 
 if __name__ == "__main__":

@@ -101,7 +101,7 @@ def configure_scene(config):
         scene.render.line_thickness = float(config.get("outline_thickness", 0.72))
         line_set = scene.view_layers[0].freestyle_settings.linesets[0]
         if line_set.linestyle is None:
-            line_set.linestyle = bpy.data.linestyles.new("Asset Forge Outline")
+            line_set.linestyle = bpy.data.linestyles.new("VettedMesh Outline")
         line_style = line_set.linestyle
         line_style.color = (0.012, 0.016, 0.02)
         line_style.alpha = 0.92

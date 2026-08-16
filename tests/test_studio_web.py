@@ -123,6 +123,13 @@ def test_dashboard_and_new_asset_pages_render(studio):
     status, body, headers = _get(studio, "/")
     assert status == HTTPStatus.OK
     assert "Asset production runs" in body
+    assert 'href="/golden"' in body
+
+    status, body, _ = _get(studio, "/golden")
+    assert status == HTTPStatus.OK
+    assert "Live 8 GB static-prop qualification" in body
+    assert "0/10 attempted" in body
+    assert body.count("Start this case") == 10
 
     status, body, _ = _get(studio, "/new")
     assert status == HTTPStatus.OK
@@ -555,6 +562,12 @@ def test_a_completed_runs_final_evidence_is_reachable_from_its_stage_page(
             run = _wait_for_stage_settled(running.store, "chair-page-v1", "D10")
             assert run.stage("D10").state == "awaiting_review", run.stage("D10").error
 
+            assert any(item.relative_path.endswith(".glb") for item in run.stage("D2").evidence)
+            status, d2_body, _ = _get(running, "/run/chair-page-v1/stage/D2")
+            assert status == HTTPStatus.OK
+            assert "data-glb-src=" in d2_body
+            assert "Download original GLB" in d2_body
+
             status, body, _ = _get(running, "/run/chair-page-v1/stage/D10")
             assert status == HTTPStatus.OK
             assert "Open evidence" in body or "<img" in body
@@ -585,6 +598,19 @@ def test_static_studio_js_is_served_same_origin_under_the_existing_csp(studio):
     assert "location.reload" in body
     assert "X-Frame-Options" in headers
     assert "frame-ancestors 'none'" in headers["Content-Security-Policy"]
+
+
+def test_dependency_free_glb_viewer_is_served_same_origin(studio):
+    status, body, headers = _get(studio, "/static/glb-viewer.js")
+    assert status == HTTPStatus.OK
+    assert headers["Content-Type"].startswith("text/javascript")
+    assert "Only GLB 2.0 is supported" in body
+    assert "data-glb-src" in body
+
+    status, page, headers = _get(studio, "/")
+    assert status == HTTPStatus.OK
+    assert '<script src="/static/glb-viewer.js" defer>' in page
+    assert "default-src 'self'" in headers["Content-Security-Policy"]
 
 
 def test_run_page_embeds_the_polling_script_only_while_busy(studio):

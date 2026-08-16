@@ -153,7 +153,9 @@ def analyze_scene(*, include_face_indices: bool = False) -> dict[str, object]:
     }
 
 
-def voxel_remesh_to_manifold(*, voxel_fraction: float = 0.006) -> dict[str, object]:
+def voxel_remesh_to_manifold(
+    *, voxel_fraction: float = 0.006, target_faces: int = 0
+) -> dict[str, object]:
     """Rebuild every mesh as a guaranteed-manifold surface via OpenVDB.
 
     Why this exists. D3's repair toolkit is a *welder*: remove_doubles plus a
@@ -217,13 +219,47 @@ def voxel_remesh_to_manifold(*, voxel_fraction: float = 0.006) -> dict[str, obje
             obj.data.update()
         bm.free()
 
-    after = analyze_scene()
+    remeshed = analyze_scene()
+
+    # Decimate to a budget after remeshing, never instead of it.
+    #
+    # Voxel size and vertex count pull in opposite directions and both matter
+    # downstream. The voxel has to be finer than the smallest feature that
+    # must stay topologically separate -- fingers, or D7's grip builder finds
+    # a mitt -- but on a 1.97 m character a 5.4 mm voxel produced 668,406
+    # vertices, and Blender's bone-heat weighting then failed outright at D4:
+    # "failed to find solution for one or more bones", maximum_influences 0,
+    # every vertex unweighted. The same pipeline succeeded at 151k.
+    #
+    # Choosing one number cannot satisfy both. Remeshing fine and then
+    # collapsing to a budget satisfies both: topology is decided at the fine
+    # voxel, density is decided here, and surface detail lost to either is
+    # recovered at D8's texture bake. Collapse decimation preserves the
+    # manifoldness the remesh just established, which is re-measured below
+    # rather than assumed.
+    decimated = None
+    if target_faces > 0:
+        total_faces = int(remeshed.get("faces", 0))
+        if total_faces > target_faces:
+            ratio = max(0.02, min(1.0, target_faces / float(total_faces)))
+            for obj in _mesh_objects():
+                bpy.context.view_layer.objects.active = obj
+                modifier = obj.modifiers.new(name="darkness_decimate", type="DECIMATE")
+                modifier.decimate_type = "COLLAPSE"
+                modifier.ratio = ratio
+                modifier.use_collapse_triangulate = True
+                bpy.ops.object.modifier_apply(modifier=modifier.name)
+            decimated = analyze_scene()
+
+    after = decimated or remeshed
     return {
         "operation": "voxel_remesh_to_manifold",
         "voxel_fraction": voxel_fraction,
         "voxel_size": voxel_size,
         "longest_axis": longest,
+        "target_faces": target_faces,
         "before": before,
+        "after_remesh": remeshed,
         "after": after,
     }
 
@@ -848,7 +884,31 @@ def _run_short_biped_rig_probe(
         skinning_report["hard_failures"].append("rest_topology_changed")
     skinning_report["gate_passed"] = not skinning_report["hard_failures"]
     if not bool(skinning_report["gate_passed"]):
-        raise RuntimeError("short-biped skinning proposal failed its automatic gate")
+        # Write the report before raising, and name the cause in the message.
+        # Previously this raised a bare "failed its automatic gate": the
+        # report was only persisted further down on the success path, so a
+        # failure produced no artifact at all and the operator was told that
+        # something was wrong but not which of the four conditions, nor by how
+        # much. Both halves of that are diagnosability bugs -- the numbers
+        # exist at this point and simply were not surfaced.
+        _write_json(output_root / "skinning_report.json", skinning_report)
+        failures = ", ".join(str(item) for item in skinning_report["hard_failures"])
+        detail = {
+            key: skinning_report.get(key)
+            for key in (
+                "unweighted_vertices",
+                "minimum_influences",
+                "maximum_influences",
+                "maximum_weight_sum_error",
+                "method",
+            )
+            if key in skinning_report
+        }
+        raise RuntimeError(
+            f"short-biped skinning proposal failed its automatic gate: {failures}. {detail}. "
+            "Bone-heat weighting cannot solve geometry that sits far from every bone -- fused "
+            "equipment such as a held weapon is the usual cause on a generated mesh."
+        )
 
     _clear_pose(armature)
     neutral_renders = render_diagnostics(output_root, "rig_neutral", size=render_size)
@@ -2288,6 +2348,9 @@ def execute(request: dict[str, object]) -> tuple[list[dict[str, object]], dict[s
         if manifold_policy not in {"weld_only", "if_needed", "always"}:
             raise ValueError("manifold_policy must be 'weld_only', 'if_needed', or 'always'")
         voxel_fraction = float(parameters.get("voxel_fraction", 0.006))
+        voxel_target_faces = int(parameters.get("voxel_target_faces", 0))
+        if voxel_target_faces and not 1000 <= voxel_target_faces <= 5_000_000:
+            raise ValueError("voxel_target_faces must be between 1000 and 5,000,000")
         remesh_report: dict[str, object] | None = None
         if operation_id in {"blender.repair", "blender.export"} and manifold_policy != "weld_only":
             already_manifold = (
@@ -2295,7 +2358,9 @@ def execute(request: dict[str, object]) -> tuple[list[dict[str, object]], dict[s
                 and int(source_analysis.get("boundary_edges", 0)) == 0
             )
             if manifold_policy == "always" or not already_manifold:
-                remesh_report = voxel_remesh_to_manifold(voxel_fraction=voxel_fraction)
+                remesh_report = voxel_remesh_to_manifold(
+                    voxel_fraction=voxel_fraction, target_faces=voxel_target_faces
+                )
         if operation_id == "blender.repair_retopology":
             minimum_quad_fraction = float(parameters.get("minimum_quad_fraction", 0.99))
             maximum_removed_faces = int(parameters.get("maximum_removed_faces", 16))

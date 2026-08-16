@@ -2,13 +2,21 @@
 from __future__ import annotations
 
 import tomllib
+import os
 from pathlib import Path
+from vettedmesh_paths import source_checkout_root
 
 from .schemas import DarknessLocalConfig, WorkerBinding
 
 
 def default_config_path() -> Path:
-    return Path(__file__).resolve().parents[1] / "config.local.toml"
+    override = os.environ.get("VETTEDMESH_CONFIG", "").strip()
+    if override:
+        return Path(override).expanduser().resolve()
+    source = source_checkout_root()
+    if source is not None:
+        return source / "config.local.toml"
+    return Path.cwd() / "config.local.toml"
 
 
 def load_local_config(path: str | Path | None = None) -> DarknessLocalConfig | None:
