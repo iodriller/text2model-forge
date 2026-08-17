@@ -16,8 +16,11 @@ from text2model_forge.paths import resource_root
 from PIL import Image, ImageDraw, ImageFilter, ImageOps, ImageStat
 
 from .config import load_local_config, worker_binding
+from .concept_quality import assess_concept_image
 from .duplicate_detection import patch_already_present_elsewhere
 from .external_worker import SubprocessWorkerAdapter
+from .gpu import GpuLease, admit_gpu_memory, gpu_memory_snapshot, wait_for_free_vram
+from .hardware import reviewer_vram_requirement
 from .hashing import sha256_file
 from .manifests import load_manifests
 from .schemas import ArtifactLineage, ArtifactRecord, AssetStage, ExternalWorkerRequest
@@ -27,13 +30,16 @@ from .spec_conformance import (
     presence_check,
 )
 from .studio_comfy import (
+    StudioComfyError,
     StudioComfyClient,
     concept_workflow,
+    explicit_cpu_nodes,
     hunyuan3d_workflow,
     inpaint_workflow,
     make_chroma_alpha,
     make_humanoid_openpose_guide,
     qwen_image_2512_workflow,
+    z_image_turbo_workflow,
 )
 from .motion_library import load_motion_library, resolve_donor_motion_path
 from .settings import resolve_settings
@@ -321,6 +327,22 @@ def _whole_asset_prompt_guard(
     return guarded_positive, guarded_negative
 
 
+def _geometry_ready_backdrop_guard(positive: str, negative: str) -> tuple[str, str]:
+    """Request a background that can be removed deterministically before D2.
+
+    D1's hard gate measures the resulting alpha instead of trusting this text,
+    but every image backend must receive the same explicit production contract.
+    """
+    return (
+        positive
+        + " Isolated against one flat, evenly lit chroma-key green (#00ff00) background, "
+        "with a clean silhouette and no cast shadow.",
+        "complex background, scenery, floor line, horizon, cast shadow, green clothing, "
+        "green material, green reflections, "
+        + negative,
+    )
+
+
 def _image_board(records: list[tuple[str, Path]], output: Path, *, columns: int = 4) -> Path:
     if not records:
         raise ValueError("an evidence board requires at least one image")
@@ -370,7 +392,7 @@ def _rigid_structure_overlay(source: Path, plan, output: Path) -> Path:
 
 
 class _VramHandoff:
-    """Evict the other GPU service before each call, for small-VRAM machines.
+    """One fail-closed lease around every heavyweight HTTP inference call.
 
     The Studio already assumes one GPU-heavy stage at a time, and that is
     enough on a 24 GB card. It is not enough on 8 GB, because D1 alternates
@@ -381,48 +403,52 @@ class _VramHandoff:
     services returns ~7 GB, so the capacity is there -- it just has to be
     handed over rather than shared.
 
-    Both evictions are best-effort and deliberately never raise: a failed
-    free means the next call is slow, which is far better than failing a
-    stage that would otherwise have completed. Both are no-ops on a machine
-    with room, and the whole mechanism is off unless run.vram_handoff is set.
+    The old handoff swallowed unload errors and then launched anyway. That is
+    precisely how a nominally GPU run spills to CPU or OOMs. In a GPU-only
+    policy, unload, live-memory measurement, and workflow device validation
+    are admission conditions. ``prefer_gpu`` retains an explicit degraded
+    mode for machines without supported telemetry.
     """
+
+    _COMFY_REQUIRED_GB = {
+        "z_image_turbo": 6.5,
+        "qwen_image_2512": 6.5,
+        "qwen_image_edit_2511": 6.5,
+        "sdxl": 5.8,
+        "hunyuan3d": 6.0,
+    }
 
     @staticmethod
     def _free_comfy(comfy_url: str) -> None:
-        try:
-            request = urllib.request.Request(
-                comfy_url.rstrip("/") + "/free",
-                data=json.dumps({"unload_models": True, "free_memory": True}).encode("utf-8"),
-                headers={"Content-Type": "application/json"},
-                method="POST",
-            )
-            urllib.request.urlopen(request, timeout=20).close()
-        except Exception:
-            pass
+        request = urllib.request.Request(
+            comfy_url.rstrip("/") + "/free",
+            data=json.dumps({"unload_models": True, "free_memory": True}).encode("utf-8"),
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        urllib.request.urlopen(request, timeout=20).close()
 
     @staticmethod
     def _free_llm(localdeploy_url: str, model: str) -> None:
         # Ollama's own endpoint, not the OpenAI-compatible one: keep_alive=0
-        # is how a model is asked to unload immediately. On a non-Ollama
-        # endpoint this 404s harmlessly and the except below swallows it.
-        try:
-            root = localdeploy_url.rstrip("/")
-            if root.endswith("/v1"):
-                root = root[: -len("/v1")]
-            request = urllib.request.Request(
-                root + "/api/generate",
-                data=json.dumps({"model": model, "keep_alive": 0}).encode("utf-8"),
-                headers={"Content-Type": "application/json"},
-                method="POST",
-            )
-            urllib.request.urlopen(request, timeout=20).close()
-        except Exception:
-            pass
+        # is how a model is asked to unload immediately.
+        root = localdeploy_url.rstrip("/")
+        if root.endswith("/v1"):
+            root = root[: -len("/v1")]
+        request = urllib.request.Request(
+            root + "/api/generate",
+            data=json.dumps({"model": model, "keep_alive": 0}).encode("utf-8"),
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        urllib.request.urlopen(request, timeout=20).close()
 
     class _Proxy:
-        def __init__(self, inner: Any, before) -> None:
+        def __init__(self, inner: Any, run: StudioRun, lease_root: Path, service: str) -> None:
             self._inner = inner
-            self._before = before
+            self._run = run
+            self._lease_root = lease_root
+            self._service = service
 
         def __getattr__(self, name: str) -> Any:
             attribute = getattr(self._inner, name)
@@ -430,18 +456,82 @@ class _VramHandoff:
                 return attribute
 
             def wrapped(*args: Any, **kwargs: Any) -> Any:
-                self._before()
-                return attribute(*args, **kwargs)
+                heavyweight = self._service == "qwen" or name == "generate"
+                if not heavyweight:
+                    return attribute(*args, **kwargs)
+                workflow = kwargs.get("workflow") if self._service == "comfy" else None
+                if (
+                    self._run.device_policy in {"gpu_compute_only", "strict_device_only"}
+                    and isinstance(workflow, dict)
+                ):
+                    cpu_nodes = explicit_cpu_nodes(workflow)
+                    if cpu_nodes:
+                        raise RuntimeError(
+                            "GPU-compute-only policy rejected a ComfyUI workflow with explicit CPU "
+                            f"inference nodes: {cpu_nodes}"
+                        )
+                required = (
+                    reviewer_vram_requirement(self._run.model) or 4.0
+                    if self._service == "qwen"
+                    else _VramHandoff._comfy_required(self._run, workflow)
+                )
+                lease = GpuLease(
+                    self._lease_root,
+                    run_id=self._run.run_id,
+                    worker_id=f"studio.{self._service}",
+                )
+                lease.acquire(timeout_seconds=max(30, self._run.llm_timeout_seconds))
+                try:
+                    if self._run.vram_handoff:
+                        try:
+                            if self._service == "qwen":
+                                _VramHandoff._free_comfy(self._run.comfy_url)
+                            else:
+                                _VramHandoff._free_llm(self._run.localdeploy_url, self._run.model)
+                        except Exception:
+                            if self._run.device_policy != "prefer_gpu":
+                                raise
+                        if self._run.device_policy != "prefer_gpu":
+                            wait_for_free_vram(
+                                required,
+                                safety_margin_gb=self._run.gpu_safety_margin_gb,
+                                timeout_seconds=self._run.gpu_unload_timeout_seconds,
+                            )
+                    admit_gpu_memory(
+                        required,
+                        safety_margin_gb=self._run.gpu_safety_margin_gb,
+                        require_measurement=self._run.device_policy != "prefer_gpu",
+                    )
+                    return attribute(*args, **kwargs)
+                finally:
+                    lease.release()
 
             return wrapped
 
-    @classmethod
-    def wrap_qwen(cls, inner: Any, run: StudioRun) -> Any:
-        return cls._Proxy(inner, lambda: cls._free_comfy(run.comfy_url))
+    @staticmethod
+    def _comfy_required(run: StudioRun, workflow: Any) -> float:
+        if isinstance(workflow, dict):
+            if any(node.get("class_type") == "Hunyuan3Dv2Conditioning" for node in workflow.values()):
+                return _VramHandoff._COMFY_REQUIRED_GB["hunyuan3d"]
+            names = " ".join(
+                str(value)
+                for node in workflow.values()
+                for value in (node.get("inputs") or {}).values()
+                if isinstance(value, str)
+            ).lower()
+            if "z_image" in names:
+                return _VramHandoff._COMFY_REQUIRED_GB["z_image_turbo"]
+            if "qwen_image" in names:
+                return _VramHandoff._COMFY_REQUIRED_GB["qwen_image_2512"]
+        return _VramHandoff._COMFY_REQUIRED_GB.get(run.concept_backend, 6.0)
 
     @classmethod
-    def wrap_comfy(cls, inner: Any, run: StudioRun) -> Any:
-        return cls._Proxy(inner, lambda: cls._free_llm(run.localdeploy_url, run.model))
+    def wrap_qwen(cls, inner: Any, run: StudioRun, lease_root: Path) -> Any:
+        return cls._Proxy(inner, run, lease_root, "qwen")
+
+    @classmethod
+    def wrap_comfy(cls, inner: Any, run: StudioRun, lease_root: Path) -> Any:
+        return cls._Proxy(inner, run, lease_root, "comfy")
 
 
 class StudioCoordinator:
@@ -458,6 +548,8 @@ class StudioCoordinator:
         executor: ThreadPoolExecutor | None = None,
     ) -> None:
         self.store = store
+        real_qwen = qwen_factory is None
+        real_comfy = comfy_factory is None
         self._qwen_factory = qwen_factory or (
             lambda run: StudioQwen(
                 base_url=run.localdeploy_url,
@@ -472,11 +564,16 @@ class StudioCoordinator:
         # _VramHandoff: these wrappers evict the *other* service before each
         # call when run.vram_handoff is on.
         inner_qwen, inner_comfy = self._qwen_factory, self._comfy_factory
+        lease_root = self.store.workspace / "scheduler"
         self._qwen_factory = lambda run: (
-            _VramHandoff.wrap_qwen(inner_qwen(run), run) if run.vram_handoff else inner_qwen(run)
+            _VramHandoff.wrap_qwen(inner_qwen(run), run, lease_root)
+            if real_qwen and (run.vram_handoff or run.device_policy != "prefer_gpu")
+            else inner_qwen(run)
         )
         self._comfy_factory = lambda run: (
-            _VramHandoff.wrap_comfy(inner_comfy(run), run) if run.vram_handoff else inner_comfy(run)
+            _VramHandoff.wrap_comfy(inner_comfy(run), run, lease_root)
+            if real_comfy and (run.vram_handoff or run.device_policy != "prefer_gpu")
+            else inner_comfy(run)
         )
         # D2-D5/D9's typed subprocess worker protocol (blender, trellis2.4b, ...),
         # injectable the same way qwen_factory/comfy_factory are. None (the
@@ -491,6 +588,12 @@ class StudioCoordinator:
         # protocol. None means the real subprocess.run. A test supplies a
         # callable(command, *, timeout) -> CompletedProcess-like.
         self._script_runner = script_runner
+        # Deterministic provider tests must not depend on, or pay subprocess
+        # latency for, the host's GPU tools. Production coordinators use the
+        # real service factories and sample at most once per polling interval.
+        self._telemetry_enabled = real_qwen or real_comfy
+        self._last_gpu_snapshot: dict[str, Any] | None = None
+        self._last_gpu_snapshot_at = 0.0
         self._executor = executor or ThreadPoolExecutor(max_workers=1, thread_name_prefix="text2model-studio")
         self._owns_executor = executor is None
         self._lock = threading.Lock()
@@ -687,42 +790,47 @@ class StudioCoordinator:
                 stage = self._next_stage(run)
                 if stage is None:
                     return
-                if stage.stage_id == "D0":
-                    self._run_d0(run)
-                elif stage.stage_id == "D1":
-                    self._run_d1(run)
-                elif stage.stage_id == "D2":
-                    self._run_d2(run)
-                elif stage.stage_id == "D3":
-                    self._run_d3(run)
-                elif stage.stage_id == "D4":
-                    self._run_d4(run)
-                elif stage.stage_id == "D5":
-                    self._run_d5(run)
-                elif stage.stage_id == "D6":
-                    self._run_d6(run)
-                elif stage.stage_id == "D7":
-                    self._run_d7(run)
-                elif stage.stage_id == "D8":
-                    self._run_d8(run)
-                elif stage.stage_id == "D9":
-                    self._run_d9(run)
-                elif stage.stage_id == "D10":
-                    self._run_d10(run)
-                else:
-                    stage.state = "blocked"
-                    stage.message = (
-                        "The Studio control contract is ready, but this production adapter has not yet been "
-                        "connected to the generic character/equipment pipeline."
-                    )
-                    run.state = "blocked"
-                    run.current_stage = stage.stage_id
-                    self.store.event(
-                        run,
-                        "stage_blocked",
-                        {"stage_id": stage.stage_id, "reason": stage.message},
-                    )
-                    return
+                try:
+                    if stage.stage_id == "D0":
+                        self._run_d0(run)
+                    elif stage.stage_id == "D1":
+                        self._run_d1(run)
+                    elif stage.stage_id == "D2":
+                        self._run_d2(run)
+                    elif stage.stage_id == "D3":
+                        self._run_d3(run)
+                    elif stage.stage_id == "D4":
+                        self._run_d4(run)
+                    elif stage.stage_id == "D5":
+                        self._run_d5(run)
+                    elif stage.stage_id == "D6":
+                        self._run_d6(run)
+                    elif stage.stage_id == "D7":
+                        self._run_d7(run)
+                    elif stage.stage_id == "D8":
+                        self._run_d8(run)
+                    elif stage.stage_id == "D9":
+                        self._run_d9(run)
+                    elif stage.stage_id == "D10":
+                        self._run_d10(run)
+                    else:
+                        stage.state = "blocked"
+                        stage.message = (
+                            "The Studio control contract is ready, but this production adapter has not yet been "
+                            "connected to the generic character/equipment pipeline."
+                        )
+                        run.state = "blocked"
+                        run.current_stage = stage.stage_id
+                        self.store.event(
+                            run,
+                            "stage_blocked",
+                            {"stage_id": stage.stage_id, "reason": stage.message},
+                        )
+                        return
+                except Exception as exc:
+                    if self._schedule_automatic_retry(run_id, exc):
+                        continue
+                    raise
                 if self._was_stopped(run_id):
                     self._mark_stopped(run_id)
                     return
@@ -747,6 +855,81 @@ class StudioCoordinator:
         finally:
             self._clear_comfy(run_id)
             self._clear_stop(run_id)
+
+    def _schedule_automatic_retry(self, run_id: str, error: Exception) -> bool:
+        """Retry only transient failures or OOMs with a changed memory plan."""
+
+        run = self.store.load(run_id)
+        stage = run.stage(run.current_stage)
+        if stage.retry_attempt >= run.automatic_retry_limit:
+            return False
+        detail = f"{type(error).__name__}: {error}"
+        lowered = detail.lower()
+        out_of_memory = any(
+            token in lowered
+            for token in (
+                "out of memory",
+                "cuda oom",
+                "cudnn_status_alloc_failed",
+                "memory admission denied",
+                "gpu admission denied",
+            )
+        )
+        transient = isinstance(error, StudioComfyError) and any(
+            token in lowered for token in ("timed out", "urlerror", "connection", "temporarily", "reset")
+        )
+        if not out_of_memory and not transient:
+            return False
+        overrides: dict[str, Any] = {}
+        if out_of_memory:
+            retry_number = stage.retry_attempt + 1
+            if stage.stage_id == "D1":
+                scale = 0.8**retry_number
+                overrides = {
+                    "concept_width": max(512, int(run.concept_width * scale) // 64 * 64),
+                    "concept_height": max(640, int(run.concept_height * scale) // 64 * 64),
+                    "concept_candidates": max(2, run.concept_candidates - retry_number),
+                }
+            elif stage.stage_id == "D2":
+                current = self._stage_settings(run, "D2")
+                overrides = {
+                    "octree_resolution": max(
+                        128,
+                        int(current.get("octree_resolution", 256)) // (2**retry_number),
+                    ),
+                    "steps": max(12, int(current.get("steps", 20)) - 4 * retry_number),
+                }
+            elif stage.stage_id in {"D3", "D4", "D9"}:
+                current = self._stage_settings(run, stage.stage_id)
+                overrides = {
+                    "render_size": max(
+                        128,
+                        int(current.get("render_size", 512)) // (2**retry_number),
+                    )
+                }
+            else:
+                return False
+        stage.retry_attempt += 1
+        stage.retry_reason = detail
+        stage.pending_overrides = overrides
+        stage.state = "failed"
+        stage.error = detail
+        stage.message = (
+            f"Automatic retry {stage.retry_attempt} of {run.automatic_retry_limit} scheduled"
+            + (" with a smaller memory plan." if overrides else " after a transient service failure.")
+        )
+        run.state = "running"
+        self.store.event(
+            run,
+            "automatic_retry_scheduled",
+            {
+                "stage_id": stage.stage_id,
+                "attempt": stage.retry_attempt,
+                "reason": detail,
+                "changed_parameters": overrides,
+            },
+        )
+        return True
 
     @staticmethod
     def _next_stage(run: StudioRun):
@@ -778,6 +961,10 @@ class StudioCoordinator:
         )
         stage.state = "running"
         stage.progress = 0.01
+        stage.progress_phase = "starting"
+        stage.progress_current = 0
+        stage.progress_total = 0
+        stage.progress_unit = ""
         if not retrying_pre_output_failure:
             stage.iteration += 1
         stage.started_at = utc_now()
@@ -801,10 +988,41 @@ class StudioCoordinator:
             )
         return overrides
 
-    def _progress(self, run: StudioRun, stage_id: str, value: float, message: str) -> None:
+    def _progress(
+        self,
+        run: StudioRun,
+        stage_id: str,
+        value: float,
+        message: str,
+        *,
+        phase: str | None = None,
+        current: int | None = None,
+        total: int | None = None,
+        unit: str | None = None,
+    ) -> None:
         stage = run.stage(stage_id)
         stage.progress = value
         stage.message = message
+        if phase is not None:
+            stage.progress_phase = phase
+        if current is not None:
+            stage.progress_current = current
+        if total is not None:
+            stage.progress_total = total
+        if unit is not None:
+            stage.progress_unit = unit
+        snapshot = self._last_gpu_snapshot
+        if self._telemetry_enabled and time.monotonic() - self._last_gpu_snapshot_at >= 0.75:
+            snapshot = gpu_memory_snapshot()
+            self._last_gpu_snapshot = snapshot
+            self._last_gpu_snapshot_at = time.monotonic()
+        device = ((snapshot or {}).get("device") or {})
+        if isinstance(device.get("used_gb"), (int, float)):
+            stage.gpu_used_gb = float(device["used_gb"])
+        if isinstance(device.get("free_gb"), (int, float)):
+            stage.gpu_free_gb = float(device["free_gb"])
+        if isinstance(device.get("total_gb"), (int, float)):
+            stage.gpu_total_gb = float(device["total_gb"])
         self.store.save(run)
 
     def _run_manual_qwen_image(self, run_id: str, human_prompt: str, seed: int | None) -> None:
@@ -844,6 +1062,10 @@ class StudioCoordinator:
                 ),
                 defer_shield=False,
             )
+            direct_positive, direct_negative = _geometry_ready_backdrop_guard(
+                direct_positive,
+                direct_negative,
+            )
             # ConceptPlan gives the existing Qwen prompt rewriter the same
             # typed contract as a pipeline-authored candidate.  Pad terse but
             # valid human prompts with neutral rendering requirements rather
@@ -872,6 +1094,10 @@ class StudioCoordinator:
                     )
                     effective_prompt = instruction.prompt
                     effective_negative = instruction.negative_prompt
+                    effective_prompt, effective_negative = _geometry_ready_backdrop_guard(
+                        effective_prompt,
+                        effective_negative,
+                    )
                 except Exception as exc:
                     instruction_error = f"{type(exc).__name__}: {exc}"
 
@@ -956,6 +1182,9 @@ class StudioCoordinator:
                     negative_prompt=effective_negative,
                     seed=actual_seed,
                     prefix=f"Text2ModelStudio/{run.run_id}/manual/i{iteration:02d}",
+                    width=run.concept_width,
+                    height=run.concept_height,
+                    tiled_vae=run.vae_tiling,
                 ),
                 destination=attempt_root / "candidate-1",
                 timeout_seconds=1200,
@@ -967,17 +1196,56 @@ class StudioCoordinator:
                 raise RuntimeError("Qwen Image 2512 returned no output image")
             image = outputs[0]
             evidence_id = f"d1-i{iteration:02d}-candidate-qwen-image-2512-manual-01"
+            alpha_preview = attempt_root / "candidate-1" / "geometry_ready_rgba.png"
+            alpha_error = ""
+            try:
+                alpha_metrics = make_chroma_alpha(image, alpha_preview)
+            except Exception as exc:
+                alpha_metrics = {"meaningful_alpha": False}
+                alpha_error = f"{type(exc).__name__}: {exc}"
+                alpha_preview = None
+            quality = assess_concept_image(
+                image,
+                alpha_preview,
+                minimum_score=run.concept_min_quality_score,
+            )
+            equipment = (
+                check_equipment_conformance(qwen, image, run.spec)
+                if callable(getattr(qwen, "visual_presence", None))
+                else EquipmentConformanceReport(conforms=True)
+            )
+            if alpha_preview is not None:
+                self.store.evidence(
+                    run,
+                    "D1",
+                    alpha_preview,
+                    evidence_id=f"{evidence_id}-geometry-ready-alpha",
+                    label="Deterministic geometry-ready alpha for your candidate",
+                    media_type="image/png",
+                    metrics={
+                        **alpha_metrics,
+                        "iteration": iteration,
+                        "selectable": False,
+                        "role": "geometry_ready_alpha",
+                        "source_evidence_id": evidence_id,
+                    },
+                )
             metrics = _image_metrics(image)
             metrics.update(
                 {
                     "seed": actual_seed,
                     "iteration": iteration,
-                    "selectable": True,
+                    "selectable": equipment.conforms and quality.hard_requirements_satisfied,
                     "operation_id": "human_direct_qwen_image_prompt",
                     "workflow_strategy": "qwen_image_2512_manual_prompt_v1",
                     "concept_backend": "qwen_image_2512",
                     "human_prompt": True,
                     "qwen_prompt_rewritten": instruction is not None,
+                    "equipment_conformance_ok": equipment.conforms,
+                    "equipment_conformance_violations": "; ".join(equipment.violations),
+                    **quality.metrics,
+                    "quality_reasons": "; ".join(quality.reasons),
+                    "alpha_error": alpha_error,
                 }
             )
             self.store.evidence(
@@ -1278,6 +1546,17 @@ class StudioCoordinator:
             validate_stage_overrides(stage_overrides)
             other = next((item for item in plan.seeds if item != pinned_seed), pinned_seed + 1)
             plan.seeds = [pinned_seed, other]
+        candidate_budget = int(stage_overrides.get("concept_candidates", run.concept_candidates))
+        concept_width = int(stage_overrides.get("concept_width", run.concept_width))
+        concept_height = int(stage_overrides.get("concept_height", run.concept_height))
+        candidate_seeds = list(plan.seeds)
+        while len(candidate_seeds) < candidate_budget:
+            # Golden-ratio Weyl sequence: deterministic, non-repeating within
+            # this bounded list, and far enough apart to avoid adjacent-seed
+            # correlation without asking the small planner for a larger JSON.
+            candidate = (candidate_seeds[-1] + 0x9E3779B97F4A7C15) % (2**63 - 1)
+            if candidate not in candidate_seeds:
+                candidate_seeds.append(candidate)
         attempt_root = self.store.run_root(run.run_id) / "D1_concept" / f"iteration-{stage.iteration:02d}"
         _write_json(
             attempt_root / "qwen_plan.json",
@@ -1310,21 +1589,54 @@ class StudioCoordinator:
                 "Qwen Image 2512 was selected for concept generation but its required ComfyUI model files are missing. "
                 "Run resources/adapters/install_qwen_image_edit_models.py --profile image-2512 or select the SDXL backend."
             )
-        use_qwen_image_generation = qwen_image_2512_models_ready and run.concept_backend in {
+        z_image_turbo_models_ready = all(
+            required in models
+            for required, models in (
+                ("z_image_turbo_int8_convrot.safetensors", installed_diffusion_models),
+                ("qwen_3_4b_fp8_mixed.safetensors", installed_text_encoders),
+                ("ae.safetensors", installed_vaes),
+            )
+        )
+        if run.concept_backend == "z_image_turbo" and not z_image_turbo_models_ready:
+            raise RuntimeError(
+                "Z-Image Turbo was selected for concept generation but its required ComfyUI model files are missing. "
+                "Run resources/adapters/install_qwen_image_edit_models.py --profile z-image-turbo or select another backend."
+            )
+        # "auto" prefers Z-Image Turbo over Qwen-Image-2512 when both are
+        # installed. Measured on an 8 GB card, one 768x1024 candidate costs
+        # ~48 s on Z-Image against ~605 s on Qwen, for output in the same
+        # stylistic family with the same equipment fidelity. Qwen is the
+        # better single image and stays selectable for that -- but D1 renders
+        # `concept_candidates` per iteration and re-renders the whole set on
+        # every rejection, so Qwen as the unattended default turns a
+        # minutes-long stage into an hours-long one. A default should be the
+        # choice a person would make without thinking; this is that choice.
+        use_z_image_generation = z_image_turbo_models_ready and run.concept_backend in {
             "auto",
-            "qwen_image_2512",
-            # Legacy persisted value: D1 now uses the proper generator model.
-            "qwen_image_edit_2511",
+            "z_image_turbo",
         }
-        if not use_qwen_image_generation and run.checkpoint not in comfy.checkpoints():
+        use_qwen_image_generation = (
+            qwen_image_2512_models_ready
+            and run.concept_backend in {
+                "auto",
+                "qwen_image_2512",
+                # Legacy persisted value: D1 now uses the proper generator model.
+                "qwen_image_edit_2511",
+            }
+            and not use_z_image_generation
+        )
+        use_generator_model = use_qwen_image_generation or use_z_image_generation
+        if not use_generator_model and run.checkpoint not in comfy.checkpoints():
             raise RuntimeError(f"required ComfyUI checkpoint is not installed: {run.checkpoint}")
-        pose_guided = not use_qwen_image_generation and run.spec.anatomy_family == "humanoid" and (
+        pose_guided = not use_generator_model and run.spec.anatomy_family == "humanoid" and (
             correction is None or correction.operation_id == "regenerate_complete_asset"
         )
         deferred_shield = _deferred_shield_equipment(run.spec) if pose_guided else None
         workflow_strategy = (
             "qwen_image_2512_t2i_v1"
             if use_qwen_image_generation
+            else "z_image_turbo_t2i_v1"
+            if use_z_image_generation
             else "pose_guided_lora_v3"
             if pose_guided
             else "local_crop_inpaint_v2"
@@ -1337,7 +1649,11 @@ class StudioCoordinator:
             run.spec,
             plan.positive_prompt,
             plan.negative_prompt,
-            defer_shield=not use_qwen_image_generation,
+            defer_shield=not use_generator_model,
+        )
+        effective_positive, effective_negative = _geometry_ready_backdrop_guard(
+            effective_positive,
+            effective_negative,
         )
         applied_loras: list[tuple[str, float]] = [
             (name, strength)
@@ -1345,16 +1661,20 @@ class StudioCoordinator:
                 (run.style_lora, run.style_lora_strength),
                 (run.prop_lora, run.prop_lora_strength),
             )
-            if not use_qwen_image_generation and name and name in installed_loras
+            if not use_generator_model and name and name in installed_loras
         ]
         lora_trigger_words = ", ".join(
             trigger
             for name, trigger in ((run.style_lora, run.style_lora_trigger),)
-            if not use_qwen_image_generation and trigger and name and name in installed_loras
+            if not use_generator_model and trigger and name and name in installed_loras
         )
         if lora_trigger_words:
             effective_positive = f"{lora_trigger_words}, {effective_positive}"
         plain_positive = f"{lora_trigger_words}, {plan.positive_prompt}" if lora_trigger_words else plan.positive_prompt
+        plain_positive, plain_negative = _geometry_ready_backdrop_guard(
+            plain_positive,
+            plan.negative_prompt,
+        )
         if pose_guided:
             pose_path = make_humanoid_openpose_guide(attempt_root / "layout_guides")
             pose_model = next(
@@ -1403,6 +1723,10 @@ class StudioCoordinator:
                     )
                     qwen_edit_prompt = qwen_edit_instruction.prompt
                     qwen_edit_negative = qwen_edit_instruction.negative_prompt
+                    qwen_edit_prompt, qwen_edit_negative = _geometry_ready_backdrop_guard(
+                        qwen_edit_prompt,
+                        qwen_edit_negative,
+                    )
                     instruction_path = attempt_root / "qwen_image_edit_instruction.json"
                     _write_json(instruction_path, qwen_edit_instruction.model_dump(mode="json"))
                     self.store.evidence(
@@ -1427,7 +1751,11 @@ class StudioCoordinator:
             {
                 "schema_version": 1,
                 "strategy": workflow_strategy,
-                "concept_backend": "qwen_image_2512" if use_qwen_image_generation else "sdxl",
+                "concept_backend": (
+                    "qwen_image_2512" if use_qwen_image_generation
+                    else "z_image_turbo" if use_z_image_generation
+                    else "sdxl"
+                ),
                 "checkpoint": run.checkpoint,
                 "qwen_image_models_ready": qwen_image_2512_models_ready,
                 "qwen_diffusion_model": "qwen_image_2512_fp8_e4m3fn.safetensors" if use_qwen_image_generation else None,
@@ -1435,6 +1763,10 @@ class StudioCoordinator:
                 "qwen_vae": "qwen_image_vae.safetensors" if use_qwen_image_generation else None,
                 "qwen_prompt_rewritten": qwen_edit_instruction is not None,
                 "qwen_prompt_rewrite_error": qwen_instruction_error or None,
+                "z_image_turbo_models_ready": z_image_turbo_models_ready,
+                "z_image_diffusion_model": "z_image_turbo_int8_convrot.safetensors" if use_z_image_generation else None,
+                "z_image_text_encoder": "qwen_3_4b_fp8_mixed.safetensors" if use_z_image_generation else None,
+                "z_image_vae": "ae.safetensors" if use_z_image_generation else None,
                 "installed_controlnets": installed_controlnets,
                 "applied_controlnets": guide_models,
                 "installed_loras": installed_loras,
@@ -1444,8 +1776,23 @@ class StudioCoordinator:
                 "ordinary_checkpoint_inpaint_encoder": "VAEEncodeForInpaint",
                 "whole_asset_prompt_guard": run.spec.asset_kind == "character",
                 "lora_trigger_words": lora_trigger_words,
-                "effective_positive_prompt": qwen_edit_prompt if use_qwen_image_generation else (effective_positive if pose_guided else plain_positive),
-                "effective_negative_prompt": qwen_edit_negative if use_qwen_image_generation else (effective_negative if pose_guided else plan.negative_prompt),
+                "device_policy": run.device_policy,
+                "candidate_budget": candidate_budget,
+                "concept_width": concept_width,
+                "concept_height": concept_height,
+                "tiled_vae": run.vae_tiling,
+                "effective_positive_prompt": (
+                    qwen_edit_prompt if use_qwen_image_generation
+                    else plain_positive if use_z_image_generation
+                    else effective_positive if pose_guided
+                    else plain_positive
+                ),
+                "effective_negative_prompt": (
+                    qwen_edit_negative if use_qwen_image_generation
+                    else plain_negative if use_z_image_generation
+                    else effective_negative if pose_guided
+                    else plain_negative
+                ),
             },
         )
         self.store.evidence(
@@ -1468,7 +1815,7 @@ class StudioCoordinator:
         correction_source: Path | None = None
         correction_mask: Path | None = None
         correction_crop_box: tuple[int, int, int, int] | None = None
-        if correction and not use_qwen_image_generation and correction.operation_id != "regenerate_complete_asset":
+        if correction and not use_generator_model and correction.operation_id != "regenerate_complete_asset":
             source_item = next(
                 (item for item in stage.evidence if item.evidence_id == correction.base_evidence_id),
                 None,
@@ -1516,13 +1863,17 @@ class StudioCoordinator:
         # AttributeError deep inside a stage that a hundred other tests drive
         # through without caring about this specific mechanism.
         qwen_supports_vision_presence = callable(getattr(qwen, "visual_presence", None))
-        for index, seed in enumerate(plan.seeds, start=1):
+        for index, seed in enumerate(candidate_seeds, start=1):
             evidence_id = f"d1-i{stage.iteration:02d}-candidate-{index}"
             self._progress(
                 run,
                 "D1",
-                0.15 + (index - 1) * 0.32,
-                f"ComfyUI is rendering concept {index} of {len(plan.seeds)} (seed {seed}).",
+                0.15 + (index - 1) * (0.58 / max(1, len(candidate_seeds))),
+                f"ComfyUI is rendering concept {index} of {len(candidate_seeds)} (seed {seed}).",
+                phase="concept_generation",
+                current=index,
+                total=len(candidate_seeds),
+                unit="candidates",
             )
             if use_qwen_image_generation:
                 workflow = qwen_image_2512_workflow(
@@ -1530,6 +1881,19 @@ class StudioCoordinator:
                     negative_prompt=qwen_edit_negative,
                     seed=seed,
                     prefix=f"Text2ModelStudio/{run.run_id}/concept/i{stage.iteration:02d}_{index}",
+                    width=concept_width,
+                    height=concept_height,
+                    tiled_vae=run.vae_tiling,
+                )
+            elif use_z_image_generation:
+                workflow = z_image_turbo_workflow(
+                    prompt=plain_positive,
+                    negative_prompt=plain_negative,
+                    seed=seed,
+                    prefix=f"Text2ModelStudio/{run.run_id}/concept/i{stage.iteration:02d}_{index}",
+                    width=concept_width,
+                    height=concept_height,
+                    tiled_vae=run.vae_tiling,
                 )
             elif (
                 correction
@@ -1540,25 +1904,29 @@ class StudioCoordinator:
                 workflow = inpaint_workflow(
                     checkpoint=run.checkpoint,
                     positive=plain_positive,
-                    negative=plan.negative_prompt,
+                    negative=plain_negative,
                     seed=seed,
                     prefix=f"Text2ModelStudio/{run.run_id}/concept/i{stage.iteration:02d}_{index}",
                     source_image=source_upload,
                     mask_image=mask_upload,
                     denoise=correction.denoise,
                     loras=applied_loras,
+                    tiled_vae=run.vae_tiling,
                 )
             else:
                 workflow = concept_workflow(
                     checkpoint=run.checkpoint,
                     positive=effective_positive if pose_guided else plain_positive,
-                    negative=effective_negative if pose_guided else plan.negative_prompt,
+                    negative=effective_negative if pose_guided else plain_negative,
                     seed=seed,
                     prefix=f"Text2ModelStudio/{run.run_id}/concept/i{stage.iteration:02d}_{index}",
                     loras=applied_loras,
                     control_guides=control_guides,
                     steps=run.concept_steps,
                     cfg=run.concept_cfg,
+                    width=concept_width,
+                    height=concept_height,
+                    tiled_vae=run.vae_tiling,
                 )
             outputs = comfy.generate(
                 workflow=workflow,
@@ -1576,7 +1944,7 @@ class StudioCoordinator:
             shield_repaired = False
             shield_repair_skipped_reason = ""
             shield_duplicate_risk_similarity: float | None = None
-            if not use_qwen_image_generation and deferred_shield is not None and not (
+            if not use_generator_model and deferred_shield is not None and not (
                 correction and correction.operation_id != "regenerate_complete_asset"
             ):
                 shield_dir = attempt_root / f"candidate-{index}" / "shield_repair"
@@ -1625,6 +1993,7 @@ class StudioCoordinator:
                         mask_image=shield_mask_upload,
                         denoise=0.75,
                         loras=applied_loras,
+                        tiled_vae=run.vae_tiling,
                     )
                     shield_generated = comfy.generate(
                         workflow=shield_workflow,
@@ -1668,6 +2037,60 @@ class StudioCoordinator:
                     media_type="application/json",
                     metrics={"iteration": stage.iteration, "selectable": False},
                 )
+            alpha_preview = attempt_root / f"candidate-{index}" / "geometry_ready_rgba.png"
+            alpha_error = ""
+            try:
+                alpha_metrics = make_chroma_alpha(image, alpha_preview)
+            except Exception as exc:
+                alpha_metrics = {"meaningful_alpha": False}
+                alpha_error = f"{type(exc).__name__}: {exc}"
+                alpha_preview = None
+            quality = assess_concept_image(
+                image,
+                alpha_preview,
+                minimum_score=run.concept_min_quality_score,
+            )
+            if alpha_preview is not None:
+                self.store.evidence(
+                    run,
+                    "D1",
+                    alpha_preview,
+                    evidence_id=f"{evidence_id}-geometry-ready-alpha",
+                    label=f"Deterministic geometry-ready alpha, candidate {index}",
+                    media_type="image/png",
+                    metrics={
+                        **alpha_metrics,
+                        "iteration": stage.iteration,
+                        "selectable": False,
+                        "role": "geometry_ready_alpha",
+                        "source_evidence_id": evidence_id,
+                    },
+                )
+            quality_path = attempt_root / f"candidate-{index}" / "concept_quality.json"
+            _write_json(
+                quality_path,
+                {
+                    **quality.model_dump(mode="json"),
+                    "alpha_error": alpha_error or None,
+                    "equipment_conforms": equipment_conformance.conforms,
+                    "equipment_violations": equipment_conformance.violations,
+                },
+            )
+            self.store.evidence(
+                run,
+                "D1",
+                quality_path,
+                evidence_id=f"{evidence_id}-quality",
+                label=f"Deterministic concept quality assessment, candidate {index}",
+                media_type="application/json",
+                metrics={
+                    "iteration": stage.iteration,
+                    "selectable": False,
+                    "role": "concept_quality",
+                    "quality_score": quality.score,
+                    "quality_gate_passed": quality.hard_requirements_satisfied,
+                },
+            )
             metrics = _image_metrics(image)
             metrics.update(
                 {
@@ -1681,11 +2104,17 @@ class StudioCoordinator:
                     # counting -- see spec_conformance.py's module docstring)
                     # remains the only thing standing between a duplicated
                     # candidate and approval.
-                    "selectable": equipment_conformance.conforms,
+                    "selectable": (
+                        equipment_conformance.conforms and quality.hard_requirements_satisfied
+                    ),
                     "operation_id": correction.operation_id if correction else "regenerate_complete_asset",
                     "base_evidence_id": correction.base_evidence_id if correction else "",
                     "workflow_strategy": workflow_strategy,
-                    "concept_backend": "qwen_image_2512" if use_qwen_image_generation else "sdxl",
+                    "concept_backend": (
+                        "qwen_image_2512" if use_qwen_image_generation
+                        else "z_image_turbo" if use_z_image_generation
+                        else "sdxl"
+                    ),
                     "controlnet_count": len(control_guides),
                     "lora_count": len(applied_loras),
                     "local_high_resolution_crop": correction_crop_box is not None,
@@ -1694,6 +2123,9 @@ class StudioCoordinator:
                     "shield_repair_duplicate_risk_similarity": shield_duplicate_risk_similarity,
                     "equipment_conformance_ok": equipment_conformance.conforms,
                     "equipment_conformance_violations": "; ".join(equipment_conformance.violations),
+                    **quality.metrics,
+                    "quality_reasons": "; ".join(quality.reasons),
+                    "alpha_error": alpha_error,
                 }
             )
             self.store.evidence(
@@ -1706,11 +2138,23 @@ class StudioCoordinator:
                 metrics=metrics,
             )
             candidates.append((evidence_id, image, metrics))
+        ranked_candidates = sorted(
+            candidates,
+            key=lambda item: (
+                item[2].get("selectable") is True,
+                float(item[2].get("quality_score", 0.0)),
+            ),
+            reverse=True,
+        )
+        board_candidates = ranked_candidates[: run.concept_review_limit]
+        review_candidates = [
+            item for item in ranked_candidates if item[2].get("selectable") is True
+        ][: run.concept_review_limit]
         comparison_board = _concept_comparison_board(
             self.store,
             run,
             stage,
-            candidates,
+            board_candidates,
             attempt_root / "previous_vs_current.png",
         )
         self.store.evidence(
@@ -1722,31 +2166,58 @@ class StudioCoordinator:
             media_type="image/png",
             metrics={"iteration": stage.iteration, "selectable": False},
         )
-        self._progress(run, "D1", 0.82, "Qwen critic is reading the labeled rejection-versus-current evidence board.")
-        try:
-            review = qwen.review_concepts(
-                run.spec,
-                stage,
-                candidates,
-                comparison_board=comparison_board,
-            )
-        except Exception as exc:
+        self._progress(
+            run,
+            "D1",
+            0.82,
+            "Qwen critic is reading the deterministically pre-ranked evidence board.",
+            phase="semantic_review",
+            current=len(review_candidates),
+            total=len(candidates),
+            unit="ranked candidates",
+        )
+        if not review_candidates:
             review = StudioQwenReview(
-                review_id=f"d1.qwen.unavailable-{stage.iteration:02d}",
+                review_id=f"d1.deterministic-reject-{stage.iteration:02d}",
                 stage_id="D1",
                 iteration=stage.iteration,
                 summary=(
-                    "The Qwen critic did not finish inside the bounded review window. The generated images are "
-                    "available now; no candidate is automatically recommended."
+                    "No concept reached semantic review because every candidate failed a deterministic "
+                    "production gate. The images remain visible as non-approvable evidence."
                 ),
-                issues=[f"Qwen critic error: {type(exc).__name__}: {exc}"],
-                candidate_ranking=[item[0] for item in candidates],
+                issues=["all candidates failed deterministic production gates"],
+                candidate_ranking=[],
                 recommended_evidence_id=None,
-                recommended_changes=["Use the human decision as the next optimizer instruction."],
-                confidence=0.0,
+                recommended_changes=["Correct the recorded alpha, framing, or equipment failures and retry."],
+                confidence=1.0,
                 hard_requirements_satisfied=False,
-                request_human_review=True,
+                request_human_review=stage.iteration >= 6,
             )
+        else:
+            try:
+                review = qwen.review_concepts(
+                    run.spec,
+                    stage,
+                    review_candidates,
+                    comparison_board=comparison_board,
+                )
+            except Exception as exc:
+                review = StudioQwenReview(
+                    review_id=f"d1.qwen.unavailable-{stage.iteration:02d}",
+                    stage_id="D1",
+                    iteration=stage.iteration,
+                    summary=(
+                        "The Qwen critic did not finish inside the bounded review window. The generated images are "
+                        "available now; no candidate is automatically recommended."
+                    ),
+                    issues=[f"Qwen critic error: {type(exc).__name__}: {exc}"],
+                    candidate_ranking=[item[0] for item in review_candidates],
+                    recommended_evidence_id=None,
+                    recommended_changes=["Use the human decision as the next optimizer instruction."],
+                    confidence=0.0,
+                    hard_requirements_satisfied=False,
+                    request_human_review=True,
+                )
         stage.qwen_reviews.append(review)
         review_path = attempt_root / "qwen_review.json"
         _write_json(review_path, review.model_dump(mode="json"))
@@ -1762,6 +2233,14 @@ class StudioCoordinator:
         stage.metrics = {
             "iteration": stage.iteration,
             "candidate_count": len(candidates),
+            "selectable_candidate_count": sum(
+                item[2].get("selectable") is True for item in candidates
+            ),
+            "best_deterministic_quality_score": max(
+                (float(item[2].get("quality_score", 0.0)) for item in candidates),
+                default=0.0,
+            ),
+            "review_candidate_count": len(review_candidates),
             "qwen_confidence": review.confidence,
             "recommended_evidence_id": review.recommended_evidence_id or "",
             "hard_requirements_satisfied": review.hard_requirements_satisfied,
@@ -1772,16 +2251,18 @@ class StudioCoordinator:
         stage.progress = 1
         stage.finished_at = utc_now()
         automatically_retry = (
-            is_rejected_retry
-            and not review.hard_requirements_satisfied
-            and review.confidence >= 0.6
-            and stage.iteration < 6
-        )
+            not any(item[2].get("selectable") is True for item in candidates)
+            or (
+                is_rejected_retry
+                and not review.hard_requirements_satisfied
+                and review.confidence >= 0.6
+            )
+        ) and stage.iteration < 6
         if automatically_retry:
             stage.state = "rejected"
             stage.message = (
-                "Qwen referee rejected this correction because a locked requirement is still visibly missing. "
-                "The next bounded correction will run automatically."
+                "No candidate cleared the deterministic and semantic requirements. "
+                "The next bounded candidate search will run automatically."
             )
             run.state = "running"
             self.store.event(
@@ -1795,7 +2276,12 @@ class StudioCoordinator:
             )
             return
         stage.state = "awaiting_review"
-        stage.message = "Concept candidates and Qwen comparison are ready for your approval or rejection."
+        stage.message = (
+            "Six bounded searches produced no approvable concept. Review the recorded failures, then edit, "
+            "retry, or roll back."
+            if not review_candidates
+            else "Concept candidates and Qwen comparison are ready for your approval or rejection."
+        )
         run.state = "awaiting_review"
         self.store.event(
             run,
@@ -1834,7 +2320,11 @@ class StudioCoordinator:
             return self.store.artifact_path(run.run_id, item.relative_path)
         raise RuntimeError(f"{stage_id} has no evidence matching media_type={media_type!r}, role={role!r}")
 
-    def _stage_settings(self, run: StudioRun, stage_id: str) -> dict[str, Any]:
+    def _stage_settings(
+        self,
+        run: StudioRun,
+        stage_id: str,
+    ) -> dict[str, Any]:
         """Resolved [stages.<id>] configuration for this run's profile.
 
         Resolved per call rather than cached on the run so a profile edit
@@ -1847,7 +2337,7 @@ class StudioCoordinator:
         except FileNotFoundError:
             return {}
         section = resolved.values.get("stages", {}).get(stage_id)
-        return section if isinstance(section, dict) else {}
+        return dict(section) if isinstance(section, dict) else {}
 
     def _run_script(self, command: list[str], *, timeout: float):
         """Run one resources/adapters/ helper script. Goes through the injected
@@ -1929,9 +2419,10 @@ class StudioCoordinator:
         if run.spec is None:
             raise RuntimeError("D2 requires the compiled specification")
         selected_concept = self._selected_evidence_path(run, "D1")
-        self._begin(run, "D2", "Turning the approved concept image into 3D geometry.")
+        attempt_overrides = self._begin(run, "D2", "Turning the approved concept image into 3D geometry.")
         attempt_root = self.store.run_root(run.run_id) / "D2_geometry" / f"iteration-{stage.iteration:02d}"
         settings = self._stage_settings(run, "D2")
+        settings.update(attempt_overrides)
         comfy = self._comfy_factory(run)
         self._register_comfy(run.run_id, comfy)
         # The image the human approved at D1 IS the image-to-3D input. It is
@@ -1960,12 +2451,22 @@ class StudioCoordinator:
             metrics=alpha_metrics,
         )
         backend = str(settings.get("backend", "hunyuan3d"))
-        geometry_seed = int(settings.get("seed", 7132026))
+        configured_seed = int(settings.get("seed", 7132026))
+        geometry_seed = configured_seed + max(0, stage.iteration - 1) * 104729
         if backend == "hunyuan3d":
             # Native ComfyUI Hunyuan3D-2: ~5GB (mini) to 6GB (standard) for
             # shape, versus 16-24GB for TRELLIS.2-4B. This is what makes the
             # image-to-3D step reachable on a consumer laptop GPU at all.
-            self._progress(run, "D2", 0.2, "Hunyuan3D is generating the mesh from the approved concept.")
+            self._progress(
+                run,
+                "D2",
+                0.2,
+                "Hunyuan3D is generating the mesh from the approved concept.",
+                phase="geometry_generation",
+                current=0,
+                total=int(settings.get("steps", 20)),
+                unit="scheduled diffusion steps",
+            )
             uploaded = comfy.upload_image(
                 f"{run.run_id}_d2_i{stage.iteration:02d}_rgba.png",
                 rgba_seed.read_bytes(),
@@ -2032,6 +2533,8 @@ class StudioCoordinator:
                     "remesh": True,
                 },
                 output_directory=str(attempt_root / backend),
+                device_policy=run.device_policy,
+                gpu_safety_margin_gb=run.gpu_safety_margin_gb,
             )
             response = self._execute_worker(
                 str(settings.get("worker_id", backend)),
@@ -2058,7 +2561,30 @@ class StudioCoordinator:
 
         loaded = trimesh.load(geometry_output, force="scene")
         meshes = [item for item in loaded.geometry.values() if isinstance(item, trimesh.Trimesh)]
+        if not meshes:
+            raise RuntimeError("geometry output contains no mesh primitives")
         mesh = trimesh.util.concatenate(meshes)
+        import numpy as np
+
+        components = mesh.split(only_watertight=False)
+        component_faces = [len(item.faces) for item in components]
+        largest_component_fraction = max(component_faces, default=0) / max(1, len(mesh.faces))
+        degenerate_face_fraction = float(np.count_nonzero(mesh.area_faces <= 1e-12)) / max(
+            1, len(mesh.faces)
+        )
+        finite_vertices = bool(np.isfinite(mesh.vertices).all())
+        nonzero_extents = bool(np.all(np.asarray(mesh.extents) > 1e-8))
+        # Connectedness and degenerate faces are evidence here, not D2 hard
+        # failures. Hunyuan/TRELLIS voxel extraction can be visibly coherent
+        # while topologically unwelded; D3 owns welding/remeshing and its own
+        # post-repair topology gates. D2 only proves that a substantive,
+        # finite 3D candidate exists for that cleanup stage.
+        hard_gate_passed = bool(
+            len(mesh.vertices) >= 1000
+            and len(mesh.faces) >= 1000
+            and finite_vertices
+            and nonzero_extents
+        )
         metrics: dict[str, object] = {
             **worker_diagnostics,
             "vertices": int(len(mesh.vertices)),
@@ -2068,7 +2594,13 @@ class StudioCoordinator:
             "bounds_x": float(mesh.extents[0]),
             "bounds_y": float(mesh.extents[1]),
             "bounds_z": float(mesh.extents[2]),
-            "hard_gate_passed": len(mesh.vertices) >= 1000 and len(mesh.faces) >= 1000,
+            "connected_components": len(components),
+            "largest_component_fraction": round(largest_component_fraction, 6),
+            "degenerate_face_fraction": round(degenerate_face_fraction, 6),
+            "finite_vertices": finite_vertices,
+            "nonzero_extents": nonzero_extents,
+            "hard_gate_passed": hard_gate_passed,
+            "seed": geometry_seed,
         }
         self.store.evidence(
             run,
@@ -2137,7 +2669,9 @@ class StudioCoordinator:
             raise RuntimeError("D3 requires the compiled asset specification")
         source = self._latest_evidence_path(run, "D2", media_type="model/gltf-binary")
         selected_concept = self._selected_evidence_path(run, "D1")
-        self._begin(run, "D3", "Blender is validating and checkpointing deterministic geometry cleanup.")
+        attempt_overrides = self._begin(
+            run, "D3", "Blender is validating and checkpointing deterministic geometry cleanup."
+        )
         stage = run.stage("D3")
         attempt_root = self.store.run_root(run.run_id) / "D3_cleanup" / f"iteration-{stage.iteration:02d}"
         artifact_id = f"{run.spec.asset_id}.d3.input.i{stage.iteration:02d}"
@@ -2145,6 +2679,7 @@ class StudioCoordinator:
         deformable = run.spec.behavior == "deformable_animated"
         maximum_components = 1 if deformable else max(1, len(run.spec.components) * 4, 32)
         settings = self._stage_settings(run, "D3")
+        settings.update(attempt_overrides)
         request = ExternalWorkerRequest(
             job_id=f"studio.{run.run_id}.d3.i{stage.iteration:02d}",
             run_id=run.run_id,
@@ -2175,6 +2710,8 @@ class StudioCoordinator:
                 ),
             },
             output_directory=str(attempt_root / "blender"),
+            device_policy=run.device_policy,
+            gpu_safety_margin_gb=run.gpu_safety_margin_gb,
         )
         response = self._execute_worker(
             "blender", request, timeout_seconds=settings.get("timeout_seconds", 900)
@@ -2274,6 +2811,7 @@ class StudioCoordinator:
         stage = run.stage("D4")
         attempt_root = self.store.run_root(run.run_id) / "D4_structure" / f"iteration-{stage.iteration:02d}"
         d4_settings = self._stage_settings(run, "D4")
+        d4_settings.update(stage_overrides)
         qwen = self._qwen_factory(run)
         if run.spec.behavior == "rigid_articulated":
             diagnostic = self._latest_evidence_path(run, "D3", role="candidate_front")
@@ -2349,6 +2887,8 @@ class StudioCoordinator:
                     "weight_adjustments": stage_overrides.get("weight_adjustments", []),
                 },
                 output_directory=str(attempt_root / "blender"),
+                device_policy=run.device_policy,
+                gpu_safety_margin_gb=run.gpu_safety_margin_gb,
             )
             response = self._execute_worker(
                 "blender", request, timeout_seconds=d4_settings.get("timeout_seconds", 1200)
@@ -2474,6 +3014,8 @@ class StudioCoordinator:
                     "animations": run.spec.animations,
                 },
                 output_directory=str(attempt_root / "blender"),
+                device_policy=run.device_policy,
+                gpu_safety_margin_gb=run.gpu_safety_margin_gb,
             )
             response = self._execute_worker("blender", request, timeout_seconds=1200)
             image_records: list[tuple[str, Path]] = []
@@ -2624,7 +3166,9 @@ class StudioCoordinator:
     def _run_d7(self, run: StudioRun) -> None:
         if run.spec is None:
             raise RuntimeError("D7 requires the compiled asset specification")
-        self._begin(run, "D7", "Building typed motion evidence and independent Qwen review.")
+        attempt_overrides = self._begin(
+            run, "D7", "Building typed motion evidence and independent Qwen review."
+        )
         stage = run.stage("D7")
         selected_concept = self._selected_evidence_path(run, "D1")
         if run.spec.behavior == "rigid_articulated":
@@ -2654,7 +3198,10 @@ class StudioCoordinator:
             chain = self._run_motion_chain(
                 run,
                 stop_after="retarget_qwen_review",
-                timeout_seconds=self._stage_settings(run, "D7").get("timeout_seconds", 3600),
+                timeout_seconds={
+                    **self._stage_settings(run, "D7"),
+                    **attempt_overrides,
+                }.get("timeout_seconds", 3600),
             )
             evidence_root = chain / "retarget" / "human_review"
             board = evidence_root / "all_motion_front_keyposes.png"
@@ -2875,7 +3422,9 @@ class StudioCoordinator:
     def _run_d9(self, run: StudioRun) -> None:
         if run.spec is None:
             raise RuntimeError("D9 requires the compiled asset specification")
-        self._begin(run, "D9", "Rendering deterministic delivery views and validating the package.")
+        attempt_overrides = self._begin(
+            run, "D9", "Rendering deterministic delivery views and validating the package."
+        )
         stage = run.stage("D9")
         if run.spec.behavior == "deformable_animated":
             self._progress(run, "D9", 0.08, "Rendering and packaging directional motion sprites from one surface master.")
@@ -2933,6 +3482,7 @@ class StudioCoordinator:
             )
             attempt_root = self.store.run_root(run.run_id) / "D9_delivery" / f"iteration-{stage.iteration:02d}"
             d9_settings = self._stage_settings(run, "D9")
+            d9_settings.update(attempt_overrides)
             artifact_id = f"{run.spec.asset_id}.d9.input.i{stage.iteration:02d}"
             artifact = self._artifact_for_path(run, source, artifact_id=artifact_id)
             request = ExternalWorkerRequest(
@@ -2944,6 +3494,8 @@ class StudioCoordinator:
                 input_paths={artifact_id: str(source)},
                 parameters={"render_size": d9_settings.get("render_size", 768)},
                 output_directory=str(attempt_root / "blender"),
+                device_policy=run.device_policy,
+                gpu_safety_margin_gb=run.gpu_safety_margin_gb,
             )
             response = self._execute_worker(
                 "blender", request, timeout_seconds=d9_settings.get("timeout_seconds", 900)

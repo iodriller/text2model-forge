@@ -240,6 +240,15 @@ class StudioStore:
             downstream.qwen_reviews = []
             downstream.pending_overrides = {}
             downstream.error = None
+            downstream.progress_phase = "waiting"
+            downstream.progress_current = 0
+            downstream.progress_total = 0
+            downstream.progress_unit = ""
+            downstream.gpu_used_gb = None
+            downstream.gpu_free_gb = None
+            downstream.gpu_total_gb = None
+            downstream.retry_attempt = 0
+            downstream.retry_reason = ""
             if not downstream.applicable:
                 downstream.state = "skipped"
                 downstream.progress = 1

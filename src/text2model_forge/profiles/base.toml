@@ -24,7 +24,7 @@
 model = "qwen3_6_27b"                 # LocalDeploy/Ollama model id for Qwen review and the optimizer
 comfy_url = "http://127.0.0.1:8188"
 localdeploy_url = "http://127.0.0.1:8000/v1"
-concept_backend = "auto"              # auto | qwen_image_2512 | qwen_image_edit_2511 | sdxl
+concept_backend = "auto"              # auto | qwen_image_2512 | qwen_image_edit_2511 | sdxl | z_image_turbo
 checkpoint = "dreamshaper_xl_v2_turbo.safetensors"
 style_lora = ""                         # Optional user-supplied SDXL style LoRA; disabled by default
 style_lora_strength = 0.8
@@ -52,6 +52,20 @@ llm_timeout_seconds = 120
 # and D1's planning call exceeded a 600 s timeout; freeing both returned
 # ~7 GB. See _VramHandoff in src/text2model_forge/studio_pipeline.py.
 vram_handoff = false
+# prefer_gpu is the portable baseline for CUDA, ROCm, MPS, and CPU-only hosts;
+# preflight labels its possible CPU fallback explicitly. Hardware profiles with
+# supported live telemetry (the NVIDIA 8 GB profile today) override this with
+# gpu_compute_only. strict_device_only blocks deterministic CPU stages too and
+# is currently a research policy rather than an end-to-end supported path.
+device_policy = "prefer_gpu"          # prefer_gpu | gpu_compute_only | strict_device_only
+gpu_safety_margin_gb = 0.75
+gpu_unload_timeout_seconds = 45
+# Transient service errors may retry. An out-of-memory retry is legal only
+# when it lowers a memory-driving parameter; unchanged OOM retries are blocked.
+automatic_retry_limit = 2
+# At most this many deterministically pre-ranked candidates are placed on the
+# VLM comparison board, preserving its limited visual context.
+concept_review_limit = 3
 
 [optimizer]                           # DOCUMENTED -- see resources/adapters/optimize_short_biped_rig.py
 # The LLM optimizer (src/text2model_forge/optimizer.py) is a separate, explicitly
@@ -73,6 +87,11 @@ quality = "standard"                  # draft | standard | high -- see [quality.
 [quality.draft]                       # WIRED -- concept_steps/concept_cfg feed concept_workflow()
 concept_steps = 20
 concept_cfg = 5.0
+concept_candidates = 2
+concept_width = 640
+concept_height = 896
+concept_min_quality_score = 0.30
+vae_tiling = true
 sprite_views = 4
 
 # concept_steps/concept_cfg here are src/text2model_forge/studio_comfy.py concept_workflow()'s
@@ -82,11 +101,21 @@ sprite_views = 4
 [quality.standard]                    # WIRED -- concept_steps/concept_cfg feed concept_workflow()
 concept_steps = 30
 concept_cfg = 6.0
+concept_candidates = 3
+concept_width = 768
+concept_height = 1024
+concept_min_quality_score = 0.40
+vae_tiling = true
 sprite_views = 4
 
 [quality.high]                        # WIRED -- concept_steps/concept_cfg feed concept_workflow()
 concept_steps = 45
 concept_cfg = 7.0
+concept_candidates = 6
+concept_width = 768
+concept_height = 1024
+concept_min_quality_score = 0.48
+vae_tiling = true
 sprite_views = 8
 
 # -- Per-stage settings, read by StudioCoordinator._stage_settings(). --------

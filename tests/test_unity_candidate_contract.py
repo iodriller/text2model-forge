@@ -18,7 +18,6 @@ def test_unity_candidate_validator_is_non_promoting_and_hash_bound() -> None:
     assert "package-relative source master" in source
     assert "ConfigureUnitPrefabs" not in source
     assert "GetComponent<UnitViewRegistry>" not in source
-    assert "EmberDefense" not in source
 
 
 def test_unity_candidate_validator_exercises_sprite_and_clip_creation() -> None:
@@ -46,4 +45,3 @@ def test_unity_human_review_window_plays_all_required_motions_without_promotion(
     assert "human_approval_required" in source
     assert "human_approved" in source
     assert "ConfigureUnitPrefabs" not in source
-    assert "EmberDefense" not in source

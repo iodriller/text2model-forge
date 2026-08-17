@@ -51,9 +51,42 @@ IMAGE_2512_FILES = (
     ),
 )
 
+Z_IMAGE_TURBO_FILES = (
+    (
+        "Comfy-Org/z_image_turbo",
+        "split_files/diffusion_models/z_image_turbo_int8_convrot.safetensors",
+        "diffusion_models",
+    ),
+    (
+        "Comfy-Org/z_image_turbo",
+        "split_files/text_encoders/qwen_3_4b_fp8_mixed.safetensors",
+        "text_encoders",
+    ),
+    (
+        "Comfy-Org/z_image_turbo",
+        "split_files/vae/ae.safetensors",
+        "vae",
+    ),
+)
+
+STYLIZED_SDXL_FILES = (
+    # destination filename pinned to StudioRun.checkpoint's default
+    # ("dreamshaper_xl_v2_turbo.safetensors") -- the upstream file is
+    # differently cased/spelled and ComfyUI's checkpoint dropdown, D0/D1
+    # config, and check_comfy_checkpoints all key off the literal filename.
+    (
+        "Lykon/dreamshaper-xl-v2-turbo",
+        "DreamShaperXL_Turbo_v2.safetensors",
+        "checkpoints",
+        "dreamshaper_xl_v2_turbo.safetensors",
+    ),
+)
+
 MODEL_SETS = {
     "image-edit-2511": IMAGE_EDIT_2511_FILES,
     "image-2512": IMAGE_2512_FILES,
+    "z-image-turbo": Z_IMAGE_TURBO_FILES,
+    "stylized-sdxl": STYLIZED_SDXL_FILES,
 }
 
 
@@ -61,9 +94,11 @@ def install(models_root: Path, profile: str) -> list[dict[str, object]]:
     if profile not in MODEL_SETS:
         raise ValueError(f"unknown Qwen Image profile: {profile}")
     results: list[dict[str, object]] = []
-    for repo_id, filename, destination_folder in MODEL_SETS[profile]:
+    for entry in MODEL_SETS[profile]:
+        repo_id, filename, destination_folder = entry[0], entry[1], entry[2]
+        destination_name = entry[3] if len(entry) > 3 else None
         cached = Path(hf_hub_download(repo_id=repo_id, filename=filename))
-        destination = models_root / destination_folder / cached.name
+        destination = models_root / destination_folder / (destination_name or cached.name)
         destination.parent.mkdir(parents=True, exist_ok=True)
         if not destination.exists():
             try:

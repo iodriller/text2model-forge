@@ -9,7 +9,7 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 
-from .gpu import GpuLease, localdeploy_gpu_snapshot
+from .gpu import GpuLease, GpuPeakSampler, admit_gpu_memory, gpu_memory_snapshot
 from .schemas import WorkerJob, WorkerResult
 
 
@@ -70,10 +70,31 @@ class WorkerManager:
         }
         environment = {key: value for key, value in os.environ.items() if key.upper() in safe_keys}
         environment.update(job.environment)
+        if job.device_policy in {"gpu_compute_only", "strict_device_only"}:
+            environment.update(
+                {
+                    "TEXT2MODEL_DEVICE_POLICY": job.device_policy,
+                    "PYTORCH_ENABLE_MPS_FALLBACK": "0",
+                }
+            )
         lease = GpuLease(self.workspace / "scheduler", run_id=job.run_id, worker_id=job.worker_id)
         if job.exclusive_gpu:
             lease.acquire(timeout_seconds=job.timeout_seconds)
-        gpu_before = localdeploy_gpu_snapshot() if job.exclusive_gpu else None
+        gpu_before = None
+        admission_free_gb = None
+        sampler = GpuPeakSampler()
+        if job.exclusive_gpu:
+            try:
+                gpu_before = admit_gpu_memory(
+                    job.gpu_memory_gb,
+                    safety_margin_gb=job.gpu_safety_margin_gb,
+                    require_measurement=job.require_gpu_measurement,
+                )
+            except Exception:
+                lease.release()
+                raise
+            admission_free_gb = ((gpu_before or {}).get("device") or {}).get("free_gb")
+            sampler.start()
         started_at = datetime.now(timezone.utc)
         started = time.monotonic()
         timed_out = False
@@ -111,6 +132,8 @@ class WorkerManager:
                 self._active.pop(job.job_id, None)
                 cancelled = job.job_id in self._cancelled
                 self._cancelled.discard(job.job_id)
+            gpu_peak_used_gb = sampler.stop() if job.exclusive_gpu else None
+            gpu_after = gpu_memory_snapshot() if job.exclusive_gpu else None
             lease.release()
         finished_at = datetime.now(timezone.utc)
         return WorkerResult(
@@ -125,5 +148,8 @@ class WorkerManager:
             stdout_path=str(stdout_path),
             stderr_path=str(stderr_path),
             gpu_before=gpu_before,
-            gpu_after=localdeploy_gpu_snapshot() if job.exclusive_gpu else None,
+            gpu_after=gpu_after,
+            gpu_peak_used_gb=gpu_peak_used_gb,
+            gpu_admission_required_gb=job.gpu_memory_gb,
+            gpu_admission_free_gb=admission_free_gb,
         )

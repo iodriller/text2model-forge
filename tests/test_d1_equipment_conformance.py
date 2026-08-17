@@ -18,6 +18,7 @@ from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+import time
 
 import pytest
 
@@ -36,6 +37,11 @@ class VisionCapableFakeQwen(FakeQwen):
         self.shield_already_present = shield_already_present
         self.duplicate_on_opposite_side = duplicate_on_opposite_side
         self.presence_calls: list[str] = []
+        self.review_calls = 0
+
+    def review_concepts(self, *args, **kwargs):
+        self.review_calls += 1
+        return super().review_concepts(*args, **kwargs)
 
     def visual_presence(self, image_path: Path, question: str, *, max_tokens: int = 40) -> bool:
         self.presence_calls.append(question)
@@ -88,16 +94,51 @@ def test_shield_repair_still_runs_when_the_target_region_is_genuinely_empty(tmp_
 
 
 def _candidate_evidence(run):
-    """The candidate image evidence itself, distinct from the per-candidate
-    equipment_conformance.json report (evidence_id = candidate's own id plus
-    a "-equipment-conformance" suffix) and the comparison board. Deliberately
-    NOT filtered by `selectable`, because a duplicated candidate is now
-    selectable=False by design -- that is the exact thing under test here."""
+    """The candidate images themselves, excluding every per-candidate sidecar.
+
+    Each candidate now writes several companion artifacts whose evidence_id is
+    the candidate's own id plus a suffix (`-equipment-conformance`, `-quality`,
+    the geometry-ready alpha). They all contain "-candidate-", so matching on
+    that alone picks them up too. They are distinguished by carrying a `role`
+    metric, which the candidate image itself does not -- filter on that rather
+    than on a growing list of suffixes.
+
+    Deliberately NOT filtered by `selectable`: a duplicated candidate is
+    selectable=False by design, which is the exact thing under test here.
+    """
     return [
         item
         for item in run.stage("D1").evidence
-        if "-candidate-" in item.evidence_id and not item.evidence_id.endswith("-equipment-conformance")
+        if "-candidate-" in item.evidence_id
+        and item.media_type == "image/png"
+        and "role" not in item.metrics
     ]
+
+
+def _run_one_d1_attempt(store: StudioStore, run_id: str, qwen, executor):
+    """Drive exactly one D1 attempt and return once it has settled.
+
+    Cannot use `_drive_to_first_d1_review` for a duplicated candidate: marking
+    every candidate unselectable now trips D1's pre-existing
+    `automatically_retry` branch, so the run re-enters D1 instead of reaching
+    `awaiting_review`. Waiting for a gate that is deliberately never offered
+    would just time out.
+    """
+    store.create(run_id, DESCRIPTION)
+    coordinator = StudioCoordinator(
+        store,
+        qwen_factory=lambda run: qwen,
+        comfy_factory=lambda run: FakeComfy(),
+        executor=executor,
+    )
+    assert coordinator.submit(run_id) is True
+    deadline = time.monotonic() + 10
+    while time.monotonic() < deadline:
+        run = store.load(run_id)
+        if _candidate_evidence(run):
+            return run
+        time.sleep(0.02)
+    raise AssertionError(f"D1 never produced a candidate: {store.load(run_id).state}")
 
 
 def test_a_duplicated_shield_is_recorded_as_a_conformance_violation(tmp_path: Path) -> None:
@@ -109,9 +150,8 @@ def test_a_duplicated_shield_is_recorded_as_a_conformance_violation(tmp_path: Pa
     qwen = VisionCapableFakeQwen(shield_already_present=False, duplicate_on_opposite_side=True)
     with ThreadPoolExecutor(max_workers=1) as executor:
         store = StudioStore(tmp_path)
-        _drive_to_first_d1_review(store, "shield-dup-v1", qwen, executor)
+        run = _run_one_d1_attempt(store, "shield-dup-v1", qwen, executor)
 
-    run = store.load("shield-dup-v1")
     candidates = _candidate_evidence(run)
     assert candidates
     for candidate in candidates:
@@ -121,29 +161,33 @@ def test_a_duplicated_shield_is_recorded_as_a_conformance_violation(tmp_path: Pa
     conformance_evidence = [
         item for item in run.stage("D1").evidence if item.evidence_id.endswith("-equipment-conformance")
     ]
-    assert len(conformance_evidence) == len(candidates)
+    assert conformance_evidence
+    assert qwen.review_calls == 0, "deterministically rejected candidates must not consume VLM context"
 
 
-def test_a_duplicated_candidate_cannot_be_approved(tmp_path: Path) -> None:
-    """The hard gate this whole mechanism exists for: recording the finding
-    is not enough if a human (or an automated recommendation) can still
-    approve the candidate anyway -- StudioStore.decide() already refuses to
-    approve any evidence whose selectable metric is not True, so marking a
-    duplicated candidate selectable=False is what actually closes the loop."""
+def test_a_duplicated_candidate_is_never_offered_as_approvable(tmp_path: Path) -> None:
+    """The hard gate this whole mechanism exists for. Two layers must hold:
+
+    the candidate is marked unselectable, and StudioStore.decide() refuses to
+    approve unselectable evidence. Together they mean a duplicated concept
+    cannot reach D2 by any route -- not by a human clicking it, and not by the
+    critic recommending it.
+    """
     qwen = VisionCapableFakeQwen(shield_already_present=False, duplicate_on_opposite_side=True)
     with ThreadPoolExecutor(max_workers=1) as executor:
         store = StudioStore(tmp_path)
-        _drive_to_first_d1_review(store, "shield-dup-blocked-v1", qwen, executor)
+        run = _run_one_d1_attempt(store, "shield-dup-blocked-v1", qwen, executor)
 
-    run = store.load("shield-dup-blocked-v1")
     candidates = _candidate_evidence(run)
     assert candidates
-    for candidate in candidates:
-        assert candidate.metrics["selectable"] is False
-        with pytest.raises(ValueError, match="select a production candidate"):
-            store.decide(
-                "shield-dup-blocked-v1", "D1", "approve", "", candidate.evidence_id
-            )
+    assert all(item.metrics["selectable"] is False for item in candidates)
+
+    # and the store refuses the approval even if the gate were somehow offered
+    stage = run.stage("D1")
+    stage.state = "awaiting_review"
+    store.save(run)
+    with pytest.raises(ValueError, match="select a production candidate"):
+        store.decide("shield-dup-blocked-v1", "D1", "approve", "", candidates[0].evidence_id)
 
 
 def test_a_correctly_equipped_candidate_has_no_conformance_violations(tmp_path: Path) -> None:

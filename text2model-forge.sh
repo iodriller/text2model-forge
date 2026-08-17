@@ -494,7 +494,7 @@ start_comfyui() {
     mkdir -p -- "${RUNTIME_ROOT}/logs"
     args=("${COMFY_ROOT}/main.py" --listen 127.0.0.1 --port 8188)
     gpu_mode="$(detect_comfy_gpu)"
-    [[ "$gpu_mode" == nvidia ]] && args+=(--lowvram)
+    [[ "$gpu_mode" == nvidia ]] && args+=(--normalvram --reserve-vram 0.75 --preview-method none)
     [[ "$gpu_mode" == cpu ]] && args+=(--cpu)
     nohup "$COMFY_PYTHON" "${args[@]}" >"${RUNTIME_ROOT}/logs/comfyui.stdout.log" \
         2>"${RUNTIME_ROOT}/logs/comfyui.stderr.log" </dev/null &

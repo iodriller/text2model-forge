@@ -17,6 +17,32 @@ class StudioComfyError(RuntimeError):
     pass
 
 
+def _vae_decode_node(samples: list[str | int], vae: list[str | int], *, tiled: bool) -> dict[str, Any]:
+    if not tiled:
+        return {"class_type": "VAEDecode", "inputs": {"samples": samples, "vae": vae}}
+    return {
+        "class_type": "VAEDecodeTiled",
+        "inputs": {
+            "samples": samples,
+            "vae": vae,
+            "tile_size": 512,
+            "overlap": 64,
+            "temporal_size": 64,
+            "temporal_overlap": 8,
+        },
+    }
+
+
+def explicit_cpu_nodes(workflow: dict[str, Any]) -> list[str]:
+    """Node ids that explicitly request CPU execution in an inference graph."""
+
+    return [
+        str(node_id)
+        for node_id, node in workflow.items()
+        if str((node.get("inputs") or {}).get("device", "")).lower() == "cpu"
+    ]
+
+
 def concept_workflow(
     *,
     checkpoint: str,
@@ -32,6 +58,7 @@ def concept_workflow(
     cfg: float = 6.0,
     sampler_name: str = "dpmpp_2m",
     scheduler: str = "karras",
+    tiled_vae: bool = False,
 ) -> dict[str, Any]:
     """Single-figure concept workflow: checkpoint -> optional LoRA chain -> optional pose/depth
     ControlNet chain -> sampler. One coherent generation, never a region-composited one."""
@@ -104,10 +131,7 @@ def concept_workflow(
             "denoise": 1.0,
         },
     }
-    workflow[decode_id] = {
-        "class_type": "VAEDecode",
-        "inputs": {"samples": [sampler_id, 0], "vae": vae_ref},
-    }
+    workflow[decode_id] = _vae_decode_node([sampler_id, 0], vae_ref, tiled=tiled_vae)
     workflow[save_id] = {
         "class_type": "SaveImage",
         "inputs": {"filename_prefix": prefix, "images": [decode_id, 0]},
@@ -125,6 +149,7 @@ def qwen_image_edit_2511_workflow(
     diffusion_model: str = "qwen_image_edit_2511_fp8mixed.safetensors",
     text_encoder: str = "qwen_2.5_vl_7b_fp8_scaled.safetensors",
     vae: str = "qwen_image_vae.safetensors",
+    tiled_vae: bool = False,
 ) -> dict[str, Any]:
     """Native Qwen-Image-Edit-2511 ComfyUI graph for one identity-preserving edit.
 
@@ -143,7 +168,7 @@ def qwen_image_edit_2511_workflow(
         "3": {"class_type": "CFGNorm", "inputs": {"model": ["2", 0], "strength": 1.0}},
         "4": {
             "class_type": "CLIPLoader",
-            "inputs": {"clip_name": text_encoder, "type": "qwen_image", "device": "cpu"},
+            "inputs": {"clip_name": text_encoder, "type": "qwen_image", "device": "default"},
         },
         "5": {"class_type": "VAELoader", "inputs": {"vae_name": vae}},
         "6": {"class_type": "LoadImage", "inputs": {"image": source_image}},
@@ -193,8 +218,73 @@ def qwen_image_edit_2511_workflow(
                 "denoise": 1.0,
             },
         },
-        "14": {"class_type": "VAEDecode", "inputs": {"samples": ["13", 0], "vae": ["5", 0]}},
+        "14": _vae_decode_node(["13", 0], ["5", 0], tiled=tiled_vae),
         "15": {"class_type": "SaveImage", "inputs": {"filename_prefix": prefix, "images": ["14", 0]}},
+    }
+
+
+def z_image_turbo_workflow(
+    *,
+    prompt: str,
+    negative_prompt: str,
+    seed: int,
+    prefix: str,
+    width: int = 1104,
+    height: int = 1472,
+    steps: int = 8,
+    cfg: float = 1.0,
+    diffusion_model: str = "z_image_turbo_int8_convrot.safetensors",
+    text_encoder: str = "qwen_3_4b_fp8_mixed.safetensors",
+    vae: str = "ae.safetensors",
+    tiled_vae: bool = False,
+) -> dict[str, Any]:
+    """Native Z-Image Turbo text-to-image graph for D1 concept creation.
+
+    Z-Image Turbo is a distilled 6B model: 8 steps and cfg=1 (no real negative
+    guidance) is the published turbo setting, not an arbitrary default -- more
+    steps or higher cfg does not track the model's own training regime the
+    way it does for a non-distilled model. `text_encoder` is state-dict-
+    detected by ComfyUI's CLIPLoader as Qwen3-4B and auto-routed to the
+    Z-Image text encoder regardless of a declared `type=`, so no custom node
+    or ComfyUI-GGUF install is required -- confirmed against the installed
+    ComfyUI 0.33.0's comfy/sd.py detect_te_model path.
+    """
+    return {
+        "1": {
+            "class_type": "UNETLoader",
+            "inputs": {"unet_name": diffusion_model, "weight_dtype": "default"},
+        },
+        "2": {
+            "class_type": "CLIPLoader",
+            "inputs": {"clip_name": text_encoder, "type": "stable_diffusion", "device": "default"},
+        },
+        "3": {"class_type": "VAELoader", "inputs": {"vae_name": vae}},
+        "4": {"class_type": "CLIPTextEncode", "inputs": {"text": prompt, "clip": ["2", 0]}},
+        "5": {
+            "class_type": "CLIPTextEncode",
+            "inputs": {"text": negative_prompt or " ", "clip": ["2", 0]},
+        },
+        "6": {
+            "class_type": "EmptySD3LatentImage",
+            "inputs": {"width": width, "height": height, "batch_size": 1},
+        },
+        "7": {
+            "class_type": "KSampler",
+            "inputs": {
+                "model": ["1", 0],
+                "positive": ["4", 0],
+                "negative": ["5", 0],
+                "latent_image": ["6", 0],
+                "seed": seed,
+                "steps": steps,
+                "cfg": cfg,
+                "sampler_name": "euler",
+                "scheduler": "simple",
+                "denoise": 1.0,
+            },
+        },
+        "8": _vae_decode_node(["7", 0], ["3", 0], tiled=tiled_vae),
+        "9": {"class_type": "SaveImage", "inputs": {"filename_prefix": prefix, "images": ["8", 0]}},
     }
 
 
@@ -209,6 +299,7 @@ def qwen_image_2512_workflow(
     diffusion_model: str = "qwen_image_2512_fp8_e4m3fn.safetensors",
     text_encoder: str = "qwen_2.5_vl_7b_fp8_scaled.safetensors",
     vae: str = "qwen_image_vae.safetensors",
+    tiled_vae: bool = False,
 ) -> dict[str, Any]:
     """Official-style native Qwen-Image-2512 text-to-image graph for D1 concept creation.
 
@@ -224,7 +315,7 @@ def qwen_image_2512_workflow(
         "3": {"class_type": "CFGNorm", "inputs": {"model": ["2", 0], "strength": 1.0}},
         "4": {
             "class_type": "CLIPLoader",
-            "inputs": {"clip_name": text_encoder, "type": "qwen_image", "device": "cpu"},
+            "inputs": {"clip_name": text_encoder, "type": "qwen_image", "device": "default"},
         },
         "5": {"class_type": "VAELoader", "inputs": {"vae_name": vae}},
         "6": {"class_type": "CLIPTextEncode", "inputs": {"text": prompt, "clip": ["4", 0]}},
@@ -251,7 +342,7 @@ def qwen_image_2512_workflow(
                 "denoise": 1.0,
             },
         },
-        "10": {"class_type": "VAEDecode", "inputs": {"samples": ["9", 0], "vae": ["5", 0]}},
+        "10": _vae_decode_node(["9", 0], ["5", 0], tiled=tiled_vae),
         "11": {"class_type": "SaveImage", "inputs": {"filename_prefix": prefix, "images": ["10", 0]}},
     }
 
@@ -267,6 +358,7 @@ def inpaint_workflow(
     mask_image: str,
     denoise: float,
     loras: list[tuple[str, float]] | None = None,
+    tiled_vae: bool = False,
 ) -> dict[str, Any]:
     """Core-node local repair for an ordinary (non-inpaint) checkpoint.
 
@@ -326,10 +418,7 @@ def inpaint_workflow(
             "denoise": denoise,
         },
     }
-    workflow[decode_id] = {
-        "class_type": "VAEDecode",
-        "inputs": {"samples": [sampler_id, 0], "vae": vae_ref},
-    }
+    workflow[decode_id] = _vae_decode_node([sampler_id, 0], vae_ref, tiled=tiled_vae)
     workflow[save_id] = {
         "class_type": "SaveImage",
         "inputs": {"filename_prefix": prefix, "images": [decode_id, 0]},

@@ -16,6 +16,7 @@ import uuid
 import webbrowser
 
 from .config import load_local_config, worker_binding
+from .hardware import detect_hardware, recommend_stack
 from .manifests import load_manifests, preflight
 from .settings import profiles_dir, resolve_settings, studio_overrides
 from .studio_models import utc_now
@@ -31,6 +32,7 @@ STYLE = """
 .decisions{list-style:none;padding:0;margin:6px 0 0}.decisions li{border-left:2px solid var(--line);padding:6px 0 6px 12px;margin:6px 0}.decisions .approve{border-left-color:var(--ok)}.decisions .reject,.decisions .rollback{border-left-color:var(--bad)}.decisions .edit,.decisions .retry{border-left-color:var(--steel)}.decisions .skip{border-left-color:var(--muted)}
 .run-card .bar{margin:12px 0 6px}.needs{background:var(--wait)!important;color:#1b1405!important}.crumb{display:flex;gap:10px;align-items:center;margin-bottom:12px}.crumb a{color:#c8dce5}
 .bar.overall{height:12px;margin:8px 0 4px}.bar span{background:linear-gradient(90deg,var(--accent),#f0a154);transition:width .35s ease}.progress-label{display:flex;justify-content:space-between;gap:12px;color:var(--muted);font-size:13px}select{width:100%;padding:11px;border:1px solid var(--line);border-radius:7px;background:#0d1417;color:var(--text)}.options{margin-top:18px;border:1px solid var(--line);border-radius:9px;padding:12px;background:#10191d}.options summary{cursor:pointer;font-weight:650}.option-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:4px 14px}.service-status{margin-top:10px;padding:9px 11px;border-radius:7px;background:#0d1417}.service-status.good{border-left:3px solid var(--ok)}.service-status.warning{border-left:3px solid var(--wait)}
+.bar.gpu span{background:linear-gradient(90deg,var(--steel),#75bdd9)}
 .glb-preview{display:block;width:100%;height:420px;touch-action:none;cursor:grab;background:radial-gradient(circle,#263238,#080c0e 70%);border:1px solid var(--line);border-radius:8px}.glb-preview:active{cursor:grabbing}.viewer-note{font-size:12px;color:var(--muted)}
 @media(max-width:800px){.wrap{padding:15px}header{padding:14px}.hero{padding:18px}}
 """
@@ -98,6 +100,22 @@ STUDIO_JS = """
       if (overallLabel) overallLabel.textContent = overallPercent + '% overall';
       var message = document.getElementById('stage-message');
       if (message) message.textContent = stage.message;
+      var work = document.getElementById('stage-work');
+      if (work) {
+        var count = stage.progress_total ? ' · ' + stage.progress_current + '/' + stage.progress_total + ' ' + stage.progress_unit : '';
+        work.textContent = stage.progress_phase + count;
+      }
+      var gpu = document.getElementById('gpu-run-bar');
+      if (gpu && stage.gpu_total_gb) {
+        var gpuUsed = stage.gpu_used_gb || 0;
+        var gpuPercent = Math.round(gpuUsed / stage.gpu_total_gb * 100);
+        gpu.style.width = gpuPercent + '%';
+        gpu.parentNode.setAttribute('aria-valuenow', String(gpuPercent));
+      }
+      var gpuLabel = document.getElementById('gpu-run-label');
+      if (gpuLabel && stage.gpu_total_gb) {
+        gpuLabel.textContent = (stage.gpu_used_gb || 0).toFixed(2) + '/' + stage.gpu_total_gb.toFixed(2) + ' GiB';
+      }
       var status = document.getElementById('status-line');
       if (status && stage.state === 'running') {
         status.textContent = 'Running ' + stage.stage_id + ' at ' + stagePercent + '%.';
@@ -157,7 +175,8 @@ STUDIO_JS = """
               'ComfyUI: ' + data.services.comfyui.detail + ' (' + data.checkpoints.length +
               ' checkpoints, ' + data.diffusion_models.length + ' diffusion models). Reviewer: ' +
               data.services.reviewer.detail + ' (' + data.review_models.length + ' models). Qwen Image 2512: ' +
-              (data.qwen_image_2512_ready ? 'ready.' : 'required files not all detected.');
+              (data.qwen_image_2512_ready ? 'ready.' : 'required files not all detected.') + ' Z-Image Turbo: ' +
+              (data.z_image_turbo_ready ? 'ready.' : 'required files not all detected.');
           }
         })
         .catch(function () {
@@ -289,11 +308,17 @@ def _run_progress(run) -> float:
     return sum(stage.progress for stage in applicable) / len(applicable)
 
 
-def _progress_bar(value: float, *, label: str, bar_id: str | None = None) -> str:
+def _progress_bar(
+    value: float,
+    *,
+    label: str,
+    bar_id: str | None = None,
+    extra_class: str = "",
+) -> str:
     percent = round(max(0.0, min(1.0, value)) * 100)
     identifier = f' id="{html.escape(bar_id)}"' if bar_id else ""
     return (
-        f'<div class="bar overall" role="progressbar" aria-label="{html.escape(label)}" '
+        f'<div class="bar overall {html.escape(extra_class)}" role="progressbar" aria-label="{html.escape(label)}" '
         f'aria-valuemin="0" aria-valuemax="100" aria-valuenow="{percent}">'
         f'<span{identifier} style="width:{percent}%"></span></div>'
     )
@@ -829,6 +854,27 @@ def _run_page(store: StudioStore, coordinator: StudioCoordinator, run_id: str, c
     stage = run.stage(run.current_stage)
     evidence, choices = _evidence(run, stage)
     events = store.read_events(run_id)[-30:]
+    work_detail = html.escape(stage.progress_phase)
+    if stage.progress_total:
+        work_detail += (
+            f" · {stage.progress_current}/{stage.progress_total} "
+            f"{html.escape(stage.progress_unit)}"
+        )
+    gpu_fraction = (
+        min(1.0, (stage.gpu_used_gb or 0.0) / stage.gpu_total_gb)
+        if stage.gpu_total_gb
+        else 0.0
+    )
+    gpu_label = (
+        f"{stage.gpu_used_gb or 0.0:.2f}/{stage.gpu_total_gb:.2f} GiB"
+        if stage.gpu_total_gb
+        else "Waiting for telemetry"
+    )
+    gpu_progress = (
+        '<div class=progress-label><span>Last observed GPU memory</span>'
+        f'<span id=gpu-run-label>{gpu_label}</span></div>'
+        f'{_progress_bar(gpu_fraction, label="Live GPU memory", bar_id="gpu-run-bar", extra_class="gpu")}'
+    )
     event_html = "".join(
         f'<div class=event><strong>{html.escape(item["event_type"])}</strong> '
         f'<span class=muted>{html.escape(item["occurred_at"])}</span><br>'
@@ -850,11 +896,14 @@ def _run_page(store: StudioStore, coordinator: StudioCoordinator, run_id: str, c
         f"<h1>{html.escape(run.title)}</h1><p>{html.escape(run.description)}</p>"
         f'<p><span class=badge>{html.escape(run.run_id)}</span> <span class=badge>{html.escape(run.state)}</span> '
         f'<span class=badge>concept backend: {html.escape(run.concept_backend)}</span> '
+        f'<span class=badge>device policy: {html.escape(run.device_policy)}</span> '
         f'<span class=badge>created {html.escape(run.created_at.isoformat(timespec="seconds"))}</span>'
         + (' <span class=badge>Archived</span>' if run.archived else "")
         + "</p>"
         f'<div class=progress-label><span>Whole pipeline</span><span id=overall-run-label>{overall_progress:.0%} overall</span></div>'
         f'{_progress_bar(overall_progress, label="Whole pipeline progress", bar_id="overall-run-bar")}'
+        f'<div class=progress-label><span>Active work</span><span id=stage-work>{work_detail}</span></div>'
+        f'{gpu_progress}'
         f"{_timeline(run, active=stage.stage_id, mark_progress_id=True)}"
         f'<h2><a href="{_stage_url(run.run_id, stage.stage_id)}">{stage.stage_id} — '
         f"{html.escape(stage.label)}</a></h2>"
@@ -1000,18 +1049,36 @@ def _setup_options(profile: str) -> dict[str, Any]:
             ("qwen_image_vae.safetensors", vaes),
         )
     )
+    z_image_ready = all(
+        required in installed
+        for required, installed in (
+            ("z_image_turbo_int8_convrot.safetensors", diffusion_models),
+            ("qwen_3_4b_fp8_mixed.safetensors", text_encoders),
+            ("ae.safetensors", vaes),
+        )
+    )
     comfy_ready = any(results[name][0] is not None for name in endpoints if name != "reviewer")
     return {
         "defaults": {
             key: value
             for key, value in defaults.items()
-            if key in {"concept_backend", "checkpoint", "model", "spec_strategy", "concept_steps", "concept_cfg"}
+            if key in {
+                "concept_backend",
+                "checkpoint",
+                "model",
+                "spec_strategy",
+                "concept_steps",
+                "concept_cfg",
+                "concept_candidates",
+                "device_policy",
+            }
             and value is not None
         },
         "checkpoints": checkpoints,
         "diffusion_models": diffusion_models,
         "review_models": reviewer_models,
         "qwen_image_2512_ready": qwen_ready,
+        "z_image_turbo_ready": z_image_ready,
         "services": {
             "comfyui": {
                 "ready": comfy_ready,
@@ -1027,7 +1094,14 @@ def _setup_options(profile: str) -> dict[str, Any]:
 
 def _new_form(csrf: str, preset_description: str = "") -> str:
     profiles = _available_profiles()
-    default = "simple" if "simple" in profiles else profiles[0]
+    recommended_profile = recommend_stack(detect_hardware()).profile
+    default = (
+        recommended_profile
+        if recommended_profile in profiles
+        else "simple"
+        if "simple" in profiles
+        else profiles[0]
+    )
     defaults = studio_overrides(resolve_settings(profile=default))
     options = "".join(
         f'<option value="{html.escape(name)}"{" selected" if name == default else ""}>{html.escape(name)}</option>'
@@ -1039,6 +1113,8 @@ def _new_form(csrf: str, preset_description: str = "") -> str:
     model_default = html.escape(str(defaults.get("model", "")))
     steps_default = html.escape(str(defaults.get("concept_steps", 30)))
     cfg_default = html.escape(str(defaults.get("concept_cfg", 6.0)))
+    candidates_default = html.escape(str(defaults.get("concept_candidates", 3)))
+    device_default = html.escape(str(defaults.get("device_policy", "prefer_gpu")))
     return (
         '<section class="card hero"><h1>Describe one original asset</h1>'
         '<p>This is the only production input. It may be a character, creature, door, wall, prop, environment, material, or VFX. Include handedness, moving pieces, and required states when they matter; Qwen compiles the rest.</p>'
@@ -1051,12 +1127,21 @@ def _new_form(csrf: str, preset_description: str = "") -> str:
         '<details class=options open><summary>Text-to-2D and reviewer options</summary>'
         '<p class=muted>Leave any field blank to inherit the selected profile. Installed model names appear as suggestions when the local services are running.</p>'
         '<div class=option-grid>'
+        # Each option states the measured cost of choosing it. These numbers
+        # are wall-clock per candidate at 768x1024 on an 8 GB RTX 3080, taken
+        # from a real side-by-side run of one prompt through every backend --
+        # not vendor claims. D1 renders `concept_candidates` of these per
+        # iteration and re-runs the whole set on rejection, so the per-image
+        # figure is the one that decides whether a run finishes tonight.
         '<div><label>Text-to-2D backend</label><select name=concept_backend>'
         f'<option value="">Profile default: {backend_default}</option>'
-        '<option value=auto>Auto — prefer Qwen, fall back to SDXL</option>'
-        '<option value=qwen_image_2512>Qwen Image 2512 (native ComfyUI)</option>'
-        '<option value=sdxl>SDXL checkpoint (native ComfyUI)</option>'
-        '</select></div>'
+        '<option value=auto>Auto — Z-Image if installed, else Qwen, else SDXL</option>'
+        '<option value=z_image_turbo>Z-Image Turbo — stylized, ~50 s/image (recommended)</option>'
+        '<option value=qwen_image_2512>Qwen Image 2512 — best quality, ~10 min/image</option>'
+        '<option value=sdxl>SDXL checkpoint — fastest, ~20 s/image</option>'
+        '</select>'
+        '<p class=muted data-backend-note>Times measured on this machine at 768&times;1024. '
+        'Qwen and Z-Image ignore the checkpoint field below; SDXL uses it.</p></div>'
         '<div><label>SDXL / custom checkpoint</label>'
         f'<input name=checkpoint list=installed-checkpoints maxlength=300 placeholder="Profile default: {checkpoint_default}">'
         '<datalist id=installed-checkpoints></datalist></div>'
@@ -1072,6 +1157,14 @@ def _new_form(csrf: str, preset_description: str = "") -> str:
         f'<input name=concept_steps type=number min=1 max=150 placeholder="Profile default: {steps_default}"></div>'
         '<div><label>Concept CFG</label>'
         f'<input name=concept_cfg type=number min=0.1 max=30 step=0.1 placeholder="Profile default: {cfg_default}"></div>'
+        '<div><label>Sequential candidate budget</label>'
+        f'<input name=concept_candidates type=number min=2 max=12 placeholder="Profile default: {candidates_default}"></div>'
+        '<div><label>Device policy</label><select name=device_policy>'
+        f'<option value="">Profile default: {device_default}</option>'
+        '<option value=gpu_compute_only>GPU compute only — requires live telemetry</option>'
+        '<option value=prefer_gpu>Prefer GPU — CPU inference allowed</option>'
+        '<option value=strict_device_only>Strict device only — experimental</option>'
+        '</select></div>'
         '</div><div id=setup-service-status class=service-status>Checking local AI services and installed models...</div>'
         '</details><button class=primary type=submit>Compile asset and start</button></form>'
         '<p class=muted>D1 is human-gated: reject, edit, or retry as many times as needed before the approved image is allowed into 3D.</p>'
@@ -1079,8 +1172,9 @@ def _new_form(csrf: str, preset_description: str = "") -> str:
     )
 
 
-_CONCEPT_BACKENDS = {"auto", "qwen_image_2512", "qwen_image_edit_2511", "sdxl"}
+_CONCEPT_BACKENDS = {"auto", "qwen_image_2512", "qwen_image_edit_2511", "sdxl", "z_image_turbo"}
 _SPEC_STRATEGIES = {"monolithic", "chunked"}
+_DEVICE_POLICIES = {"prefer_gpu", "gpu_compute_only", "strict_device_only"}
 
 
 def _new_run_overrides(values: dict[str, str], profile: str) -> dict[str, Any]:
@@ -1101,6 +1195,11 @@ def _new_run_overrides(values: dict[str, str], profile: str) -> dict[str, Any]:
         if strategy not in _SPEC_STRATEGIES:
             raise ValueError(f"unknown D0 spec strategy: {strategy}")
         result["spec_strategy"] = strategy
+    device_policy = values.get("device_policy", "").strip()
+    if device_policy:
+        if device_policy not in _DEVICE_POLICIES:
+            raise ValueError(f"unknown device policy: {device_policy}")
+        result["device_policy"] = device_policy
     for key in ("checkpoint", "model"):
         value = values.get(key, "").strip()
         if value:
@@ -1123,6 +1222,15 @@ def _new_run_overrides(values: dict[str, str], profile: str) -> dict[str, Any]:
         if not 0 < cfg <= 30:
             raise ValueError("concept CFG must be a number greater than 0 and no more than 30")
         result["concept_cfg"] = cfg
+    raw_candidates = values.get("concept_candidates", "").strip()
+    if raw_candidates:
+        try:
+            candidates = int(raw_candidates)
+        except ValueError as exc:
+            raise ValueError("concept candidates must be a whole number from 2 to 12") from exc
+        if not 2 <= candidates <= 12:
+            raise ValueError("concept candidates must be a whole number from 2 to 12")
+        result["concept_candidates"] = candidates
     return result
 
 

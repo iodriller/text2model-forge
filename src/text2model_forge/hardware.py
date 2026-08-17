@@ -19,7 +19,10 @@ Detection deliberately degrades rather than fails. In order:
 2. LocalDeploy's ``detect_hardware()`` imported directly, if the package
    happens to be importable.
 3. ``nvidia-smi``.
-4. torch, then psutil, for whatever is left.
+
+System RAM is enriched separately through psutil or the host utility. An
+accelerator without one of the three sources remains unknown rather than being
+guessed from system memory.
 
 Text2Model Forge must run standalone, so LocalDeploy is never a dependency --
 only an enrichment. A machine with none of the above still gets a
@@ -57,6 +60,17 @@ REVIEWER_VRAM_GB: dict[str, float] = {
     "12b": 8.9,
     "27b": 17.0,
 }
+
+
+def reviewer_vram_requirement(model: str) -> float | None:
+    """Best documented resident estimate inferable from a model identifier."""
+
+    normalized = model.lower()
+    size = next(
+        (key for key in sorted(REVIEWER_VRAM_GB, key=len, reverse=True) if key in normalized),
+        None,
+    )
+    return REVIEWER_VRAM_GB[size] if size is not None else None
 
 # The smallest feature that must survive D2->D3 as its own connected piece.
 # D7's grip builder searches the mesh near the hand for distinct finger

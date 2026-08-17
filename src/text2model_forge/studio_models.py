@@ -196,6 +196,19 @@ def validate_stage_overrides(overrides: dict[str, Any] | None) -> None:
             not isinstance(value, int) or isinstance(value, bool) or not 1 <= value <= 150
         ):
             raise ValueError(f"the '{key}' override must be a whole number between 1 and 150")
+    concept_candidates = overrides.get("concept_candidates")
+    if concept_candidates is not None and (
+        not isinstance(concept_candidates, int)
+        or isinstance(concept_candidates, bool)
+        or not 2 <= concept_candidates <= 12
+    ):
+        raise ValueError("the 'concept_candidates' override must be a whole number between 2 and 12")
+    for key in ("concept_width", "concept_height"):
+        value = overrides.get(key)
+        if value is not None and (
+            not isinstance(value, int) or isinstance(value, bool) or not 256 <= value <= 2048
+        ):
+            raise ValueError(f"the '{key}' override must be a whole number between 256 and 2048")
     for key in ("concept_cfg",):
         value = overrides.get(key)
         if value is not None and (
@@ -261,6 +274,15 @@ class StudioStageState(StrictModel):
     ] = "pending"
     applicable: bool = True
     progress: float = Field(default=0, ge=0, le=1)
+    progress_phase: str = "waiting"
+    progress_current: int = Field(default=0, ge=0)
+    progress_total: int = Field(default=0, ge=0)
+    progress_unit: str = ""
+    gpu_used_gb: float | None = Field(default=None, ge=0)
+    gpu_free_gb: float | None = Field(default=None, ge=0)
+    gpu_total_gb: float | None = Field(default=None, ge=0)
+    retry_attempt: int = Field(default=0, ge=0)
+    retry_reason: str = ""
     message: str = "Waiting for the preceding stage."
     iteration: int = Field(default=0, ge=0)
     started_at: datetime | None = None
@@ -293,7 +315,7 @@ class StudioRun(StrictModel):
     # "auto" prefers native Qwen Image 2512 text-to-image generation when its
     # model trio is present in ComfyUI, while keeping the existing SDXL route
     # usable on a machine that has not installed Qwen yet.
-    concept_backend: Literal["auto", "qwen_image_2512", "qwen_image_edit_2511", "sdxl"] = "auto"
+    concept_backend: Literal["auto", "qwen_image_2512", "qwen_image_edit_2511", "sdxl", "z_image_turbo"] = "auto"
     checkpoint: str = "dreamshaper_xl_v2_turbo.safetensors"
     style_lora: str | None = None
     style_lora_strength: float = Field(default=0.8, ge=0.0, le=1.5)
@@ -318,6 +340,22 @@ class StudioRun(StrictModel):
     # too small to hold the reviewer and the image model at once. See
     # _VramHandoff in studio_pipeline.py.
     vram_handoff: bool = False
+    # GPU compute only forbids explicit CPU inference while still allowing
+    # orchestration, file I/O, and deterministic geometry operations on CPU.
+    # strict_device_only additionally blocks any stage without a qualified GPU
+    # implementation.
+    device_policy: Literal["prefer_gpu", "gpu_compute_only", "strict_device_only"] = "prefer_gpu"
+    gpu_safety_margin_gb: float = Field(default=0.75, ge=0, le=8)
+    gpu_unload_timeout_seconds: float = Field(default=45, gt=0, le=300)
+    automatic_retry_limit: int = Field(default=2, ge=0, le=5)
+    # D1's quality budget expands time, not peak memory: every candidate is
+    # generated sequentially and only the best bounded subset reaches the VLM.
+    concept_candidates: int = Field(default=2, ge=2, le=12)
+    concept_review_limit: int = Field(default=3, ge=1, le=6)
+    concept_width: int = Field(default=768, ge=256, le=2048)
+    concept_height: int = Field(default=1024, ge=256, le=2048)
+    concept_min_quality_score: float = Field(default=0.35, ge=0, le=1)
+    vae_tiling: bool = False
     # Which profiles/<name>.toml this run resolves its per-stage settings
     # from. Stored so a resumed run keeps the configuration it started with
     # rather than silently adopting whatever the profile says today.

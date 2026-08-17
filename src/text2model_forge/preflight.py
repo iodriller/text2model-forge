@@ -30,7 +30,6 @@ import subprocess
 import urllib.request
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
-from text2model_forge.paths import resource_root
 from typing import Any, Literal
 
 from pydantic import Field
@@ -44,8 +43,9 @@ from .hardware import (
     recommend_stack,
 )
 from .motion_library import load_motion_library, resolve_donor_motion_path
+from .paths import resource_root
 from .schemas import StrictModel
-from .settings import resolve_settings
+from .settings import resolve_settings, studio_overrides
 
 
 class Check(StrictModel):
@@ -120,6 +120,73 @@ def check_reviewer_fits(hardware: HardwareProfile, settings: dict[str, Any]) -> 
         ),
         remedy=f"Set [studio_defaults].model to a {recommendation.reviewer_size}-class vision "
         "model, or stop ComfyUI while the reviewer runs.",
+    )
+
+
+def check_device_policy(
+    hardware: HardwareProfile,
+    settings: dict[str, Any],
+    stages: dict[str, Any],
+) -> Check:
+    policy = str(settings.get("device_policy", "prefer_gpu"))
+    if policy == "prefer_gpu":
+        return Check(
+            name="GPU execution policy",
+            status="warn",
+            detail="prefer_gpu permits an adapter to use CPU inference",
+            remedy='Set [studio_defaults].device_policy = "gpu_compute_only" to forbid silent CPU inference.',
+        )
+    if hardware.primary is None:
+        return Check(
+            name="GPU execution policy",
+            status="fail",
+            detail=f"device_policy={policy} but no supported GPU was detected",
+            remedy="Install a supported accelerator driver and verify it with text2model-forge doctor.",
+        )
+    if policy == "strict_device_only":
+        manifold = str((stages.get("D3") or {}).get("manifold_policy", "weld_only"))
+        return Check(
+            name="GPU execution policy",
+            status="fail",
+            detail=(
+                "strict_device_only cannot execute the current Blender topology, rigging, packaging, and "
+                f"runtime-import stages (D3 manifold_policy={manifold})"
+            ),
+            remedy='Use device_policy = "gpu_compute_only". It keeps all learned inference and rendering on GPU '
+            "while allowing deterministic orchestration and mesh operations on CPU.",
+        )
+    return Check(
+        name="GPU execution policy",
+        status="ok",
+        detail=(
+            f"gpu_compute_only on {hardware.primary.name}: explicit CPU inference is rejected; "
+            "deterministic CPU orchestration remains allowed"
+        ),
+    )
+
+
+def check_gpu_safety_margin(hardware: HardwareProfile, settings: dict[str, Any]) -> Check:
+    margin = float(settings.get("gpu_safety_margin_gb", 0.75))
+    gpu = hardware.primary
+    if gpu is None or gpu.vram_total_gb is None:
+        return Check(
+            name="GPU safety margin",
+            status="skip",
+            detail="VRAM total is unknown",
+            remedy="Enable supported GPU telemetry before using fail-closed admission.",
+        )
+    if margin < 0.5:
+        recommended = 0.75
+        return Check(
+            name="GPU safety margin",
+            status="fail",
+            detail=f"{margin:.2f} GiB leaves too little display/driver/allocator headroom",
+            remedy=f"Set gpu_safety_margin_gb to at least {recommended:.2f}.",
+        )
+    return Check(
+        name="GPU safety margin",
+        status="ok",
+        detail=f"{margin:.2f} GiB reserved from {gpu.vram_total_gb:.2f} GiB total",
     )
 
 
@@ -286,10 +353,12 @@ def check_reviewer_context(settings: dict[str, Any]) -> Check:
 def check_comfy_nodes(settings: dict[str, Any], stages: dict[str, Any]) -> Check:
     url = str(settings.get("comfy_url", "")).rstrip("/")
     backend = str((stages.get("D2") or {}).get("backend", "hunyuan3d"))
-    required = _D2_REQUIRED_NODES.get(backend)
+    required = list(_D2_REQUIRED_NODES.get(backend) or ())
+    if settings.get("vae_tiling") is True:
+        required.append("VAEDecodeTiled")
     if not url:
         return Check(name="ComfyUI nodes for D2", status="skip", detail="no comfy_url configured")
-    if required is None:
+    if not required:
         return Check(
             name="ComfyUI nodes for D2",
             status="skip",
@@ -303,7 +372,10 @@ def check_comfy_nodes(settings: dict[str, Any], stages: dict[str, Any]) -> Check
             name="ComfyUI nodes for D2",
             status="fail",
             detail=f"{url} is not reachable",
-            remedy="Start ComfyUI: python main.py --listen 127.0.0.1 --port 8188 --lowvram",
+            remedy=(
+                "Start ComfyUI: python main.py --listen 127.0.0.1 --port 8188 "
+                "--normalvram --reserve-vram 0.75 --preview-method none"
+            ),
         )
     with ThreadPoolExecutor(max_workers=len(required)) as pool:
         found = dict(
@@ -366,6 +438,59 @@ def check_comfy_checkpoints(settings: dict[str, Any], stages: dict[str, Any]) ->
         status="ok",
         detail=", ".join(f"{label}={name}" for label, name in wanted.items() if name),
     )
+
+
+_Z_IMAGE_TURBO_REQUIRED_FILES = {
+    "UNETLoader": ("unet_name", "z_image_turbo_int8_convrot.safetensors"),
+    "CLIPLoader": ("clip_name", "qwen_3_4b_fp8_mixed.safetensors"),
+    "VAELoader": ("vae_name", "ae.safetensors"),
+}
+
+
+def check_z_image_turbo_models(settings: dict[str, Any]) -> Check:
+    """Are Z-Image Turbo's three model files actually installed in ComfyUI?
+
+    Only actionable -- and only run -- when concept_backend is explicitly
+    z_image_turbo; a card not using this backend has no reason to fail
+    preflight over files it will never load. Mirrors check_comfy_checkpoints'
+    object_info-per-loader-node idiom rather than the pipeline's live
+    comfy.models(...) call, so this works without a running StudioComfyClient.
+    """
+    url = str(settings.get("comfy_url", "")).rstrip("/")
+    if str(settings.get("concept_backend", "")) != "z_image_turbo":
+        return Check(
+            name="Z-Image Turbo models",
+            status="skip",
+            detail="concept_backend is not z_image_turbo",
+        )
+    if not url:
+        return Check(name="Z-Image Turbo models", status="skip", detail="no comfy_url configured")
+    missing = []
+    for node, (input_key, filename) in _Z_IMAGE_TURBO_REQUIRED_FILES.items():
+        payload = _http_json(f"{url}/object_info/{node}", timeout=8)
+        try:
+            installed = set(payload[node]["input"]["required"][input_key][0])
+        except Exception:
+            return Check(
+                name="Z-Image Turbo models",
+                status="fail",
+                detail=f"{url} is not reachable",
+                remedy=(
+                    "Start ComfyUI: python main.py --listen 127.0.0.1 --port 8188 "
+                    "--normalvram --reserve-vram 0.75 --preview-method none"
+                ),
+            )
+        if filename not in installed:
+            missing.append(filename)
+    if missing:
+        return Check(
+            name="Z-Image Turbo models",
+            status="fail",
+            detail=f"missing {missing}",
+            remedy="Run resources/adapters/install_qwen_image_edit_models.py "
+            "--profile z-image-turbo.",
+        )
+    return Check(name="Z-Image Turbo models", status="ok", detail="all 3 files present")
 
 
 def check_voxel_vs_grip(stages: dict[str, Any], asset_height_m: float = 1.8) -> Check:
@@ -617,19 +742,22 @@ def run_preflight(
     """Every cross-stage assumption, checked concurrently."""
     root = repo_root or resource_root()
     resolved = resolve_settings(profile=profile)
-    settings = resolved.values.get("studio", {}) or {}
+    settings = studio_overrides(resolved)
     stages = resolved.values.get("stages", {}) or {}
     hardware = detect_hardware(str(settings.get("localdeploy_url", "")) or None)
 
     with ThreadPoolExecutor(max_workers=8) as pool:
         futures = [
             pool.submit(check_reviewer_fits, hardware, settings),
+            pool.submit(check_device_policy, hardware, settings, stages),
+            pool.submit(check_gpu_safety_margin, hardware, settings),
             pool.submit(check_spec_strategy, settings),
             pool.submit(check_llm_endpoint, settings),
             pool.submit(check_reviewer_context, settings),
             pool.submit(check_equipment_conformance_capability, settings),
             pool.submit(check_comfy_nodes, settings, stages),
             pool.submit(check_comfy_checkpoints, settings, stages),
+            pool.submit(check_z_image_turbo_models, settings),
             pool.submit(check_voxel_vs_grip, stages, asset_height_m),
             pool.submit(check_donor_motion, stages, root),
         ]

@@ -12,12 +12,14 @@ import pytest
 
 from text2model_forge.studio_comfy import (
     concept_workflow,
+    explicit_cpu_nodes,
     inpaint_workflow,
     make_chroma_alpha,
     make_footman_equipment_layout_guide,
     make_humanoid_openpose_guide,
     qwen_image_2512_workflow,
     qwen_image_edit_2511_workflow,
+    z_image_turbo_workflow,
 )
 from text2model_forge.studio_models import (
     STAGE_DEFINITIONS,
@@ -463,6 +465,41 @@ class QwenImageFakeComfy(FakeComfy):
     # self.workflows -- do not also append here, or every call double-counts.
 
 
+class ZImageTurboFakeComfy(FakeComfy):
+    def __init__(self) -> None:
+        self.workflows: list[dict] = []
+
+    def models(self, kind: str):
+        values = {
+            "diffusion_models": ["z_image_turbo_int8_convrot.safetensors"],
+            "text_encoders": ["qwen_3_4b_fp8_mixed.safetensors"],
+            "vae": ["ae.safetensors"],
+        }
+        return values.get(kind, [])
+
+
+class BothGeneratorsFakeComfy(FakeComfy):
+    """A machine with Qwen Image 2512 *and* Z-Image Turbo installed, which is
+    the only situation where `auto`'s preference between them is observable."""
+
+    def __init__(self) -> None:
+        self.workflows: list[dict] = []
+
+    def models(self, kind: str):
+        values = {
+            "diffusion_models": [
+                "qwen_image_2512_fp8_e4m3fn.safetensors",
+                "z_image_turbo_int8_convrot.safetensors",
+            ],
+            "text_encoders": [
+                "qwen_2.5_vl_7b_fp8_scaled.safetensors",
+                "qwen_3_4b_fp8_mixed.safetensors",
+            ],
+            "vae": ["qwen_image_vae.safetensors", "ae.safetensors"],
+        }
+        return values.get(kind, [])
+
+
 class ControlFakeComfy(QwenImageFakeComfy):
     def __init__(self) -> None:
         super().__init__()
@@ -658,10 +695,11 @@ def test_qwen_image_edit_workflow_uses_native_dual_image_conditioning() -> None:
     )
     assert workflow["1"]["class_type"] == "UNETLoader"
     assert workflow["4"]["inputs"]["type"] == "qwen_image"
-    assert workflow["4"]["inputs"]["device"] == "cpu"
+    assert workflow["4"]["inputs"]["device"] == "default"
     assert workflow["8"]["class_type"] == "TextEncodeQwenImageEdit"
     assert workflow["8"]["inputs"]["image"] == ["7", 0]
     assert workflow["12"]["class_type"] == "VAEEncode"
+    assert explicit_cpu_nodes(workflow) == []
     assert workflow["13"]["inputs"]["steps"] == 40
 
 
@@ -676,10 +714,45 @@ def test_qwen_image_2512_workflow_is_native_portrait_text_to_image() -> None:
     assert workflow["4"]["inputs"] == {
         "clip_name": "qwen_2.5_vl_7b_fp8_scaled.safetensors",
         "type": "qwen_image",
-        "device": "cpu",
+        "device": "default",
     }
     assert workflow["8"]["inputs"] == {"width": 1104, "height": 1472, "batch_size": 1}
     assert workflow["9"]["inputs"]["steps"] == 50
+
+
+def test_z_image_turbo_workflow_is_native_portrait_text_to_image() -> None:
+    workflow = z_image_turbo_workflow(
+        prompt="One original human footman with a sword and shield.",
+        negative_prompt="pixel art, duplicate character",
+        seed=42,
+        prefix="Text2ModelStudio/test",
+    )
+    assert workflow["1"]["class_type"] == "UNETLoader"
+    assert workflow["1"]["inputs"]["unet_name"] == "z_image_turbo_int8_convrot.safetensors"
+    assert workflow["2"]["inputs"] == {
+        "clip_name": "qwen_3_4b_fp8_mixed.safetensors",
+        "type": "stable_diffusion",
+        "device": "default",
+    }
+    assert workflow["3"]["inputs"]["vae_name"] == "ae.safetensors"
+    # turbo/distilled settings, not the non-distilled defaults: few steps, cfg=1
+    assert workflow["7"]["inputs"]["steps"] == 8
+    assert workflow["7"]["inputs"]["cfg"] == 1.0
+    assert workflow["6"]["inputs"] == {"width": 1104, "height": 1472, "batch_size": 1}
+
+
+def test_tiled_vae_decode_is_available_without_changing_the_sampler() -> None:
+    workflow = concept_workflow(
+        checkpoint="model.safetensors",
+        positive="one isolated asset",
+        negative="clutter",
+        seed=42,
+        prefix="Text2ModelStudio/test",
+        tiled_vae=True,
+    )
+    assert workflow["6"]["class_type"] == "VAEDecodeTiled"
+    assert workflow["6"]["inputs"]["tile_size"] == 512
+    assert workflow["5"]["class_type"] == "KSampler"
 
 
 def test_concept_workflow_chains_loras_and_pose_control_around_one_body() -> None:
@@ -1034,6 +1107,87 @@ def test_pipeline_prefers_installed_qwen_image_generation_for_a_typed_humanoid_b
     assert not any(item.evidence_id.endswith("qwen-edit-layout-guide") for item in stage.evidence)
     assert len(comfy.workflows) == 2
     assert all(workflow["1"]["class_type"] == "UNETLoader" for workflow in comfy.workflows)
+
+
+def test_pipeline_uses_z_image_turbo_when_explicitly_selected(tmp_path: Path) -> None:
+    """z_image_turbo is a deliberate, explicit-only choice -- unlike Qwen it is
+    never picked by "auto" -- so this exercises both the explicit-selection
+    path and confirms it never falls back to a pose-guided SDXL render."""
+    store = StudioStore(tmp_path)
+    run = store.create("footman-zimage-v1", DESCRIPTION)
+    run.concept_backend = "z_image_turbo"
+    store.save(run)
+    qwen = FakeQwen()
+    comfy = ZImageTurboFakeComfy()
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        coordinator = StudioCoordinator(
+            store,
+            qwen_factory=lambda run: qwen,
+            comfy_factory=lambda run: comfy,
+            executor=executor,
+        )
+        assert coordinator.submit("footman-zimage-v1") is True
+        result = wait_for(store, "footman-zimage-v1", "awaiting_review")
+    stage = result.stage("D1")
+    assert stage.metrics["workflow_strategy"] == "z_image_turbo_t2i_v1"
+    assert len(comfy.workflows) == 2
+    assert all(workflow["1"]["class_type"] == "UNETLoader" for workflow in comfy.workflows)
+    assert all(
+        workflow["1"]["inputs"]["unet_name"] == "z_image_turbo_int8_convrot.safetensors"
+        for workflow in comfy.workflows
+    )
+    candidates = [
+        item
+        for item in stage.evidence
+        if item.media_type == "image/png" and item.metrics.get("selectable") is True
+    ]
+    assert candidates
+    assert all(item.metrics["concept_backend"] == "z_image_turbo" for item in candidates)
+
+
+def test_auto_prefers_z_image_turbo_over_qwen_when_both_are_installed(tmp_path: Path) -> None:
+    """Measured on an 8 GB card, one candidate costs ~48 s on Z-Image against
+    ~605 s on Qwen for output in the same stylistic family. D1 renders several
+    candidates per iteration and re-renders all of them on rejection, so
+    letting `auto` pick Qwen turns a minutes-long stage into an hours-long
+    one. Qwen stays selectable explicitly; it is just not the default."""
+    store = StudioStore(tmp_path)
+    run = store.create("footman-zimage-auto-v1", DESCRIPTION)
+    run.concept_backend = "auto"
+    store.save(run)
+    qwen = FakeQwen()
+    comfy = BothGeneratorsFakeComfy()
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        coordinator = StudioCoordinator(
+            store,
+            qwen_factory=lambda run: qwen,
+            comfy_factory=lambda run: comfy,
+            executor=executor,
+        )
+        assert coordinator.submit("footman-zimage-auto-v1") is True
+        result = wait_for(store, "footman-zimage-auto-v1", "awaiting_review")
+    assert result.stage("D1").metrics["workflow_strategy"] == "z_image_turbo_t2i_v1"
+
+
+def test_auto_still_falls_back_to_qwen_when_z_image_is_not_installed(tmp_path: Path) -> None:
+    """The preference is an ordering, not a hard requirement: a machine with
+    only Qwen installed must still get Qwen from `auto`, not SDXL."""
+    store = StudioStore(tmp_path)
+    run = store.create("footman-qwen-auto-v1", DESCRIPTION)
+    run.concept_backend = "auto"
+    store.save(run)
+    qwen = FakeQwen()
+    comfy = QwenImageFakeComfy()
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        coordinator = StudioCoordinator(
+            store,
+            qwen_factory=lambda run: qwen,
+            comfy_factory=lambda run: comfy,
+            executor=executor,
+        )
+        assert coordinator.submit("footman-qwen-auto-v1") is True
+        result = wait_for(store, "footman-qwen-auto-v1", "awaiting_review")
+    assert result.stage("D1").metrics["workflow_strategy"] == "qwen_image_2512_t2i_v1"
 
 
 def test_manual_qwen_image_prompt_is_preserved_rendered_and_reviewed(tmp_path: Path) -> None:
@@ -1708,6 +1862,45 @@ def test_d2_backend_is_configurable_back_to_a_subprocess_worker(tmp_path: Path) 
     # It still receives the approved concept, keyed to RGBA -- only the
     # backend changed, not where the image comes from.
     assert list(geometry[0].input_paths.values())[0].endswith("geometry_seed_rgba.png")
+
+
+def test_automatic_oom_retry_is_bounded_and_changes_the_memory_plan(tmp_path: Path) -> None:
+    store = StudioStore(tmp_path)
+    run = store.create("oom-retry-v1", DESCRIPTION)
+    run.current_stage = "D1"
+    run.state = "running"
+    run.stage("D1").state = "running"
+    store.save(run)
+    coordinator = StudioCoordinator(
+        store,
+        qwen_factory=lambda current: FakeQwen(),
+        comfy_factory=lambda current: FakeComfy(),
+    )
+    try:
+        assert coordinator._schedule_automatic_retry(
+            "oom-retry-v1", RuntimeError("CUDA out of memory")
+        ) is True
+        retried = store.load("oom-retry-v1").stage("D1")
+        assert retried.retry_attempt == 1
+        assert retried.pending_overrides == {
+            "concept_width": 576,
+            "concept_height": 768,
+            "concept_candidates": 2,
+        }
+        assert coordinator._schedule_automatic_retry(
+            "oom-retry-v1", RuntimeError("GPU admission denied")
+        ) is True
+        second = store.load("oom-retry-v1").stage("D1")
+        assert second.pending_overrides == {
+            "concept_width": 512,
+            "concept_height": 640,
+            "concept_candidates": 2,
+        }
+        assert coordinator._schedule_automatic_retry(
+            "oom-retry-v1", RuntimeError("CUDA out of memory")
+        ) is False
+    finally:
+        coordinator.close()
 
 
 def test_d3_cleanup_runs_end_to_end_through_the_same_fake_worker(tmp_path: Path) -> None:

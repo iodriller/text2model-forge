@@ -16,10 +16,12 @@ installing large model stacks.
 ## What it provides
 
 - A typed eleven-stage text-to-model pipeline with resumable runs.
-- Text-to-2D choices through Qwen Image, SDXL, or an existing ComfyUI service.
+- Text-to-2D choices through Qwen Image, Z-Image Turbo, SDXL, or an existing
+  ComfyUI service.
 - Pluggable image-to-3D, Blender, retopology, motion, sprite, and engine workers.
-- Browser controls for profiles, model backends, retries, corrections,
-  cancellation, progress, evidence inspection, and rollback.
+- Browser controls for profiles, model backends, sequential candidate budgets,
+  GPU policy, retries, corrections, cancellation, work-unit/VRAM progress,
+  evidence inspection, and rollback.
 - AI review recommendations that a person must explicitly confirm. The stored
   human decision remains append-only and is bound to both the review ID and the
   evidence hashes it saw.
@@ -99,6 +101,15 @@ Weights and managed tools go under ignored `runtime/`; runs default to
 For the measured low-VRAM path and its limitations, see the
 [experimental 8 GB local stack](docs/8gb-local-stack.md).
 
+The 8 GB profile does not pretend a small card is a 24 GB card. It serializes
+GPU work, unloads the inactive model family, checks live free VRAM before each
+heavy call, reserves driver/display headroom, uses tiled VAE decode, and spends
+extra time on independent concept candidates. Deterministic pixel gates discard
+unsafe candidates before the reviewer compares only the best few. This keeps
+peak residency bounded; it improves the chance of a good input but cannot make
+a small model mathematically equivalent to a 27B model or qualify untested 3D
+quality.
+
 ## Docker
 
 The container runs Studio as an unprivileged UID, persists work in a named
@@ -144,7 +155,8 @@ The lock files are hash-pinned exports from `pyproject.toml`; see
 Studio binds to `127.0.0.1` by default. A new run exposes the simple, advanced,
 and 8 GB profiles together with model/backend choices. Each stage reports
 normalized progress, current work, produced evidence, and machine-actionable
-errors.
+errors. The 8 GB profile is selected automatically when the detected primary
+GPU is in that class; all profiles remain manually selectable.
 
 ```powershell
 python -m text2model_forge studio --workspace C:/Text2ModelForgeRuns --open-browser

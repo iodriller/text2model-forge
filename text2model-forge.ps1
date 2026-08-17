@@ -444,7 +444,9 @@ function Start-ComfyUI {
     $logRoot = Join-Path $RuntimeRoot "logs"
     New-Item -ItemType Directory -Force -Path $logRoot | Out-Null
     $arguments = @("-s", "ComfyUI\main.py", "--listen", "127.0.0.1", "--port", "8188", "--windows-standalone-build")
-    if ($Gpu -in @("auto", "nvidia")) { $arguments += "--lowvram" }
+    if ($Gpu -in @("auto", "nvidia")) {
+        $arguments += @("--normalvram", "--reserve-vram", "0.75", "--preview-method", "none")
+    }
     elseif ($Gpu -eq "cpu") { $arguments += "--cpu" }
     Start-Process -FilePath $python -ArgumentList $arguments -WorkingDirectory $script:ComfyRoot `
         -WindowStyle Hidden -RedirectStandardOutput (Join-Path $logRoot "comfyui.stdout.log") `

@@ -1,9 +1,10 @@
 # Experimental local 8 GB path
 
 This guide records a real 8 GB-class text-to-concept-to-geometry run and the
-settings derived from it. It does **not** qualify the complete D0–D10 pipeline
-on 8 GB, and it does not mean every optional model is open source. The control
-plane is local and needs no API key; each selected model has separate terms.
+settings derived from it, plus the bounded-memory search policy implemented
+after that run. It does **not** qualify the complete D0–D10 pipeline on 8 GB,
+and it does not mean every optional model is open source. The control plane is
+local and needs no API key; each selected model has separate terms.
 
 ## Automated setup on Windows, Linux, and macOS
 
@@ -58,25 +59,79 @@ orchestration.
 
 | Stage | Tool | VRAM | License |
 |---|---|---|---|
-| D1 text → 2D | SDXL / DreamShaper in ComfyUI | ~6 GB | open weights |
+| D1 text → 2D | SDXL / DreamShaper in ComfyUI | ~5.8–6 GB estimate | open weights |
 | **D2 2D → 3D** | **Hunyuan3D-2 (native ComfyUI)** | **~5 GB mini, ~6 GB std** | Tencent community licence — see below |
 | D4–D6 rig + skin | [UniRig](https://github.com/VAST-AI-Research/UniRig) | ~8 GB | MIT |
 | D7 motion | Donor retarget (Quaternius CC0 catalog entry) | CPU + Blender | CC0-1.0 |
 | D8–D9 surface, sprites | Blender | CPU/GPU | GPL |
 
-Total peak VRAM is set by whichever single stage is running, not the sum —
-stages run one at a time, and the Studio releases ComfyUI's models between
-them (`Free ComfyUI memory` on the run page).
+Total peak VRAM is set by whichever single admitted job is running, not the
+sum. Studio takes a cross-process GPU lease, unloads the inactive reviewer or
+ComfyUI model family, waits for the release to appear in telemetry, and then
+requires:
+
+```text
+live_free_vram >= job_envelope + safety_margin
+```
+
+The 8 GB profile reserves 0.75 GiB. Unknown telemetry fails closed under
+`gpu_compute_only`; `prefer_gpu` is the explicitly degraded mode. Estimated
+envelopes plan capacity, while `strict_device_only` accepts only measured
+envelopes and is currently blocked because Blender topology, packaging, and
+other deterministic utilities legitimately run on CPU.
+
+### How extra time becomes quality without extra peak VRAM
+
+The profile runs six concepts **sequentially**, never as one batch. If one
+independent sample has probability `p` of satisfying the production contract,
+the idealized probability of at least one success after `N` samples is:
+
+```text
+P(at least one pass) = 1 - (1 - p)^N
+```
+
+Real diffusion samples are not perfectly independent and the selector can be
+wrong, so this is a capacity argument, not a quality guarantee. The actual
+selection policy is deliberately stricter:
+
+1. generate each seed at the same bounded resolution;
+2. derive a geometry-ready alpha mask and measure nonblank content,
+   resolution, contrast, edge detail, foreground area, border contact, and
+   centering;
+3. reject hard failures before semantic review;
+4. rank survivors deterministically and send at most three to the vision
+   reviewer;
+5. require a hash-bound human decision before D2.
+
+Tiled VAE decode divides the final decode into overlapping 512-pixel tiles.
+This reduces decode memory rather than changing the denoising model. On an OOM,
+the bounded retry reduces each D1 dimension to 80%; pixel area therefore falls
+to approximately `0.8² = 0.64` of the preceding attempt. D2 retries reduce
+octree resolution and steps. Every change is recorded as a stage override; the
+system does not retry the identical memory plan indefinitely.
+
+This design follows ComfyUI's documented
+[`VAEDecodeTiled`](https://docs.comfy.org/built-in-nodes/VAEDecodeTiled) and
+[memory controls](https://docs.comfy.org/troubleshooting/overview), and uses
+the ordinary best-of-N endpoint selection described in
+[inference-time scaling for diffusion models](https://openreview.net/forum?id=jUfT6uIY1C).
+Hunyuan's own repository states 6 GB for shape-only generation and 16 GB for
+shape plus texture; Text2Model uses only the shape path at D2. See the
+[official Hunyuan3D-2 model table](https://github.com/Tencent-Hunyuan/Hunyuan3D-2#models-zoo).
 
 ## 1. ComfyUI
 
 Install ComfyUI and start it on the default port:
 
 ```powershell
-python main.py --listen 127.0.0.1 --port 8188 --lowvram
+python main.py --listen 127.0.0.1 --port 8188 --normalvram `
+  --reserve-vram 0.75 --preview-method none
 ```
 
-`--lowvram` matters on 8 GB. The Studio expects `http://127.0.0.1:8188`.
+`--normalvram` lets ComfyUI's smart memory manager move inactive weights while
+keeping workflow nodes on their declared accelerator. `--reserve-vram` leaves
+driver/display headroom, and disabling previews avoids spending memory on UI
+intermediates. The Studio expects `http://127.0.0.1:8188`.
 
 ## 2. Models
 
@@ -137,8 +192,9 @@ python -m text2model_forge studio --workspace C:/Text2ModelForgeRuns --open-brow
 
 Describe your asset, then:
 
-1. **D1** renders two concept candidates. Retry, edit the prompt, or pin a
-   seed until one is right. This is cheap and local — iterate here.
+1. **D1** renders six concept candidates sequentially, rejects unsafe masks or
+   framing deterministically, and sends no more than three finalists to the
+   reviewer. Retry, edit the prompt, or pin a seed until one is right.
 2. **Approve one.** That exact image becomes the 3D input. Nothing is
    re-rendered behind your back.
 3. **D2** feeds it to Hunyuan3D and returns a mesh, then gates it on real
@@ -155,27 +211,42 @@ Describe your asset, then:
   permission. The lineage system records this, and `export_policy.py` blocks a
   globally cleared release export that depends on it.
 - **ComfyUI's native Hunyuan3D support is shape-only.** Texture generation is
-  not part of it; the full shape+texture path needs ~12 GB. Surface work
+  not part of it; upstream documents 16 GB for the full shape+texture path. Surface work
   happens at D8 instead, which is where this pipeline already does it.
-- **8 GB is the real ceiling.** The concept model and the 3D model do not fit
-  in VRAM simultaneously. Use the run page's memory-release control between
-  stages if ComfyUI starts swapping. Start ComfyUI with `--lowvram`.
+- **The installed native Hunyuan node is single-image conditioning.** It
+  accepts one CLIP-vision output, so D2 cannot honestly claim multiview
+  reconstruction. Additional D1 candidates improve the chosen front/three-
+  quarter input; they do not reveal unseen back geometry. A multiview backend
+  needs its own node contract, memory envelope, and live qualification before
+  it can replace this path.
+- **Qwen Image and Z-Image are options, not 8 GB qualifications.** Their
+  quantized ComfyUI files may work through weight movement, but the exact
+  combinations have not been measured end to end under this policy. SDXL is
+  therefore the 8 GB default. Selecting another backend is an explicit
+  experiment, and admission only proves the configured estimate fits the
+  observed free-memory budget—not that the estimate is correct.
+- **8 GB is the real ceiling.** The concept model, reviewer, and 3D model do
+  not fit in VRAM simultaneously. Studio now performs the unload/admission
+  handoff automatically and refuses the next call if free memory plus the
+  configured margin is insufficient.
 - **The mesh is dense and unwelded.** A real run produced 182k vertices /
   469k faces across many components, because "surface net" emits an
   unmerged surface. That is expected and is exactly what D3's cleanup stage
   exists to fix; it is not a sign the generation failed.
-- **Your concept must sit on a plain backdrop.** D2 isolates the subject by
-  growing the background inward from the image border, then flattens it to
-  white. A busy or cluttered background leaves fragments that the 3D model
-  will faithfully reconstruct as slabs around your asset.
+- **Your concept must pass the chroma and framing gate.** Every backend receives
+  the same flat green-screen contract. D1 isolates only edge-connected chroma,
+  measures the resulting silhouette, and refuses unsafe candidates before a
+  person can approve them. D2 repeats the conversion against the exact
+  approved source.
 - **D0 needs `spec_strategy = "chunked"` on a small model.** The qualified
   reviewer is a 27B model, and the default one-shot spec compile assumes it.
   On 8 GB, see "Compiling the spec on a 7–8B model" below — this is solved,
   not merely a warning.
-- **The review stages still want a bigger model than 8 GB fits.** D0 is
-  handled by chunking; the *vision* review gates (D1's critic, D2/D3's
-  assessors) have not been given the same treatment yet and remain the
-  weakest link on a small local model.
+- **A small reviewer is still a small reviewer.** D0 is handled by chunking.
+  D1 bounds the small vision model's task to at most three already-screened
+  candidates, but D2/D3 semantic review remains weaker than the qualified 27B
+  path. Sequential search improves coverage; it does not reproduce 27B model
+  capacity.
 
 ## Compiling the spec on a 7–8B model
 

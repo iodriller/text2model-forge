@@ -9,6 +9,15 @@
     "operations": ["geometry.generate_from_rgba"],
     "requires_gpu": true,
     "exclusive_gpu": true,
+    "gpu_memory": {
+      "peak_vram_gb": 4.79,
+      "status": "measured",
+      "backend": "CUDA 12.8 / torch 2.7.1",
+      "precision": "FP16",
+      "qualification_id": "resources/qualifications/triposg-1.5b_windows_rtx5090.json",
+      "cpu_compute_allowed": true,
+      "notes": "Measured torch peak for the qualified low-step run; scikit-image marching cubes is deterministic CPU post-processing."
+    },
     "supports_cancel": true,
     "deterministic": false,
     "environment_digest": "torch-2.7.1+cu128-python-3.10",

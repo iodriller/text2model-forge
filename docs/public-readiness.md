@@ -18,6 +18,13 @@ unresolved or territory-limited terms, and the animated path is research-grade.
 A large test suite proves the coordinator and contracts; it cannot prove
 generator quality.
 
+The current 8 GB implementation adds fail-closed live VRAM admission,
+single-job GPU leases, inactive-service unloading, tiled decode, sequential
+best-of-N concept generation, deterministic pre-review rejection, and bounded
+OOM retries that change the memory plan. Those are useful reliability controls,
+not new live product qualification. The recorded 10-case result below remains
+the latest corpus evidence until the post-change stack is rerun.
+
 Accordingly, the defensible public label is **developer preview**, not stable,
 production-ready, one-click text-to-3D, or a generator model. The repository
 becomes broadly useful when an independent user can install it, reproduce at
@@ -61,7 +68,7 @@ All gates are binary. A partial pass is a failed public-release gate.
 | Reproducible core install | Hash-locked clean install passes on Windows, Ubuntu, and macOS | Windows and bare Ubuntu passed locally; macOS/hosted evidence pending |
 | Package | Wheel installs outside the checkout and can load 13 manifests, resolve config, and run the demo | Passed locally from a clean Python 3.12 environment; hosted evidence pending |
 | Container | Compose validates and the pinned, non-root image builds and becomes healthy | Passed locally as UID 10001 with HTTP 200 from `/doctor` |
-| Deterministic behavior | Full randomized tests and deterministic D0–D10 demo pass | Passed locally: 364 tests, one environment skip, demo completed |
+| Deterministic behavior | Full randomized tests and deterministic D0–D10 demo pass | Passed locally: 410 tests, one environment skip, demo completed |
 | Security automation | Dependency audit, full-history secret scan, and CodeQL are green | Local audit has no known vulnerabilities; hosted checks pending |
 | Live usefulness | Exactly ten real 8 GB runs attempted; at least eight pass the checked-in recognition/geometry/surface/features rubric | **Failed in the recorded corpus: 10/10 reached real D1 review, 0/10 satisfied its hard requirements, and no case reached a human-approved final asset** |
 | Release integrity | Tag matches package version; archives, wheel/sdist, checksums, SPDX SBOMs, and attestations publish | Workflow implemented; must not tag before preceding gates pass |

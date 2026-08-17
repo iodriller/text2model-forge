@@ -12,6 +12,8 @@ stage can measure them:
 
 - requested files exist, parse, and match their recorded SHA-256 digests;
 - image dimensions, alpha masks, frame counts, and atlas bounds are valid;
+- D1 concepts are nonblank, sufficiently isolated, centered, uncropped, and
+  above the configured pixel-quality threshold before semantic review;
 - mesh topology and component metrics are captured without treating any one
   proxy (for example raw component count) as visual quality;
 - required named components, equipment, states, and animations are present;

@@ -2,8 +2,12 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+from pydantic import ValidationError
+
 from text2model_forge.config import load_local_config
 from text2model_forge.manifests import load_manifests, preflight
+from text2model_forge.schemas import GpuMemoryEnvelope
 
 
 def test_worker_manifests_are_strict_unique_and_keep_rdmesh_blocked() -> None:
@@ -22,6 +26,11 @@ def test_worker_manifests_are_strict_unique_and_keep_rdmesh_blocked() -> None:
     assert manifests["optimizer.qwen3.6-27b"].capability.candidate_id == "qwen3.6-27b"
     assert manifests["triposg.1.5b"].license_gate == "permitted"
     assert manifests["hunyuan3d.2.1"].license_gate == "review_required"
+    assert manifests["hunyuan3d.2.1"].capability.gpu_memory.peak_vram_gb == 6.0
+    assert manifests["triposg.1.5b"].capability.gpu_memory.status == "measured"
+    assert manifests["triposg.1.5b"].capability.gpu_memory.cpu_compute_allowed is True
+    assert manifests["trellis2.4b"].capability.gpu_memory.peak_vram_gb == 24.0
+    assert manifests["optimizer.qwen3.6-27b"].capability.gpu_memory.status == "measured"
     assert manifests["r-dmesh"].lifecycle == "blocked"
     assert manifests["r-dmesh"].license_gate == "blocked"
 
@@ -37,3 +46,13 @@ def test_example_local_config_is_strict() -> None:
     config = load_local_config(path)
     assert config is not None
     assert config.workers["triposg.1.5b"].command_prefix
+
+
+def test_measured_gpu_envelope_requires_a_qualification_record() -> None:
+    with pytest.raises(ValidationError, match="qualification_id"):
+        GpuMemoryEnvelope(
+            peak_vram_gb=6.0,
+            status="measured",
+            backend="CUDA",
+            precision="FP16",
+        )

@@ -120,10 +120,26 @@ def test_studio_overrides_extracts_only_known_studio_run_fields():
 
 def test_quality_overrides_resolves_asset_quality_to_its_tier_section():
     standard = resolve_settings(profile="simple")  # simple.toml pins quality="standard"
-    assert quality_overrides(standard) == {"concept_steps": 30, "concept_cfg": 6.0}
+    assert quality_overrides(standard) == {
+        "concept_steps": 30,
+        "concept_cfg": 6.0,
+        "concept_candidates": 3,
+        "concept_width": 768,
+        "concept_height": 1024,
+        "concept_min_quality_score": 0.4,
+        "vae_tiling": True,
+    }
 
     high = resolve_settings(profile="advanced")  # advanced.toml pins quality="high"
-    assert quality_overrides(high) == {"concept_steps": 45, "concept_cfg": 7.0}
+    assert quality_overrides(high) == {
+        "concept_steps": 45,
+        "concept_cfg": 7.0,
+        "concept_candidates": 6,
+        "concept_width": 768,
+        "concept_height": 1024,
+        "concept_min_quality_score": 0.48,
+        "vae_tiling": True,
+    }
 
 
 def test_quality_overrides_excludes_sprite_views_since_it_is_not_a_studio_run_field():

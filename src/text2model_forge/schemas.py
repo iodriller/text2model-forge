@@ -5,7 +5,7 @@ from datetime import datetime
 from enum import Enum
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
 class StrictModel(BaseModel):
@@ -79,6 +79,30 @@ class AssetBrief(StrictModel):
     approval_required: bool = True
 
 
+class GpuMemoryEnvelope(StrictModel):
+    """Peak-memory evidence attached to one exact worker configuration.
+
+    ``estimated`` is useful for planning but never sufficient for strict
+    admission.  ``measured`` means the peak came from a real run identified by
+    ``qualification_id``; changing a model, driver, precision, or resolution
+    requires a new envelope rather than silently reusing the old number.
+    """
+
+    peak_vram_gb: float = Field(gt=0)
+    status: Literal["estimated", "measured"] = "estimated"
+    backend: str = Field(min_length=1)
+    precision: str = Field(min_length=1)
+    qualification_id: str | None = None
+    cpu_compute_allowed: bool = False
+    notes: str = ""
+
+    @model_validator(mode="after")
+    def measured_has_evidence(self) -> "GpuMemoryEnvelope":
+        if self.status == "measured" and not self.qualification_id:
+            raise ValueError("a measured GPU memory envelope requires qualification_id")
+        return self
+
+
 class WorkerCapability(StrictModel):
     schema_version: Literal[1] = 1
     worker_id: str = Field(pattern=r"^[a-z0-9][a-z0-9_.-]*$")
@@ -88,6 +112,10 @@ class WorkerCapability(StrictModel):
     operations: list[str] = Field(min_length=1)
     requires_gpu: bool = False
     exclusive_gpu: bool = False
+    # A declaration, not a promise: only ``measured`` envelopes may be used
+    # for fail-closed admission.  Unknown workers remain discoverable without
+    # pretending an estimate is qualification evidence.
+    gpu_memory: GpuMemoryEnvelope | None = None
     supports_cancel: bool = True
     deterministic: bool = False
     environment_digest: str | None = None
@@ -141,6 +169,8 @@ class ExternalWorkerRequest(StrictModel):
     input_paths: dict[str, str] = Field(default_factory=dict)
     parameters: dict[str, Any] = Field(default_factory=dict)
     output_directory: str = Field(min_length=1)
+    device_policy: Literal["prefer_gpu", "gpu_compute_only", "strict_device_only"] = "prefer_gpu"
+    gpu_safety_margin_gb: float = Field(default=0.75, ge=0)
 
 
 class ExternalWorkerOutput(StrictModel):
@@ -370,6 +400,10 @@ class WorkerJob(StrictModel):
     cwd: str
     timeout_seconds: float = Field(default=300, gt=0)
     exclusive_gpu: bool = False
+    gpu_memory_gb: float | None = Field(default=None, gt=0)
+    gpu_safety_margin_gb: float = Field(default=0.75, ge=0)
+    require_gpu_measurement: bool = False
+    device_policy: Literal["prefer_gpu", "gpu_compute_only", "strict_device_only"] = "prefer_gpu"
     environment: dict[str, str] = Field(default_factory=dict)
 
 
@@ -387,6 +421,9 @@ class WorkerResult(StrictModel):
     stderr_path: str
     gpu_before: dict[str, Any] | None = None
     gpu_after: dict[str, Any] | None = None
+    gpu_peak_used_gb: float | None = Field(default=None, ge=0)
+    gpu_admission_required_gb: float | None = Field(default=None, ge=0)
+    gpu_admission_free_gb: float | None = Field(default=None, ge=0)
 
 
 class PolicyDecision(StrictModel):

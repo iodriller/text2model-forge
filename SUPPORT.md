@@ -23,6 +23,7 @@ Status meanings:
 |---|---|---|
 | D0–D10 orchestration | supported | Deterministic providers exercise contracts, gates, hashing, rollback, and invalidation |
 | SDXL/Qwen concept generation | experimental | Live local runs exist; no published multi-prompt quality corpus |
+| 8 GB VRAM admission and sequential concept search | experimental | Live NVIDIA telemetry, bounded retry policy, tiled decode, and deterministic contracts are implemented; a complete post-change D0–D10 qualification is pending |
 | Hunyuan3D on 8 GB-class NVIDIA | qualified, restricted | One real concept-to-geometry run; community license is territory-restricted; full chain not qualified |
 | TRELLIS.2 on RTX 5090/WSL2 | qualified | Single partial smoke record; official upstream requirements are higher and compatibility patches were needed |
 | TripoSG / InstantMesh | qualified or discovered | Individual smoke records exist; quality and reproducibility remain incomplete |

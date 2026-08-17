@@ -10,7 +10,12 @@ import time
 import pytest
 from pydantic import BaseModel, ConfigDict, Field
 
-from text2model_forge.gpu import GpuLease, GpuLeaseBusy
+from text2model_forge.gpu import (
+    GpuLease,
+    GpuLeaseBusy,
+    GpuMemoryAdmissionError,
+    admit_gpu_memory,
+)
 from text2model_forge.localdeploy import LocalDeployStructuredClient
 from text2model_forge.optimizer import LocalDeployOptimizer
 from text2model_forge.schemas import (
@@ -33,6 +38,21 @@ def test_gpu_lease_is_exclusive_and_releasable(tmp_path) -> None:
     second.acquire()
     second.release()
     assert not second.path.exists()
+
+
+def test_gpu_admission_uses_live_free_memory_and_explicit_headroom() -> None:
+    snapshot = {
+        "device": {"name": "fixture GPU", "total_gb": 8.0, "used_gb": 1.0, "free_gb": 7.0}
+    }
+    assert admit_gpu_memory(6.0, safety_margin_gb=0.75, snapshot=snapshot) is snapshot
+    with pytest.raises(GpuMemoryAdmissionError, match="needs 6.50 GiB plus 0.75 GiB"):
+        admit_gpu_memory(6.5, safety_margin_gb=0.75, snapshot=snapshot)
+
+
+def test_gpu_admission_fails_closed_when_measurement_is_required(monkeypatch) -> None:
+    monkeypatch.setattr("text2model_forge.gpu.gpu_memory_snapshot", lambda: None)
+    with pytest.raises(GpuMemoryAdmissionError, match="could not be measured"):
+        admit_gpu_memory(4.0, require_measurement=True)
 
 
 def test_worker_manager_captures_output_and_times_out_process_tree(tmp_path, monkeypatch) -> None:

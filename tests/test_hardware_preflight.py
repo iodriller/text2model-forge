@@ -23,11 +23,14 @@ from text2model_forge.hardware import (
 from text2model_forge.preflight import (
     Check,
     check_comfy_nodes,
+    check_device_policy,
     check_donor_motion,
     check_equipment_conformance_capability,
     check_reviewer_fits,
+    check_gpu_safety_margin,
     check_spec_strategy,
     check_voxel_vs_grip,
+    check_z_image_turbo_models,
 )
 
 
@@ -122,6 +125,33 @@ def test_preflight_accepts_a_reviewer_that_fits():
     assert check.status == "ok"
 
 
+def test_gpu_compute_policy_accepts_deterministic_cpu_utilities_but_not_missing_gpu():
+    accepted = check_device_policy(_card(8.0), {"device_policy": "gpu_compute_only"}, {})
+    assert accepted.status == "ok"
+    missing = check_device_policy(
+        HardwareProfile(detected=False, source="none"),
+        {"device_policy": "gpu_compute_only"},
+        {},
+    )
+    assert missing.status == "fail"
+
+
+def test_strict_device_policy_discloses_current_cpu_stage_blocker():
+    check = check_device_policy(
+        _card(8.0),
+        {"device_policy": "strict_device_only"},
+        {"D3": {"manifold_policy": "if_needed"}},
+    )
+    assert check.status == "fail"
+    assert "topology" in check.detail
+
+
+def test_gpu_margin_below_half_a_gibibyte_fails_preflight():
+    check = check_gpu_safety_margin(_card(8.0), {"gpu_safety_margin_gb": 0.25})
+    assert check.status == "fail"
+    assert "0.75" in check.remedy
+
+
 def test_preflight_catches_monolithic_spec_on_a_small_model():
     check = check_spec_strategy({"model": "qwen3-vl:8b-instruct", "spec_strategy": "monolithic"})
     assert check.status == "fail"
@@ -188,6 +218,60 @@ def test_preflight_catches_a_comfy_without_hunyuan3d_nodes(monkeypatch: pytest.M
     check = check_comfy_nodes({"comfy_url": "http://x"}, {"D2": {"backend": "hunyuan3d"}})
     assert check.status == "fail"
     assert "Hunyuan3Dv2Conditioning" in check.detail
+
+
+def test_tiled_vae_is_part_of_preflight_when_enabled(monkeypatch: pytest.MonkeyPatch):
+    def object_info(url: str, **_kwargs):
+        if url.endswith("/system_stats"):
+            return {"system": {}}
+        node = url.rsplit("/", 1)[-1]
+        if node == "VAEDecodeTiled":
+            return None
+        return {node: {}}
+
+    monkeypatch.setattr("text2model_forge.preflight._http_json", object_info)
+    check = check_comfy_nodes(
+        {"comfy_url": "http://x", "vae_tiling": True},
+        {"D2": {"backend": "hunyuan3d"}},
+    )
+    assert check.status == "fail"
+    assert "VAEDecodeTiled" in check.detail
+
+
+def test_z_image_turbo_check_skipped_when_not_selected():
+    """A card not using this backend has no reason to fail preflight over
+    files it will never load -- only concept_backend=z_image_turbo makes
+    this check actionable."""
+    check = check_z_image_turbo_models({"comfy_url": "http://x", "concept_backend": "sdxl"})
+    assert check.status == "skip"
+
+
+def test_z_image_turbo_check_fails_when_files_are_missing(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setattr(
+        "text2model_forge.preflight._http_json",
+        lambda *a, **k: {
+            "UNETLoader": {"input": {"required": {"unet_name": [["other_model.safetensors"]]}}},
+            "CLIPLoader": {"input": {"required": {"clip_name": [["other_clip.safetensors"]]}}},
+            "VAELoader": {"input": {"required": {"vae_name": [["other_vae.safetensors"]]}}},
+        },
+    )
+    check = check_z_image_turbo_models({"comfy_url": "http://x", "concept_backend": "z_image_turbo"})
+    assert check.status == "fail"
+    assert "z_image_turbo_int8_convrot.safetensors" in check.detail
+    assert "z-image-turbo" in check.remedy
+
+
+def test_z_image_turbo_check_passes_when_files_are_present(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setattr(
+        "text2model_forge.preflight._http_json",
+        lambda *a, **k: {
+            "UNETLoader": {"input": {"required": {"unet_name": [["z_image_turbo_int8_convrot.safetensors"]]}}},
+            "CLIPLoader": {"input": {"required": {"clip_name": [["qwen_3_4b_fp8_mixed.safetensors"]]}}},
+            "VAELoader": {"input": {"required": {"vae_name": [["ae.safetensors"]]}}},
+        },
+    )
+    check = check_z_image_turbo_models({"comfy_url": "http://x", "concept_backend": "z_image_turbo"})
+    assert check.status == "ok"
 
 
 def test_comfy_node_check_skips_a_subprocess_backend(monkeypatch: pytest.MonkeyPatch):

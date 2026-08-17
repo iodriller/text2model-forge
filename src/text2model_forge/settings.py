@@ -190,6 +190,11 @@ _STUDIO_RUN_FIELDS = (
     "spec_strategy",
     "llm_timeout_seconds",
     "vram_handoff",
+    "device_policy",
+    "gpu_safety_margin_gb",
+    "gpu_unload_timeout_seconds",
+    "automatic_retry_limit",
+    "concept_review_limit",
 )
 
 
@@ -198,7 +203,15 @@ _OPTIONAL_STRING_FIELDS = ("style_lora", "prop_lora")
 # [quality.<tier>] keys that map onto a StudioRun field of the same name.
 # sprite_views is deliberately excluded: it is still DOCUMENTED, not WIRED
 # (see profiles/base.toml) -- StudioRun has no field for it yet.
-_QUALITY_STUDIO_RUN_FIELDS = ("concept_steps", "concept_cfg")
+_QUALITY_STUDIO_RUN_FIELDS = (
+    "concept_steps",
+    "concept_cfg",
+    "concept_candidates",
+    "concept_width",
+    "concept_height",
+    "concept_min_quality_score",
+    "vae_tiling",
+)
 
 
 def quality_overrides(resolved: ResolvedSettings) -> dict[str, Any]:

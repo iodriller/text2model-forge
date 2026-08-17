@@ -16,6 +16,9 @@ period, minor versions may change experimental worker and UI contracts.
   model/backend options, progress reporting, cancellation, and run controls.
 - Expanded deterministic tests for configuration, Studio, launchers, hardware,
   and state transitions.
+- Typed GPU-memory envelopes, live admission/peak telemetry, fail-closed device
+  policies, sequential concept search, deterministic D1 quality gates, and
+  tiled VAE decoding.
 
 ### Changed
 
@@ -27,6 +30,9 @@ period, minor versions may change experimental worker and UI contracts.
   including the standalone-prop versus multi-object-environment boundary.
 - Rigid-articulated stages now require motion explicitly requested by the
   brief; removable real-world parts no longer invent an unwanted rig.
+- The managed NVIDIA ComfyUI launch reserves VRAM while keeping learned
+  compute on GPU; the 8 GB profile uses SDXL by default and spends additional
+  time on six sequential candidates rather than increasing peak residency.
 
 ## [0.1.0] - 2026-07-13
 

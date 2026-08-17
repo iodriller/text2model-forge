@@ -9,12 +9,10 @@ worker protocol, human gates, config resolution, and the browser control
 plane. `src/text2model_forge/sprites/` is the older directional-sprite renderer text2model_forge's D8/D9
 stages reuse for its ComfyUI multiview client and Blender view baker.
 
-This repository was extracted from EmberDefense, where both packages were
-originally built and are still used as a pinned dependency. Nothing here may
-depend on EmberDefense, any other specific game project, or any specific
-character/creature identity -- this is a general-purpose tool. If you find a
-reference back to a specific consuming project, that is a regression; fix it
-at the root rather than adding a special case.
+Nothing here may depend on a specific consuming project or character/creature
+identity: this is a general-purpose tool. If you find a consumer-specific
+reference, that is a regression; fix it at the root rather than adding a
+special case.
 
 Use these durable sources of truth:
 
@@ -132,9 +130,7 @@ gitignored; copy `machine.example.toml` to get one.
   with a WIRED or DOCUMENTED marker in its section comment depending on
   whether `studio_pipeline.py` actually reads it yet.
 - Keep `src/text2model_forge/` and `src/text2model_forge/sprites/` decoupled from any specific consuming
-  project. `tests/test_unity_candidate_contract.py` asserts the string
-  "EmberDefense" never appears in the Unity smoke-check template; treat any
-  similarly specific, non-generic identifier the same way.
+  project. Treat any consumer-specific identifier as a regression.
 - Prefer extending an existing adapter's typed request/response contract
   over adding a new ad hoc script.
 

@@ -9,6 +9,15 @@
     "operations": ["optimizer.diagnose", "optimizer.rank_candidates"],
     "requires_gpu": true,
     "exclusive_gpu": true,
+    "gpu_memory": {
+      "peak_vram_gb": 17.38,
+      "status": "measured",
+      "backend": "Ollama through LocalDeploy",
+      "precision": "quantized model artifact",
+      "qualification_id": "resources/qualifications/qwen3.6-27b_ollama_rtx5090.json",
+      "cpu_compute_allowed": false,
+      "notes": "Observed from the serving process report with 100% GPU placement; exact model digest is pinned by the qualification."
+    },
     "supports_cancel": true,
     "deterministic": false,
     "input_media_types": ["application/json", "image/png"],

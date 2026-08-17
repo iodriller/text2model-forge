@@ -9,6 +9,14 @@
     "operations": ["geometry.generate", "texture.generate_pbr"],
     "requires_gpu": true,
     "exclusive_gpu": true,
+    "gpu_memory": {
+      "peak_vram_gb": 6.0,
+      "status": "estimated",
+      "backend": "CUDA",
+      "precision": "FP16 shape-only",
+      "cpu_compute_allowed": true,
+      "notes": "Official Hunyuan3D-2 shape-generation requirement; mesh extraction and serialization may use CPU."
+    },
     "supports_cancel": true,
     "deterministic": false,
     "input_media_types": ["image/png", "model/obj"],

@@ -47,11 +47,14 @@ checks the complete artifact lineage and territory/output terms.
 1. Resolve the manifest and machine binding.
 2. Validate input paths and the typed request.
 3. Acquire the required GPU lease, if any.
-4. Execute in an isolated subprocess with bounded time and captured logs.
-5. Validate the response and every declared artifact.
-6. Apply hard structural gates.
-7. Present evidence for AI analysis and human review where required.
-8. Promote only after the applicable gate and lineage policy pass.
+4. Measure live free VRAM and admit only when the worker envelope plus safety
+   margin fits; a required but unavailable measurement fails closed.
+5. Sample whole-device peak use while the worker owns the lease.
+6. Execute in an isolated subprocess with bounded time and captured logs.
+7. Validate the response and every declared artifact.
+8. Apply hard structural gates.
+9. Present evidence for AI analysis and human review where required.
+10. Promote only after the applicable gate and lineage policy pass.
 
 Adapters under `resources/adapters/` must not import the Studio coordinator.
 They accept the external worker contract and write a response file; orchestration
@@ -102,10 +105,6 @@ The exact lifecycle and blockers remain in the manifests. At a high level:
 | Surface/sprites | ComfyUI multiview plus Blender renderer | Approved geometry remains the identity source |
 | Runtime validation | Optional isolated Unity smoke project | Engine validation is not required for core glTF checks |
 
-The WSL2 setup notes for compatible geometry workers are maintained under
-`docs/environments/`. They are environment-specific supplements, not promises
-that a worker is available.
-
 ## Qualification rules
 
 A qualification record should contain:
@@ -113,6 +112,8 @@ A qualification record should contain:
 - exact source revision and executable/package hashes;
 - exact model/checkpoint revision and relevant license terms;
 - operating system, GPU, driver, runtime, and dependency versions;
+- a whole-device peak VRAM measurement when the manifest labels its envelope
+  `measured`; estimates must remain labeled estimates;
 - input artifact hashes;
 - transport/schema outcome and observed timing;
 - structural metrics and human-visible semantic findings;
@@ -122,6 +123,12 @@ A qualification record should contain:
 Never infer visual quality from a lower connected-component count, a successful
 subprocess exit, or a fake-provider test. Never remove a blocker merely to make
 a worker selectable.
+
+`gpu_compute_only` permits CPU orchestration and deterministic mesh utilities
+but rejects explicit CPU learned-inference nodes. `strict_device_only` also
+rejects workers whose measured envelope declares CPU computation. It is an
+experimental fail-closed policy, not a claim that the full D0–D10 chain can
+currently execute on one accelerator.
 
 ## Adding a worker
 

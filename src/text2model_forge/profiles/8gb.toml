@@ -10,6 +10,10 @@
 # and tells you where this profile disagrees with your machine.
 
 [studio]
+# SDXL is the conservative fully GPU-compute D1 default on this profile.
+# Qwen Image and Z-Image remain explicit Studio options, but their quantized
+# combinations have not yet received a whole-device 8 GB qualification.
+concept_backend = "sdxl"
 # 4B, not 8B, and this is a capacity decision rather than a quality one.
 # ComfyUI's process keeps ~2.2 GB of CUDA context and allocator pools even
 # after /free unloads its models, so the reviewer's real budget on an 8 GB
@@ -28,6 +32,11 @@ spec_strategy = "chunked"
 # Evict the other service before each call. Costs a model reload per switch,
 # which is the correct trade when the alternative is running on CPU.
 vram_handoff = true
+device_policy = "gpu_compute_only"
+gpu_safety_margin_gb = 0.75
+gpu_unload_timeout_seconds = 60
+automatic_retry_limit = 2
+concept_review_limit = 3
 
 # A local small model generating a multi-array chunk is legitimately slower
 # than a hosted endpoint; a timeout here is indistinguishable at the gate
@@ -35,7 +44,9 @@ vram_handoff = true
 llm_timeout_seconds = 900
 
 [asset]
-quality = "standard"
+# Spend time on six sequential candidates while preserving the same peak
+# residency as one candidate. This is the high-quality 8 GB strategy.
+quality = "high"
 
 [stages.D2]
 # Hunyuan3D-2 is the image-to-3D backend measured on this project's 8 GB-class

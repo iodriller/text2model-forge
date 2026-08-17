@@ -30,6 +30,20 @@ class SubprocessWorkerAdapter:
         self.environment = environment or {}
 
     def execute(self, request: ExternalWorkerRequest, *, timeout_seconds: float = 1800) -> ExternalWorkerResponse:
+        envelope = self.manifest.capability.gpu_memory
+        if (
+            request.device_policy == "strict_device_only"
+            and self.manifest.capability.requires_gpu
+            and (
+                envelope is None
+                or envelope.status != "measured"
+                or envelope.cpu_compute_allowed
+            )
+        ):
+            raise ExternalWorkerContractError(
+                f"worker {self.manifest.capability.worker_id} has no measured, GPU-only memory envelope; "
+                "strict-device execution is blocked until the entire worker is qualified"
+            )
         job_root = self.manager.workspace / "jobs" / request.job_id
         job_root.mkdir(parents=True, exist_ok=False)
         request_path = job_root / "request.json"
@@ -44,6 +58,17 @@ class SubprocessWorkerAdapter:
                 cwd=str(job_root),
                 timeout_seconds=timeout_seconds,
                 exclusive_gpu=self.manifest.capability.exclusive_gpu,
+                gpu_memory_gb=(
+                    envelope.peak_vram_gb
+                    if envelope is not None
+                    else None
+                ),
+                gpu_safety_margin_gb=request.gpu_safety_margin_gb,
+                require_gpu_measurement=(
+                    request.device_policy in {"gpu_compute_only", "strict_device_only"}
+                    and self.manifest.capability.requires_gpu
+                ),
+                device_policy=request.device_policy,
                 environment=self.environment,
             )
         )
