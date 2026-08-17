@@ -25,27 +25,27 @@ def test_public_source_has_no_consuming_project_reference() -> None:
 
 
 def test_default_product_configuration_has_no_third_party_art_style() -> None:
-    defaults = (ROOT / "darkness" / "profiles" / "base.toml").read_text(encoding="utf-8")
-    models = (ROOT / "darkness" / "studio_models.py").read_text(encoding="utf-8")
+    defaults = (ROOT / "src" / "text2model_forge" / "profiles" / "base.toml").read_text(encoding="utf-8")
+    models = (ROOT / "src" / "text2model_forge" / "studio_models.py").read_text(encoding="utf-8")
     combined = f"{defaults}\n{models}".lower()
     assert "warcraft" not in combined
 
 
 def test_public_project_identity_and_legal_files_are_present() -> None:
     metadata = (ROOT / "pyproject.toml").read_text(encoding="utf-8")
-    assert 'name = "vettedmesh"' in metadata
+    assert 'name = "text2model-forge"' in metadata
     assert 'license = "Apache-2.0"' in metadata
     for name in ("LICENSE", "NOTICE", "THIRD_PARTY_LICENSES.md"):
         assert (ROOT / name).is_file(), name
 
 
-def test_public_studio_surface_uses_vettedmesh_identity() -> None:
-    source = (ROOT / "darkness" / "studio_web.py").read_text(encoding="utf-8")
-    assert "VettedMesh Studio" in source
-    assert "Darkness Studio" not in source
+def test_public_studio_surface_uses_text2model_forge_identity() -> None:
+    source = (ROOT / "src" / "text2model_forge" / "studio_web.py").read_text(encoding="utf-8")
+    assert "Text2Model Forge Studio" in source
+    assert "Text2Model Studio" not in source
 
 
 def test_machine_local_motion_catalog_is_not_tracked_as_a_default() -> None:
     ignore = (ROOT / ".gitignore").read_text(encoding="utf-8")
-    assert "/motion_library/catalog.json" in ignore
-    assert (ROOT / "motion_library/catalog.example.json").is_file()
+    assert "/resources/motion_library/catalog.json" in ignore
+    assert (ROOT / "resources/motion_library/catalog.example.json").is_file()

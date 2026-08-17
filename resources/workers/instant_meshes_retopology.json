@@ -1,0 +1,30 @@
+{
+  "schema_version": 1,
+  "capability": {
+    "schema_version": 1,
+    "worker_id": "instant_meshes.retopology",
+    "worker_version": "7b316086-text2model_forge.1",
+    "candidate_id": "instant-meshes-7b316086",
+    "stages": ["D4_topology"],
+    "operations": ["retopology.instant_meshes"],
+    "requires_gpu": false,
+    "exclusive_gpu": false,
+    "supports_cancel": false,
+    "deterministic": true,
+    "environment_digest": "instant-meshes-7b316086-windows-x86_64-c9f6217e",
+    "input_media_types": ["model/obj"],
+    "output_media_types": ["model/obj", "application/json", "text/plain"]
+  },
+  "adapter": "subprocess",
+  "lifecycle": "research_ready",
+  "source_url": "https://github.com/wjakob/instant-meshes",
+  "pinned_revision": "7b3160864a2e1025af498c84cfed91cbfb613698",
+  "environment_kind": "windows",
+  "executable_candidates": ["%TEXT2MODEL_FORGE_INSTANT_MESHES_EXE%", "Instant Meshes.exe"],
+  "license_gate": "permitted",
+  "blockers": [
+    "The real TripoSG result is pure quad and deterministic but has 30 components and 454 boundary edges, so it is rejected.",
+    "The official project publishes rolling binaries rather than versioned GitHub releases; Text2Model pins the observed archive digest.",
+    "Windows child-process-tree cancellation is not qualified."
+  ]
+}

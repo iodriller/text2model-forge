@@ -1,10 +1,10 @@
 # Third-party tools, models, and assets
 
-The Apache-2.0 license in `LICENSE` covers VettedMesh's repository-authored
+The Apache-2.0 license in `LICENSE` covers Text2Model Forge's repository-authored
 source and documentation. It does **not** relicense software, model weights,
 checkpoints, donor assets, or generated outputs supplied by other parties.
 
-VettedMesh does not commit model weights, Blender, ComfyUI, Ollama, Unity, or
+Text2Model Forge does not commit model weights, Blender, ComfyUI, Ollama, Unity, or
 the Quaternius animation library. The launchers download optional components
 only after an explicit setup choice and, where required, explicit acceptance
 of the component's own terms. Every generated artifact retains backend and
@@ -21,7 +21,7 @@ unresolved.
 | SDXL checkpoints | Optional D1/D8 models | The exact checkpoint's Open RAIL or other model terms apply; never infer one checkpoint's terms from another |
 | Qwen image/reviewer models | Optional D0/D1/review models | The exact model card and weight license apply; record the model identifier and digest |
 | Hunyuan3D-2 | Optional D2 backend | Tencent Hunyuan 3D 2.0 Community License; excluded in the EU, UK, and South Korea and subject to notice/use restrictions. It is never a globally cleared default |
-| TRELLIS.2 | Optional D2 backend | Core code/weights are MIT; DINO encoders and NVIDIA rendering dependencies carry separate terms. Native texture paths are not globally/commercially cleared by VettedMesh |
+| TRELLIS.2 | Optional D2 backend | Core code/weights are MIT; DINO encoders and NVIDIA rendering dependencies carry separate terms. Native texture paths are not globally/commercially cleared by Text2Model Forge |
 | TripoSG | Optional D2 backend | MIT code and recorded MIT weights; caller-owned foreground masking is required to avoid non-commercial background-removal weights |
 | InstantMesh | Optional D2 backend | Apache-2.0 code; checkpoint licensing remains review-required where the model card is not explicit |
 | UniRig | Optional D4–D6 backend | MIT; installed separately. Current upstream release status and checkpoint terms must still be recorded |
@@ -45,7 +45,7 @@ any model used during the original qualification run.
 
 ## Output rights
 
-VettedMesh does not guarantee that a generated output is non-infringing or
+Text2Model Forge does not guarantee that a generated output is non-infringing or
 commercially usable. Users are responsible for prompts, input rights, model
 terms, applicable law, and human review. The lineage/export-policy code is a
 technical enforcement mechanism, not legal advice.

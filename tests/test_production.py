@@ -6,9 +6,9 @@ from pathlib import Path
 import pytest
 from PIL import Image, ImageDraw
 
-from assetforge.cli import build_parser, execute
-from assetforge.core import ForgeError, sha256_file
-from assetforge.production import package_production_unit, validate_production_config
+from text2model_forge.sprites.cli import build_parser, execute
+from text2model_forge.sprites.core import ForgeError, sha256_file
+from text2model_forge.sprites.production import package_production_unit, validate_production_config
 
 
 DIRECTIONS = ["north", "south", "east", "west"]
@@ -165,7 +165,7 @@ def test_protected_overpaint_is_hash_locked_in_manifest(tmp_path: Path) -> None:
     }
     write_json(config_path, config)
     write_json(
-        tmp_path / "artifacts" / "vettedmesh-work" / "unit" / "frames" / "unit-overpaint.json",
+        tmp_path / "artifacts" / "text2model-forge-work" / "unit" / "frames" / "unit-overpaint.json",
         {
             "schema_version": 3,
             "unit": "unit",

@@ -1,11 +1,11 @@
 cff-version: 1.2.0
-message: "If you use VettedMesh in research, cite this software release."
-title: "VettedMesh"
+message: "If you use Text2Model Forge in research, cite this software release."
+title: "Text2Model Forge"
 type: software
 authors:
   - family-names: "Erge"
     given-names: "Oney"
-repository-code: "https://github.com/iodriller/vettedmesh"
-url: "https://github.com/iodriller/vettedmesh"
+repository-code: "https://github.com/iodriller/text2model-forge"
+url: "https://github.com/iodriller/text2model-forge"
 version: "0.2.0-rc.1"
 license: "Apache-2.0"

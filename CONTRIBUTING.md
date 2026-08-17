@@ -1,6 +1,6 @@
-# Contributing to VettedMesh
+# Contributing to Text2Model Forge
 
-VettedMesh accepts focused bug fixes, tests, documentation corrections, worker
+Text2Model Forge accepts focused bug fixes, tests, documentation corrections, worker
 adapters, and qualification evidence. It is an alpha-stage local application;
 backward compatibility matters, but verified safety and honest capability labels
 matter more.
@@ -12,12 +12,12 @@ python -m venv .venv
 .venv\Scripts\python -m pip install --require-hashes -r requirements-dev.lock
 .venv\Scripts\python -m pip install --no-deps --no-build-isolation -e .
 .venv\Scripts\python -m pytest tests -q
-.venv\Scripts\python -m darkness demo --workspace C:/VettedMeshRuns/demo
+.venv\Scripts\python -m text2model_forge demo --workspace C:/Text2ModelForgeRuns/demo
 ```
 
 On Linux or macOS use `.venv/bin/python`; the native launchers select the same
 lock files automatically. Pull requests that touch
-`darkness/` or `assetforge/` must run the full tests and deterministic demo.
+`src/text2model_forge/` or `src/text2model_forge/sprites/` must run the full tests and deterministic demo.
 Changes to a real worker must also state whether that worker was exercised on
 real hardware; fakes do not qualify model quality.
 
@@ -26,7 +26,7 @@ real hardware; fakes do not qualify model quality.
 - Open an issue before adding a dependency, worker, stage, or public contract.
 - Keep model weights, credentials, `config.local.toml`, downloaded tools, and
   run outputs out of Git.
-- Put portable parameters in `darkness/profiles/base.toml`; machine paths belong
+- Put portable parameters in `src/text2model_forge/profiles/base.toml`; machine paths belong
   only in the ignored machine configuration.
 - Add typed fields to the relevant Pydantic contract rather than passing
   untyped dictionaries through the pipeline.

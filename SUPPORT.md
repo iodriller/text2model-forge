@@ -31,6 +31,6 @@ Status meanings:
 | Animated D0–D10 output | experimental | No complete real-hardware run |
 | Globally cleared default model stack | blocked | No current stack passes both global license clearance and complete product qualification |
 
-The machine-readable source of truth is `workers/*.json` plus the corresponding
-`qualifications/*.json`; this document must never upgrade a lifecycle beyond
-those records.
+The machine-readable source of truth is `resources/workers/*.json` plus the
+corresponding `resources/qualifications/*.json`; this document must never
+upgrade a lifecycle beyond those records.

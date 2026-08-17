@@ -4,8 +4,8 @@ import subprocess
 import sys
 from pathlib import Path
 
-from darkness.polygon_obj import PolygonObj
-from darkness.schemas import AssetStage, ExternalWorkerRequest
+from text2model_forge.polygon_obj import PolygonObj
+from text2model_forge.schemas import AssetStage, ExternalWorkerRequest
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -65,7 +65,7 @@ def test_retopology_request_builder_emits_strict_d4_contract(tmp_path: Path) -> 
     result = subprocess.run(
         [
             sys.executable,
-            str(ROOT / "adapters" / "build_retopology_request.py"),
+            str(ROOT / "resources" / "adapters" / "build_retopology_request.py"),
             "--input", str(source),
             "--output-directory", str(tmp_path / "output"),
             "--out", str(request_path),
@@ -84,7 +84,7 @@ def test_retopology_request_builder_emits_strict_d4_contract(tmp_path: Path) -> 
 
 
 def test_autoremesher_worker_source_compiles() -> None:
-    source = (ROOT / "adapters" / "autoremesher_worker.py").read_text(encoding="utf-8")
+    source = (ROOT / "resources" / "adapters" / "autoremesher_worker.py").read_text(encoding="utf-8")
     compile(source, "autoremesher_worker.py", "exec")
     assert "source_overwritten" in source
     assert "automatic_promotion_gate_passed" in source

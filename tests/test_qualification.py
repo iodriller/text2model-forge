@@ -1,5 +1,5 @@
-from darkness.qualification import evaluate_legacy_component
-from darkness.schemas import LegacyQualification
+from text2model_forge.qualification import evaluate_legacy_component
+from text2model_forge.schemas import LegacyQualification
 
 
 def report(**overrides) -> LegacyQualification:

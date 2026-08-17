@@ -10,9 +10,9 @@ ROOT = Path(__file__).resolve().parents[1]
 
 def test_sprite_candidate_scripts_compile() -> None:
     for relative in (
-        "adapters/package_motion_sprites.py",
-        "adapters/build_motion_evidence.py",
-        "adapters/retarget_humanoid_motion.py",
+        "resources/adapters/package_motion_sprites.py",
+        "resources/adapters/build_motion_evidence.py",
+        "resources/adapters/retarget_humanoid_motion.py",
     ):
         path = ROOT / relative
         compile(path.read_text(encoding="utf-8"), str(path), "exec")
@@ -21,7 +21,7 @@ def test_sprite_candidate_scripts_compile() -> None:
 def test_sprite_render_config_contains_current_four_clip_checkpoint() -> None:
     import json
 
-    config = json.loads((ROOT / "configs/short_biped_sprite_render.json").read_text(encoding="utf-8"))
+    config = json.loads((ROOT / "resources/configs/short_biped_sprite_render.json").read_text(encoding="utf-8"))
     assert set(config["animations"]) == {"idle", "walk", "attack", "death"}
     assert config["directions"] == ["north", "south", "east", "west"]
     assert config["auto_frame"] is True
@@ -29,7 +29,7 @@ def test_sprite_render_config_contains_current_four_clip_checkpoint() -> None:
 
 
 def test_sword_attack_candidate_resolves_physical_side_and_builds_digit_grip_rig() -> None:
-    source = (ROOT / "adapters/retarget_humanoid_motion.py").read_text(encoding="utf-8")
+    source = (ROOT / "resources/adapters/retarget_humanoid_motion.py").read_text(encoding="utf-8")
     assert '"fixture.weapon.short_biped.v1"' in source
     assert '"articulated_digit_grip_v1"' in source
     assert '"source_weapon_bone": "hand_r"' in source
@@ -55,9 +55,9 @@ def test_sword_attack_candidate_resolves_physical_side_and_builds_digit_grip_rig
 
 
 def test_public_hand_sockets_are_anatomical_despite_legacy_x_side_bone_suffixes() -> None:
-    canonical = (ROOT / "adapters/canonical_short_biped_worker.py").read_text(encoding="utf-8")
-    blender = (ROOT / "adapters/blender_worker.py").read_text(encoding="utf-8")
-    retarget = (ROOT / "adapters/retarget_humanoid_motion.py").read_text(encoding="utf-8")
+    canonical = (ROOT / "resources/adapters/canonical_short_biped_worker.py").read_text(encoding="utf-8")
+    blender = (ROOT / "resources/adapters/blender_worker.py").read_text(encoding="utf-8")
+    retarget = (ROOT / "resources/adapters/retarget_humanoid_motion.py").read_text(encoding="utf-8")
     assert '"hand_right": {"joint": "hand_l"' in canonical
     assert '"hand_left": {"joint": "hand_r"' in canonical
     assert '"hand_right": "hand_l"' in blender
@@ -66,8 +66,8 @@ def test_public_hand_sockets_are_anatomical_despite_legacy_x_side_bone_suffixes(
 
 
 def test_qwen_retarget_review_requires_dedicated_grip_closeups() -> None:
-    adapter = (ROOT / "adapters/review_retargeted_motion.py").read_text(encoding="utf-8")
-    reviewer = (ROOT / "darkness/retarget_review.py").read_text(encoding="utf-8")
+    adapter = (ROOT / "resources/adapters/review_retargeted_motion.py").read_text(encoding="utf-8")
+    reviewer = (ROOT / "src/text2model_forge/retarget_review.py").read_text(encoding="utf-8")
     assert 'glob("grip_attack_*_front.png")' in adapter
     assert "missing dedicated grip close-up evidence" in adapter
     assert '"--previous-retarget"' in adapter
@@ -77,8 +77,8 @@ def test_qwen_retarget_review_requires_dedicated_grip_closeups() -> None:
 
 
 def test_sprite_packager_rejects_visible_but_effectively_black_frames(tmp_path: Path) -> None:
-    namespace = runpy.run_path(str(ROOT / "adapters/package_motion_sprites.py"))
-    frames = tmp_path / "frames" / "darkness_short_biped_candidate"
+    namespace = runpy.run_path(str(ROOT / "resources/adapters/package_motion_sprites.py"))
+    frames = tmp_path / "frames" / "text2model_short_biped_candidate"
     for action, (count, _loop) in namespace["ACTIONS"].items():
         for direction in namespace["DIRECTIONS"]:
             folder = frames / action / direction

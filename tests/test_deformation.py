@@ -5,7 +5,7 @@ from pathlib import Path
 
 from PIL import Image, ImageDraw
 
-from assetforge.deformation import critique_deformation
+from text2model_forge.sprites.deformation import critique_deformation
 
 
 def _frame(size=64):

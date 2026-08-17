@@ -1,8 +1,10 @@
 import unittest
+from pathlib import Path
 
 from PIL import Image
 
-from assetforge.bake import BAKE_SCRIPT, grow_edges
+from text2model_forge.sprites.bake import BAKE_SCRIPT, grow_edges
+import text2model_forge.sprites.bake as bake_module
 
 
 class GrowEdgesTests(unittest.TestCase):
@@ -37,7 +39,7 @@ class BakeScriptTests(unittest.TestCase):
         self.assertTrue(BAKE_SCRIPT.is_file(), BAKE_SCRIPT)
 
     def test_bake_driver_allows_run_scoped_work_and_icons(self):
-        source = BAKE_SCRIPT.parent.parent.joinpath("assetforge", "bake.py").read_text(encoding="utf-8")
+        source = Path(bake_module.__file__).read_text(encoding="utf-8")
         self.assertIn('block.get("work_root")', source)
         self.assertIn('block.get("icons_output")', source)
         self.assertIn('else work / "icons"', source)

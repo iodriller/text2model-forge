@@ -1,15 +1,15 @@
 from pathlib import Path
 
-from darkness.golden import evaluate, load_corpus, load_report
-from darkness.studio_store import StudioStore
-from vettedmesh_paths import source_revision
+from text2model_forge.golden import evaluate, load_corpus, load_report
+from text2model_forge.studio_store import StudioStore
+from text2model_forge.paths import source_revision
 
 
 ROOT = Path(__file__).resolve().parents[1]
 
 
 def test_static_prop_corpus_has_ten_diverse_versioned_cases() -> None:
-    corpus = load_corpus(ROOT / "golden" / "static-props.json")
+    corpus = load_corpus(ROOT / "resources" / "golden" / "static-props.json")
     assert corpus.required_attempts == len(corpus.cases) == 10
     assert corpus.minimum_passing_cases == 8
     assert len({item.category for item in corpus.cases}) >= 7
@@ -17,8 +17,8 @@ def test_static_prop_corpus_has_ten_diverse_versioned_cases() -> None:
 
 
 def test_placeholder_report_fails_closed_with_actionable_reasons(tmp_path: Path) -> None:
-    corpus = load_corpus(ROOT / "golden" / "static-props.json")
-    report = load_report(ROOT / "golden" / "results.example.json")
+    corpus = load_corpus(ROOT / "resources" / "golden" / "static-props.json")
+    report = load_report(ROOT / "resources" / "golden" / "results.example.json")
     result = evaluate(corpus, report, tmp_path)
     assert result.eligible is False
     assert result.attempted == 0

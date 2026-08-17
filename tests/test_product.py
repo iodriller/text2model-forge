@@ -5,8 +5,8 @@ import unittest
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
-from assetforge.comfy import ComfyClient, build_sdxl_workflow
-from assetforge.core import (
+from text2model_forge.sprites.comfy import ComfyClient, build_sdxl_workflow
+from text2model_forge.sprites.core import (
     ForgeError,
     approval_status,
     approve_artifact,
@@ -18,7 +18,7 @@ from assetforge.core import (
     register_model,
     sha256_file,
 )
-from assetforge.compliance import build_compliance_report
+from text2model_forge.sprites.compliance import build_compliance_report
 
 
 class WorkspaceTests(unittest.TestCase):

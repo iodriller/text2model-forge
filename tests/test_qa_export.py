@@ -5,9 +5,9 @@ from pathlib import Path
 
 from PIL import Image, ImageDraw
 
-from assetforge.core import approve_artifact, create_asset, init_workspace
-from assetforge.exporter import export_asset
-from assetforge.qa import validate_sheets
+from text2model_forge.sprites.core import approve_artifact, create_asset, init_workspace
+from text2model_forge.sprites.exporter import export_asset
+from text2model_forge.sprites.qa import validate_sheets
 
 
 class QaAndExportTests(unittest.TestCase):
@@ -53,7 +53,7 @@ class QaAndExportTests(unittest.TestCase):
             approve_artifact(workspace, "fixture", "license", license_record, "tester")
             exported = export_asset(workspace, "fixture", root / "engine-assets", adapter="fixture")
             self.assertEqual(4, len(exported["files"]))
-            self.assertTrue((root / "engine-assets" / "assetforge-export.json").is_file())
+            self.assertTrue((root / "engine-assets" / "text2model-sprites-export.json").is_file())
 
 
 if __name__ == "__main__":

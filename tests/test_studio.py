@@ -10,7 +10,7 @@ import time
 from PIL import Image
 import pytest
 
-from darkness.studio_comfy import (
+from text2model_forge.studio_comfy import (
     concept_workflow,
     inpaint_workflow,
     make_chroma_alpha,
@@ -19,7 +19,7 @@ from darkness.studio_comfy import (
     qwen_image_2512_workflow,
     qwen_image_edit_2511_workflow,
 )
-from darkness.studio_models import (
+from text2model_forge.studio_models import (
     STAGE_DEFINITIONS,
     StudioAssetSpec,
     StudioCharacterSpec,
@@ -28,21 +28,21 @@ from darkness.studio_models import (
     StudioQwenReview,
     StudioRun,
 )
-from darkness.studio_pipeline import (
+from text2model_forge.studio_pipeline import (
     StudioCoordinator,
     _composite_inpaint_crop,
     _prepare_inpaint_crop,
 )
-from darkness.schemas import (
-    DarknessLocalConfig,
+from text2model_forge.schemas import (
+    Text2ModelLocalConfig,
     ExternalWorkerOutput,
     ExternalWorkerRequest,
     ExternalWorkerResponse,
     WorkerBinding,
 )
-from darkness.studio_qwen import ConceptCorrectionPlan, ConceptPlan, GeometrySeedPlan, StudioQwen
-from darkness.studio_qwen import RigidPartPlan, RigidStructurePlan, _history
-from darkness.studio_store import StudioStore
+from text2model_forge.studio_qwen import ConceptCorrectionPlan, ConceptPlan, GeometrySeedPlan, StudioQwen
+from text2model_forge.studio_qwen import RigidPartPlan, RigidStructurePlan, _history
+from text2model_forge.studio_store import StudioStore
 
 
 DESCRIPTION = (
@@ -196,7 +196,7 @@ class FakeComfy:
     def models(self, kind: str):
         return ["Warcraft style.safetensors"] if kind == "loras" else []
 
-    def upload_image(self, name: str, data: bytes, subfolder: str = "darkness_studio") -> str:
+    def upload_image(self, name: str, data: bytes, subfolder: str = "text2model_studio") -> str:
         return f"{subfolder}/{name}"
 
     def generate(self, *, workflow, destination: Path, timeout_seconds=900):
@@ -397,11 +397,11 @@ class FakeScriptRunner:
     def _argument(command, flag: str) -> str:
         return str(command[command.index(flag) + 1])
 
-    def _script_bake_darkness_surface(self, command):
+    def _script_bake_surface(self, command):
         surface = Path(self._argument(command, "--output-directory"))
         surface.mkdir(parents=True, exist_ok=True)
         _synthetic_image(surface / "surface_review.png")
-        (surface / "darkness_surface_master.blend").write_bytes(b"synthetic-surface-master")
+        (surface / "text2model_surface_master.blend").write_bytes(b"synthetic-surface-master")
         (surface / "surface_validation.json").write_text(
             json.dumps({"automatic_gate_passed": True, "image_metrics": {"visible_luminance": 0.42}}),
             encoding="utf-8",
@@ -550,7 +550,7 @@ def test_workflow_uses_only_qualified_core_nodes() -> None:
         positive="original footman",
         negative="copied design",
         seed=42,
-        prefix="DarknessStudio/test",
+        prefix="Text2ModelStudio/test",
     )
     assert {item["class_type"] for item in workflow.values()} == {
         "CheckpointLoaderSimple",
@@ -569,7 +569,7 @@ def test_inpaint_workflow_uses_bounded_core_mask() -> None:
         positive="A " * 45,
         negative="missing equipment and wrong grip",
         seed=42,
-        prefix="DarknessStudio/test",
+        prefix="Text2ModelStudio/test",
         source_image="studio/source.png",
         mask_image="studio/mask.png",
         denoise=0.7,
@@ -597,7 +597,7 @@ def test_hunyuan3d_workflow_matches_comfyuis_own_image_to_model_template() -> No
       pass through CLIPVisionEncode first. Wiring the checkpoint's CLIP_VISION
       slot straight in is a type mismatch ComfyUI rejects with HTTP 400.
     """
-    from darkness.studio_comfy import hunyuan3d_workflow
+    from text2model_forge.studio_comfy import hunyuan3d_workflow
 
     workflow = hunyuan3d_workflow(
         image="subject.png", prefix="test/mesh", seed=7, checkpoint="hunyuan3d-dit-v2_fp16.safetensors"
@@ -647,7 +647,7 @@ def test_concept_workflow_passes_steps_and_cfg_through_to_the_sampler() -> None:
         positive="original footman",
         negative="copied design",
         seed=42,
-        prefix="DarknessStudio/test",
+        prefix="Text2ModelStudio/test",
         steps=45,
         cfg=7.0,
     )
@@ -661,7 +661,7 @@ def test_qwen_image_edit_workflow_uses_native_dual_image_conditioning() -> None:
         prompt="Preserve the footman and fix only the sword grip.",
         negative_prompt="extra character, equipment rack",
         seed=42,
-        prefix="DarknessStudio/test",
+        prefix="Text2ModelStudio/test",
         source_image="studio/source.png",
     )
     assert workflow["1"]["class_type"] == "UNETLoader"
@@ -678,7 +678,7 @@ def test_qwen_image_2512_workflow_is_native_portrait_text_to_image() -> None:
         prompt="One original human footman with a sword and shield.",
         negative_prompt="pixel art, duplicate character",
         seed=42,
-        prefix="DarknessStudio/test",
+        prefix="Text2ModelStudio/test",
     )
     assert workflow["1"]["inputs"]["unet_name"] == "qwen_image_2512_fp8_e4m3fn.safetensors"
     assert workflow["4"]["inputs"] == {
@@ -696,7 +696,7 @@ def test_concept_workflow_chains_loras_and_pose_control_around_one_body() -> Non
         positive="complete original footman, right hand sword, left arm shield",
         negative="missing equipment, duplicate body",
         seed=42,
-        prefix="DarknessStudio/test",
+        prefix="Text2ModelStudio/test",
         loras=[("style.safetensors", 0.85), ("armor.safetensors", 0.6)],
         control_guides=[("openpose.safetensors", "pose.png", 0.85, 0.0, 0.85)],
     )
@@ -722,7 +722,7 @@ def test_concept_workflow_with_no_lora_or_control_matches_prior_core_node_shape(
         positive="original footman",
         negative="copied design",
         seed=42,
-        prefix="DarknessStudio/test",
+        prefix="Text2ModelStudio/test",
     )
     assert {item["class_type"] for item in workflow.values()} == {
         "CheckpointLoaderSimple",
@@ -921,7 +921,7 @@ def test_rigid_structure_contract_normalizes_bounds_and_limits() -> None:
 
 
 def test_stage_selector_treats_typed_skips_as_completed() -> None:
-    from darkness.studio_models import new_studio_run
+    from text2model_forge.studio_models import new_studio_run
 
     state = new_studio_run("static-wall", "An original static stone wall for a mobile game.")
     state.stage("D0").state = "approved"
@@ -935,7 +935,7 @@ def test_stage_selector_treats_typed_skips_as_completed() -> None:
 
 
 def test_numeric_history_stays_bounded_after_many_iterations() -> None:
-    from darkness.studio_models import new_studio_run
+    from text2model_forge.studio_models import new_studio_run
 
     stage = new_studio_run("history", DESCRIPTION).stage("D1")
     stage.iteration = 12
@@ -1189,6 +1189,73 @@ def _awaiting_stage_with_one_candidate(store: StudioStore, run_id: str, stage_id
     )
     store.save(run)
     return run, item
+
+
+def test_assisted_decision_records_the_current_review_without_weakening_the_gate(
+    tmp_path: Path,
+) -> None:
+    store = StudioStore(tmp_path)
+    run, item = _awaiting_stage_with_one_candidate(store, "assisted-v1", "D1")
+    stage = run.stage("D1")
+    stage.iteration = 1
+    stage.qwen_reviews.append(
+        StudioQwenReview(
+            review_id="review-current",
+            stage_id="D1",
+            iteration=stage.iteration,
+            summary="The candidate meets the locked requirements.",
+            recommended_evidence_id=item.evidence_id,
+            confidence=0.9,
+            hard_requirements_satisfied=True,
+        )
+    )
+    store.save(run)
+
+    decided = store.decide(
+        run.run_id,
+        "D1",
+        "approve",
+        "Accepted the AI recommendation after review.",
+        item.evidence_id,
+        assisted_by_review_id="review-current",
+    )
+
+    record = decided.stage("D1").human_decisions[-1]
+    assert record.assisted_by_review_id == "review-current"
+    assert record.evidence_hashes == {item.evidence_id: item.sha256}
+    assert record.decision == "approve"
+
+
+@pytest.mark.parametrize("review_id", ["review-stale", "review-missing"])
+def test_assisted_decision_rejects_stale_or_unknown_review_ids(
+    tmp_path: Path, review_id: str
+) -> None:
+    store = StudioStore(tmp_path)
+    run, item = _awaiting_stage_with_one_candidate(store, f"assisted-{review_id}", "D1")
+    stage = run.stage("D1")
+    stage.iteration = 2
+    stage.qwen_reviews.append(
+        StudioQwenReview(
+            review_id="review-stale",
+            stage_id="D1",
+            iteration=1,
+            summary="A review from an earlier attempt.",
+            recommended_evidence_id=item.evidence_id,
+            confidence=0.5,
+        )
+    )
+    store.save(run)
+
+    with pytest.raises(ValueError, match="current stage attempt"):
+        store.decide(
+            run.run_id,
+            "D1",
+            "approve",
+            "",
+            item.evidence_id,
+            assisted_by_review_id=review_id,
+        )
+    assert store.load(run.run_id).stage("D1").human_decisions == []
 
 
 def test_retry_requires_no_comment_and_carries_overrides_into_pending_overrides(tmp_path: Path) -> None:
@@ -1591,7 +1658,7 @@ def test_d2_generates_the_mesh_from_the_image_the_human_approved(tmp_path: Path)
     # regardless of what was really used. make_chroma_alpha is deterministic,
     # so re-keying the approved concept here must reproduce D2's RGBA byte for
     # byte; keying anything else cannot.
-    from darkness.studio_comfy import make_chroma_alpha as _key
+    from text2model_forge.studio_comfy import make_chroma_alpha as _key
 
     expected = tmp_path / "expected_rgba.png"
     _key(store.artifact_path("d2-chain-v1", approved.relative_path), expected)
@@ -1794,7 +1861,7 @@ def test_a_deformable_character_runs_the_whole_chain_end_to_end(
     parks awaiting the final ship approval, which is the correct successful
     end of a run rather than an auto-approval."""
     monkeypatch.setattr(
-        "darkness.studio_pipeline.load_local_config",
+        "text2model_forge.studio_pipeline.load_local_config",
         lambda *a, **k: _machine_config_with_blender(tmp_path),
     )
     store = StudioStore(tmp_path)
@@ -1869,7 +1936,7 @@ class ChairQwen(FakeQwen):
         )
 
     def revision_plan(self, spec, stage):
-        from darkness.studio_qwen import RevisionPlan
+        from text2model_forge.studio_qwen import RevisionPlan
 
         return RevisionPlan(
             diagnosis="Surface reads acceptably at prop scale.",
@@ -1880,14 +1947,14 @@ class ChairQwen(FakeQwen):
 
 # _run_motion_chain requires this exact CC0 clip under the configured
 # workspace_root before it will retarget anything. The path is hardcoded in
-# studio_pipeline.py rather than resolved through darkness/motion_library.py
+# studio_pipeline.py rather than resolved through src/text2model_forge/motion_library.py
 # -- see the motion-library gap noted in the README.
 _MOTION_SOURCE_RELATIVE = Path(
     "sources"
 ) / "quaternius_universal_animation_library_standard" / "Universal Animation Library[Standard]" / "Unreal-Godot" / "UAL1_Standard.glb"
 
 
-def _machine_config_with_blender(tmp_path: Path) -> DarknessLocalConfig:
+def _machine_config_with_blender(tmp_path: Path) -> Text2ModelLocalConfig:
     """A realistic machine config for tests that reach D7/D8/D9.
 
     D8 resolves the configured Blender executable, and D7's motion chain
@@ -1900,7 +1967,7 @@ def _machine_config_with_blender(tmp_path: Path) -> DarknessLocalConfig:
     motion_source = tmp_path / _MOTION_SOURCE_RELATIVE
     motion_source.parent.mkdir(parents=True, exist_ok=True)
     _synthetic_mesh(motion_source)
-    return DarknessLocalConfig(
+    return Text2ModelLocalConfig(
         workspace_root=str(tmp_path),
         workers={"blender": WorkerBinding(command_prefix=[str(blender)], environment={})},
     )
@@ -1920,7 +1987,7 @@ def test_a_static_prop_runs_the_whole_chain_end_to_end(
     logic computed the right states. This proves the stages that remain
     actually run for a non-character asset."""
     monkeypatch.setattr(
-        "darkness.studio_pipeline.load_local_config",
+        "text2model_forge.studio_pipeline.load_local_config",
         lambda *a, **k: _machine_config_with_blender(tmp_path),
     )
     store = StudioStore(tmp_path)
@@ -1967,7 +2034,7 @@ def test_a_static_prop_runs_the_whole_chain_end_to_end(
     assert not any(
         item.operation_id == "blender.propose_short_biped_rig" for item in worker.requests
     )
-    assert any("bake_darkness_surface.py" in " ".join(cmd) for cmd in scripts.commands)
+    assert any("bake_surface.py" in " ".join(cmd) for cmd in scripts.commands)
 
 
 def test_stage_config_reaches_the_real_worker_requests(tmp_path: Path) -> None:
@@ -2106,7 +2173,7 @@ def test_d7_fails_loudly_for_an_unknown_donor_motion_id(
 def test_d2_survives_a_studio_workspace_that_differs_from_config_workspace_root(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Regression: `darkness studio --workspace X` explicitly allows X to
+    """Regression: `text2model_forge studio --workspace X` explicitly allows X to
     differ from config.local.toml's workspace_root (see cli.py's
     `args.workspace or ...`), but D2 computed its artifact blob_path as
     rgba_seed.relative_to(config.workspace_root). When they diverged that
@@ -2117,8 +2184,8 @@ def test_d2_survives_a_studio_workspace_that_differs_from_config_workspace_root(
     config_workspace = tmp_path / "config_workspace"
     config_workspace.mkdir(parents=True, exist_ok=True)
     monkeypatch.setattr(
-        "darkness.studio_pipeline.load_local_config",
-        lambda *a, **k: DarknessLocalConfig(workspace_root=str(config_workspace), workers={}),
+        "text2model_forge.studio_pipeline.load_local_config",
+        lambda *a, **k: Text2ModelLocalConfig(workspace_root=str(config_workspace), workers={}),
     )
     store = StudioStore(studio_workspace)
     with ThreadPoolExecutor(max_workers=1) as executor:
@@ -2150,7 +2217,7 @@ def test_d2_needs_no_machine_config_when_a_worker_executor_is_injected(
     instead of the clear RuntimeError every other stage raises. The blob-path
     computation no longer consults machine config at all, so this path is
     simply gone rather than merely better-worded."""
-    monkeypatch.setattr("darkness.studio_pipeline.load_local_config", lambda *a, **k: None)
+    monkeypatch.setattr("text2model_forge.studio_pipeline.load_local_config", lambda *a, **k: None)
     store = StudioStore(tmp_path)
     with ThreadPoolExecutor(max_workers=1) as executor:
         coordinator = StudioCoordinator(

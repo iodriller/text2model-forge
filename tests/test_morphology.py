@@ -3,14 +3,14 @@ from pathlib import Path
 
 import pytest
 
-from assetforge.core import ForgeError, sha256_file
+from text2model_forge.sprites.core import ForgeError, sha256_file
 from PIL import Image
 
-from assetforge.morphology import create_morphology_proof, validate_morphology_build, validate_profile
+from text2model_forge.sprites.morphology import create_morphology_proof, validate_morphology_build, validate_profile
 
 
 def _repo_root() -> Path:
-    return Path(__file__).resolve().parents[1]
+    return Path(__file__).resolve().parents[1] / "resources"
 
 
 def test_example_profile_satisfies_biped_family_contract():

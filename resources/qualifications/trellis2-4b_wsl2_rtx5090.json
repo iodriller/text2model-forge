@@ -1,0 +1,58 @@
+{
+  "schema_version": 1,
+  "candidate_id": "trellis2-4b",
+  "worker_id": "trellis2.4b",
+  "source_revision": "75fbf0183001ed9876c8dbb35de6b68552ee08bd",
+  "weights_revision": null,
+  "code_license": "MIT",
+  "weights_license": "MIT (microsoft/TRELLIS.2-4B); image encoder facebook/dinov3-vitl16-pretrain-lvd1689m is gated (Meta manual review, approved 2026-07-12)",
+  "tested_at": "2026-07-12T20:00:00-06:00",
+  "host_gpu": "NVIDIA GeForce RTX 5090",
+  "environment": {
+    "distro": "WSL2 Ubuntu-24.04",
+    "cuda_toolkit": "12.8",
+    "python": "3.10.20",
+    "torch": "2.7.1+cu128",
+    "torchvision": "0.22.1+cu128",
+    "transformers": "5.13.1",
+    "flash_attn": "2.7.3",
+    "nvdiffrast": "0.4.0",
+    "nvdiffrec_render": "0.0.0",
+    "cumesh": "0.0.1",
+    "flex_gemm": "1.0.0",
+    "o_voxel": "0.0.1"
+  },
+  "weight_sha256": {},
+  "status": "partial",
+  "observed": {
+    "input_contract": "RGBA PNG with meaningful alpha, passed through with alpha intact (not composited); trellis2.pipelines.rembg.BiRefNet monkeypatched to a no-op stub so the gated, non-commercial briaai/RMBG-2.0 is never constructed or invoked",
+    "seed": 42,
+    "decimation_target": 1000000,
+    "texture_size": 4096,
+    "remesh": true,
+    "extension_webp": false,
+    "elapsed_seconds": 263.568,
+    "peak_vram_bytes": 5521212416,
+    "vertices": 1001558,
+    "vertices_after_merge_vertices": 442958,
+    "faces": 937155,
+    "watertight": false,
+    "connected_surface_components_raw": 134145,
+    "connected_surface_components_after_merge_vertices": 11830,
+    "glb_sha256": "244dc36d2177936b1fd6de8d158d0ca8300a3bdd6810a34c5789cfdb27f7da8c",
+    "diagnostic_sha256": "ddd2726c7181db7e9471ac5de373560cc498f70c6d05ffee2ace9b44ebe6a064",
+    "glb_file_size_bytes": 88082120
+  },
+  "excluded_dependencies": [
+    "briaai/RMBG-2.0: gated, non-commercial; never downloaded or constructed because trellis2.pipelines.rembg.BiRefNet is monkeypatched to a stub before from_pretrained() and the input always carries real alpha"
+  ],
+  "known_risks": [
+    "This is a single low-effort smoke qualification (default sampler params, no prompt/view tuning), not a blinded multi-generator quality benchmark.",
+    "Raw connected-component count (134,145) is dominated by duplicate/unwelded vertices from o_voxel's voxel-based surface extraction, not genuine fragmentation -- trimesh.merge_vertices() drops it to 11,830. Even after welding, TRELLIS.2 has MORE technical components than TripoSG (17) or InstantMesh (10), despite producing by far the most visually coherent and recognizable result of the three (see the rendered diagnostic: a clean, correctly oriented, clearly identifiable standing goblin across all four views). This is the clearest evidence yet in this project that raw component/fragment counts do not proxy for usable quality -- silhouette and topology-fitness matter more.",
+    "mesh.is_watertight is False even after vertex merging; needs investigation before this can be treated as a deformation-ready body, consistent with every other generated candidate in this project.",
+    "Output is 88 MB (4096px PNG PBR textures, no compression) -- exported with extension_webp=False after the WebP path failed on a Pillow/libwebp build mismatch in this environment (module 'PIL._webp' has no attribute 'HAVE_WEBPANIM'). Revisit WebP once that root cause is fixed; texture size/compression should also be tuned down for a production pipeline regardless.",
+    "Required two TRELLIS.2-side compatibility patches, both due to unpinned dependencies in the project's own setup.sh, not Text2Model policy: (1) trellis2.pipelines.rembg.BiRefNet must be stubbed before from_pretrained() because it unconditionally constructs the gated RMBG-2.0 model even when preprocess_image() will never call it for alpha-bearing input; (2) trellis2.modules.image_feature_extractor.DinoV3FeatureExtractor.extract_features must be patched because the installed transformers==5.13.1 nests DINOv3ViTModel's transformer blocks one level deeper (model.model.layer) than the flat model.layer TRELLIS.2's code expects. Re-check both patches if TRELLIS.2 or transformers is ever upgraded.",
+    "The output is geometry+PBR-texture; deformation-readiness, UV quality, and material correctness are unverified.",
+    "Generated character bodies remain topology/detail targets until canonical fitting and deformation tests pass, same as every other geometry candidate in this project."
+  ]
+}

@@ -2,10 +2,10 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from darkness.mesh import TriangleMesh
+from text2model_forge.mesh import TriangleMesh
 
 
-FIXTURES = Path(__file__).resolve().parents[1] / "fixtures" / "mesh"
+FIXTURES = Path(__file__).resolve().parent / "fixtures" / "mesh"
 
 
 def test_seeded_defect_fixture_exposes_expected_failures() -> None:

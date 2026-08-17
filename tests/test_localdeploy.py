@@ -3,7 +3,7 @@ from __future__ import annotations
 import pytest
 from pydantic import BaseModel, ConfigDict
 
-from darkness.localdeploy import LocalDeployStructuredClient, StructuredResponseError
+from text2model_forge.localdeploy import LocalDeployStructuredClient, StructuredResponseError
 
 
 class Assessment(BaseModel):

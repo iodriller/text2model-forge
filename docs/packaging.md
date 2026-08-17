@@ -1,6 +1,6 @@
 # Packaging and release contract
 
-VettedMesh supports three distribution paths:
+Text2Model Forge supports three distribution paths:
 
 1. a full Git checkout, used by the cross-platform launchers;
 2. the Python wheel, which includes the CLI, browser UI, worker manifests,
@@ -8,16 +8,16 @@ VettedMesh supports three distribution paths:
 3. the Docker image, which runs the control plane as an unprivileged user.
 
 The wheel installs executable resources under the active environment's
-`share/vettedmesh` directory. `vettedmesh_paths.py` selects the repository
+`share/text2model-forge` directory. `text2model_forge.paths.py` selects the repository
 tree in an editable checkout and that shared directory in a normal install.
-`VETTEDMESH_RESOURCE_ROOT` is an explicit escape hatch for distributors that
+`TEXT2MODEL_FORGE_RESOURCE_ROOT` is an explicit escape hatch for distributors that
 relocate data files. Machine-local worker bindings are never packaged; point
-`VETTEDMESH_CONFIG` at a private `config.local.toml` or keep one in the source
+`TEXT2MODEL_FORGE_CONFIG` at a private `config.local.toml` or keep one in the source
 checkout/current working directory.
 
 Live qualification also binds each newly created run to the exact Git commit.
 A source checkout discovers that revision from its own `.git` directory. A
-wheel or distributor build must set `VETTEDMESH_SOURCE_REVISION` to a full
+wheel or distributor build must set `TEXT2MODEL_FORGE_SOURCE_REVISION` to a full
 40-character commit SHA; the release container bakes the GitHub commit into
 both this variable and its OCI revision label. An absent or malformed revision
 does not stop ordinary Studio use, but it makes the golden qualification fail

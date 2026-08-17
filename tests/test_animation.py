@@ -8,10 +8,10 @@ from pathlib import Path
 
 from PIL import Image
 
-from assetforge.animate import build_animation_prompt, build_frame_workflow, generate_animation, sampler_settings
-from assetforge.core import create_asset, init_workspace, read_json
-from assetforge.pose import default_pack, frame_pose, load_pack, materialize_pack, render_action_frames, render_pose
-from assetforge.sheets import pack_sheets
+from text2model_forge.sprites.animate import build_animation_prompt, build_frame_workflow, generate_animation, sampler_settings
+from text2model_forge.sprites.core import create_asset, init_workspace, read_json
+from text2model_forge.sprites.pose import default_pack, frame_pose, load_pack, materialize_pack, render_action_frames, render_pose
+from text2model_forge.sprites.sheets import pack_sheets
 
 
 class PosePackTests(unittest.TestCase):
@@ -82,7 +82,7 @@ class WorkflowTests(unittest.TestCase):
         settings = {"steps": 7, "cfg": 2.5, "sampler": "dpmpp_sde", "scheduler": "karras"}
         workflow = build_frame_workflow(
             "pos", "neg", "ckpt.safetensors", "cn.safetensors",
-            "assetforge/ref.png", "assetforge/pose.png", 42, settings, 0.6, 0.85, "prefix",
+            "src/text2model_forge/sprites/ref.png", "src/text2model_forge/sprites/pose.png", 42, settings, 0.6, 0.85, "prefix",
         )
         self.assertEqual("ControlNetApplyAdvanced", workflow["8"]["class_type"])
         self.assertEqual(["8", 0], workflow["9"]["inputs"]["positive"])
@@ -121,7 +121,7 @@ class FakeComfyHandler(BaseHTTPRequestHandler):
         length = int(self.headers.get("Content-Length", "0"))
         body = self.rfile.read(length)
         if self.path == "/upload/image":
-            self.respond({"name": "uploaded.png", "subfolder": "assetforge", "type": "input"})
+            self.respond({"name": "uploaded.png", "subfolder": "text2model-forge/sprites", "type": "input"})
         elif self.path == "/prompt":
             value = json.loads(body)
             assert "prompt" in value

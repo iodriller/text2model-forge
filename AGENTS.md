@@ -2,11 +2,11 @@
 
 ## Project
 
-VettedMesh is a text-to-3D asset compiler: a description goes in, and a
+Text2Model Forge is a text-to-3D asset compiler: a description goes in, and a
 human-gated animated (or static) asset comes out through eleven named stages,
-D0 through D10. `darkness/` is the compiler -- orchestration, contracts,
+D0 through D10. `src/text2model_forge/` is the compiler -- orchestration, contracts,
 worker protocol, human gates, config resolution, and the browser control
-plane. `assetforge/` is the older directional-sprite renderer darkness's D8/D9
+plane. `src/text2model_forge/sprites/` is the older directional-sprite renderer text2model_forge's D8/D9
 stages reuse for its ComfyUI multiview client and Blender view baker.
 
 This repository was extracted from EmberDefense, where both packages were
@@ -20,12 +20,12 @@ Use these durable sources of truth:
 
 - `README.md` for the pipeline overview, configuration, and human-control
   actions.
-- `docs/darkness-worker-guide.md` for detailed worker-by-worker commands and
+- `docs/worker-guide.md` for detailed worker-by-worker commands and
   qualification history.
-- `docs/legacy-sprite-pipeline.md` for the assetforge renderer's own commands.
-- `darkness/profiles/base.toml` for every configuration default and its
+- `docs/sprite-renderer.md` for the directional renderer's own commands.
+- `src/text2model_forge/profiles/base.toml` for every configuration default and its
   meaning -- this file's comments are the parameter reference.
-- `darkness/schemas.py` and `darkness/studio_models.py` for the data
+- `src/text2model_forge/schemas.py` and `src/text2model_forge/studio_models.py` for the data
   contracts every stage and gate decision must satisfy.
 
 ## Commands
@@ -34,12 +34,12 @@ Use these durable sources of truth:
 python -m venv .venv
 .venv\Scripts\pip install -e ".[dev]"
 python -m pytest tests -q
-python -m darkness demo --workspace C:/AssetForgeRuns/demo
-python -m darkness config show --profile advanced
-python -m darkness studio --workspace C:/AssetForgeRuns --open-browser
-python -m darkness studio list --workspace C:/AssetForgeRuns
-python -m darkness doctor --deep
-python -m darkness workers
+python -m text2model_forge demo --workspace C:/Text2ModelForgeRuns/demo
+python -m text2model_forge config show --profile advanced
+python -m text2model_forge studio --workspace C:/Text2ModelForgeRuns --open-browser
+python -m text2model_forge studio list --workspace C:/Text2ModelForgeRuns
+python -m text2model_forge doctor --deep
+python -m text2model_forge workers
 ```
 
 `demo` and the test suite need no GPU, Blender, ComfyUI, or Unity -- they are
@@ -49,37 +49,37 @@ gitignored; copy `machine.example.toml` to get one.
 
 ## Architecture Boundaries
 
-- `darkness/schemas.py`, `darkness/studio_models.py`: the typed contracts.
+- `src/text2model_forge/schemas.py`, `src/text2model_forge/studio_models.py`: the typed contracts.
   Adding a field means updating the contract, not reading an untyped dict at
   the call site.
-- `darkness/compiler.py`, `darkness/workers.py`, `darkness/external_worker.py`:
+- `src/text2model_forge/compiler.py`, `src/text2model_forge/workers.py`, `src/text2model_forge/external_worker.py`:
   the generic job lifecycle (validate -> plan -> execute -> collect artifacts
   -> hard gates -> human approval -> promote). Stage-specific logic belongs in
-  `darkness/studio_pipeline.py`'s `_run_dN` methods, not here.
-- `darkness/lineage.py`, `darkness/export_policy.py`: license/lineage
+  `src/text2model_forge/studio_pipeline.py`'s `_run_dN` methods, not here.
+- `src/text2model_forge/lineage.py`, `src/text2model_forge/export_policy.py`: license/lineage
   enforcement. This is the most mature, most safety-critical part of the
   system -- it is what stops a gated or territory-restricted model from
   silently reaching a release export. Never weaken a check here to unblock a
   single asset; fix the asset's lineage instead.
-- `darkness/hardware.py`, `darkness/preflight.py`: what this machine is,
+- `src/text2model_forge/hardware.py`, `src/text2model_forge/preflight.py`: what this machine is,
   what stack that implies, and whether every cross-stage assumption holds.
   Every constant in `recommend_stack()` was discovered by a failed pipeline
   run; adding a new backend means adding its assumption here, not just its
   code, or the next person rediscovers it the same expensive way. A check
   that reports a problem must carry a `remedy` -- a diagnosis without a fix
   just moves the guessing.
-- `darkness/settings.py`: the layered configuration resolver. It only merges
+- `src/text2model_forge/settings.py`: the layered configuration resolver. It only merges
   plain data and knows nothing about StudioRun; `studio_overrides()` is the
   one place that translates resolved config into StudioRun constructor
   fields. Adding a new tunable parameter means adding it to
-  `darkness/profiles/base.toml` with a comment explaining it, not inventing a
+  `src/text2model_forge/profiles/base.toml` with a comment explaining it, not inventing a
   new ad hoc default somewhere else.
-- `adapters/*.py`: one worker's subprocess entry point each, speaking the
+- `resources/adapters/*.py`: one worker's subprocess entry point each, speaking the
   `ExternalWorkerRequest`/response file contract. An adapter must not import
-  from `darkness/studio_pipeline.py`; the dependency runs the other way.
+  from `src/text2model_forge/studio_pipeline.py`; the dependency runs the other way.
 - Repo-relative resource resolution (`Path(__file__).resolve().parents[N]`)
-  is real and load-bearing throughout `adapters/`, `darkness/`, and
-  `assetforge/` -- these packages assume they are running from within a full
+  is real and load-bearing throughout `resources/adapters/`, `src/text2model_forge/`, and
+  `src/text2model_forge/sprites/` -- these packages assume they are running from within a full
   checkout (editable install), not as pure importable libraries. If you
   change a file's directory depth, grep for `parents[` and fix every
   offset; the test suite mostly (not entirely) catches this by exercising
@@ -111,7 +111,7 @@ gitignored; copy `machine.example.toml` to get one.
   its state-machine effect end to end.
 - Never filter human decisions on a literal `decision == "reject"`. Use
   `CORRECTION_DECISIONS` / `latest_correction()` / `awaiting_correction()`
-  from `darkness/studio_models.py`, so `edit` keeps behaving like `reject`
+  from `src/text2model_forge/studio_models.py`, so `edit` keeps behaving like `reject`
   everywhere. Getting this wrong does not fail loudly -- it silently drops
   the human's correction and re-runs the stage as an unrelated fresh
   generation. There are eight such lookups across `studio_pipeline.py` and
@@ -125,13 +125,13 @@ gitignored; copy `machine.example.toml` to get one.
 
 - Inspect the relevant schema, config default, and existing test before
   editing.
-- Make the smallest coherent change; reuse `darkness/settings.py`,
-  `darkness/schemas.py`, and the existing worker protocol rather than adding
+- Make the smallest coherent change; reuse `src/text2model_forge/settings.py`,
+  `src/text2model_forge/schemas.py`, and the existing worker protocol rather than adding
   a parallel mechanism.
-- A new stage parameter belongs in `darkness/profiles/base.toml`, documented,
+- A new stage parameter belongs in `src/text2model_forge/profiles/base.toml`, documented,
   with a WIRED or DOCUMENTED marker in its section comment depending on
   whether `studio_pipeline.py` actually reads it yet.
-- Keep `darkness/` and `assetforge/` decoupled from any specific consuming
+- Keep `src/text2model_forge/` and `src/text2model_forge/sprites/` decoupled from any specific consuming
   project. `tests/test_unity_candidate_contract.py` asserts the string
   "EmberDefense" never appears in the Unity smoke-check template; treat any
   similarly specific, non-generic identifier the same way.
@@ -140,8 +140,8 @@ gitignored; copy `machine.example.toml` to get one.
 
 ## Verification
 
-- Any change to `darkness/` or `assetforge/`: run `pytest tests -q` and
-  `python -m darkness demo --workspace <tmp>`. Both are fast, deterministic,
+- Any change to `src/text2model_forge/` or `src/text2model_forge/sprites/`: run `pytest tests -q` and
+  `python -m text2model_forge demo --workspace <tmp>`. Both are fast, deterministic,
   and require no external tools -- there is no excuse to skip them.
 - Test order is randomized (`pytest-randomly`). A failure prints its seed;
   reproduce with `--randomly-seed=N`. Do not "fix" an order-dependent
@@ -160,10 +160,10 @@ gitignored; copy `machine.example.toml` to get one.
   exercises the state transition directly, following the existing
   `_awaiting_stage_with_one_candidate`-style pattern rather than driving the
   full coordinator when you only need to test `decide()`'s mechanics.
-- A change to `darkness/settings.py` or `profiles/*.toml`: add a case to
-  `tests/test_settings.py` and confirm `darkness config show` still resolves
+- A change to `src/text2model_forge/settings.py` or `profiles/*.toml`: add a case to
+  `tests/test_settings.py` and confirm `text2model_forge config show` still resolves
   correctly for `simple` and `advanced`.
-- A change to `darkness/config.py` (worker bindings): re-verify
+- A change to `src/text2model_forge/config.py` (worker bindings): re-verify
   `machine.example.toml` still round-trips through `load_local_config`.
 - A change to an adapter, a Blender/ComfyUI script, or anything requiring a
   real worker: state plainly that it was not exercised end to end unless you
@@ -178,7 +178,7 @@ gitignored; copy `machine.example.toml` to get one.
   attribution to Git artifacts.
 - Never commit `config.local.toml` (real machine paths) -- it is gitignored;
   keep it that way.
-- `qualifications/*.json` records real hardware and licensing findings about
+- `resources/qualifications/*.json` records real hardware and licensing findings about
   third-party models (some gated, some territory-restricted). Read one before
   assuming it is safe to change or remove; the lineage/export-policy system
   depends on these records staying accurate.

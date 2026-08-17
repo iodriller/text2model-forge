@@ -1,4 +1,4 @@
-from darkness.sprite_review import SpriteClipReview, SpriteMediatorDecision, SpriteReviewDecision
+from text2model_forge.sprite_review import SpriteClipReview, SpriteMediatorDecision, SpriteReviewDecision
 
 
 def _clip() -> SpriteClipReview:

@@ -4,8 +4,8 @@ from pathlib import Path
 
 import trimesh
 
-from darkness.glb_components import build_component_audit
-from darkness.hashing import sha256_file
+from text2model_forge.glb_components import build_component_audit
+from text2model_forge.hashing import sha256_file
 
 
 def test_component_audit_builds_review_branches_without_mutating_source(tmp_path: Path) -> None:

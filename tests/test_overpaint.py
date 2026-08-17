@@ -5,7 +5,7 @@ from pathlib import Path
 
 from PIL import Image
 
-from assetforge.overpaint import (
+from text2model_forge.sprites.overpaint import (
     build_overpaint_workflow,
     equipment_integrity,
     protected_part_metrics,

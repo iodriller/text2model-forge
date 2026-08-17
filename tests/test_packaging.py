@@ -3,7 +3,7 @@ from pathlib import Path
 
 import pytest
 
-from darkness.packaging import CANONICAL_REQUIRED_FILES, PackagePolicyError, build_delivery_package
+from text2model_forge.packaging import CANONICAL_REQUIRED_FILES, PackagePolicyError, build_delivery_package
 
 
 def _fixture(tmp_path: Path, *, qualification_status: str = "partial"):

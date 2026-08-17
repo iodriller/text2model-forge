@@ -10,17 +10,17 @@ import time
 import pytest
 from pydantic import BaseModel, ConfigDict, Field
 
-from darkness.gpu import GpuLease, GpuLeaseBusy
-from darkness.localdeploy import LocalDeployStructuredClient
-from darkness.optimizer import LocalDeployOptimizer
-from darkness.schemas import (
+from text2model_forge.gpu import GpuLease, GpuLeaseBusy
+from text2model_forge.localdeploy import LocalDeployStructuredClient
+from text2model_forge.optimizer import LocalDeployOptimizer
+from text2model_forge.schemas import (
     AssetStage,
     EvidenceBundle,
     EvidenceItem,
     OperationDefinition,
     WorkerJob,
 )
-from darkness.workers import WorkerManager
+from text2model_forge.workers import WorkerManager
 
 
 def test_gpu_lease_is_exclusive_and_releasable(tmp_path) -> None:
@@ -61,7 +61,7 @@ def test_worker_manager_captures_output_and_times_out_process_tree(tmp_path, mon
         def kill(self):
             self.returncode = -9
 
-    monkeypatch.setattr("darkness.workers.subprocess.Popen", FakeProcess)
+    monkeypatch.setattr("text2model_forge.workers.subprocess.Popen", FakeProcess)
     monkeypatch.setattr(
         WorkerManager,
         "_terminate_tree",

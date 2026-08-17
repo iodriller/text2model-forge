@@ -2,9 +2,9 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from darkness.lineage import evaluate_release, evaluate_research
-from darkness.registry import candidates_in_priority_order, load_registry
-from darkness.schemas import ArtifactLineage, ModelRuntimeQualification, WorkerRuntimeQualification
+from text2model_forge.lineage import evaluate_release, evaluate_research
+from text2model_forge.registry import candidates_in_priority_order, load_registry
+from text2model_forge.schemas import ArtifactLineage, ModelRuntimeQualification, WorkerRuntimeQualification
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -58,7 +58,7 @@ def test_release_checks_recursive_parents() -> None:
 
 
 def test_runtime_qualification_record_is_strict_and_digest_pinned() -> None:
-    path = ROOT / "qualifications" / "qwen3.6-27b_ollama_rtx5090.json"
+    path = ROOT / "resources" / "qualifications" / "qwen3.6-27b_ollama_rtx5090.json"
     record = ModelRuntimeQualification.model_validate_json(path.read_text(encoding="utf-8"))
 
     assert record.status == "partial"
@@ -70,7 +70,7 @@ def test_runtime_qualification_record_is_strict_and_digest_pinned() -> None:
 
 
 def test_triposg_qualification_records_permissive_lineage_and_exclusions() -> None:
-    path = ROOT / "qualifications" / "triposg-1.5b_windows_rtx5090.json"
+    path = ROOT / "resources" / "qualifications" / "triposg-1.5b_windows_rtx5090.json"
     record = WorkerRuntimeQualification.model_validate_json(path.read_text(encoding="utf-8"))
     assert record.code_license == "MIT"
     assert record.weights_license == "MIT"
@@ -80,7 +80,7 @@ def test_triposg_qualification_records_permissive_lineage_and_exclusions() -> No
 
 
 def test_blender_qualification_records_real_source_preserving_cleanup() -> None:
-    path = ROOT / "qualifications" / "blender-4.5.11_windows.json"
+    path = ROOT / "resources" / "qualifications" / "blender-4.5.11_windows.json"
     record = WorkerRuntimeQualification.model_validate_json(path.read_text(encoding="utf-8"))
     assert record.status == "passed"
     assert record.environment["worker_sha256"] == "4a5bfb222ded9bb41534e103a63b1b2847fe05e016d0604de6659f1ab9d9a710"
@@ -93,7 +93,7 @@ def test_blender_qualification_records_real_source_preserving_cleanup() -> None:
 
 
 def test_autoremesher_qualification_records_rejected_real_candidate() -> None:
-    path = ROOT / "qualifications" / "autoremesher-1.0.0_windows.json"
+    path = ROOT / "resources" / "qualifications" / "autoremesher-1.0.0_windows.json"
     record = WorkerRuntimeQualification.model_validate_json(path.read_text(encoding="utf-8"))
     assert record.status == "partial"
     assert record.observed["source_components"] == 1
@@ -107,7 +107,7 @@ def test_autoremesher_qualification_records_rejected_real_candidate() -> None:
 
 
 def test_instant_meshes_qualification_records_deterministic_rejected_candidate() -> None:
-    path = ROOT / "qualifications" / "instant-meshes-7b316086_windows.json"
+    path = ROOT / "resources" / "qualifications" / "instant-meshes-7b316086_windows.json"
     record = WorkerRuntimeQualification.model_validate_json(path.read_text(encoding="utf-8"))
     assert record.status == "partial"
     assert record.observed["candidate_quad_fraction"] == 1.0
@@ -120,7 +120,7 @@ def test_instant_meshes_qualification_records_deterministic_rejected_candidate()
 
 
 def test_blender_retopology_repair_qualification_records_staged_gate_pass() -> None:
-    path = ROOT / "qualifications" / "blender-4.5.11_retopology_repair_windows.json"
+    path = ROOT / "resources" / "qualifications" / "blender-4.5.11_retopology_repair_windows.json"
     record = WorkerRuntimeQualification.model_validate_json(path.read_text(encoding="utf-8"))
     assert record.status == "passed"
     assert record.observed["quad_fraction"] > 0.99
@@ -134,7 +134,7 @@ def test_blender_retopology_repair_qualification_records_staged_gate_pass() -> N
 
 
 def test_blender_triposg_rig_probe_records_staged_deformation_evidence() -> None:
-    path = ROOT / "qualifications" / "blender-4.5.11_triposg_rig_probe_windows.json"
+    path = ROOT / "resources" / "qualifications" / "blender-4.5.11_triposg_rig_probe_windows.json"
     record = WorkerRuntimeQualification.model_validate_json(path.read_text(encoding="utf-8"))
     assert record.status == "passed"
     assert record.observed["landmarks"] == 26
@@ -150,7 +150,7 @@ def test_blender_triposg_rig_probe_records_staged_deformation_evidence() -> None
 
 
 def test_canonical_qualification_records_passing_skin_stress_and_missing_fit() -> None:
-    path = ROOT / "qualifications" / "canonical-short-biped-v1.json"
+    path = ROOT / "resources" / "qualifications" / "canonical-short-biped-v1.json"
     record = WorkerRuntimeQualification.model_validate_json(path.read_text(encoding="utf-8"))
     assert record.observed["components"] == 1
     assert record.observed["skinning_hard_failures"] == []

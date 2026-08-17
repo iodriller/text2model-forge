@@ -3,7 +3,7 @@ requires = ["setuptools==84.0.0"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "vettedmesh"
+name = "text2model-forge"
 version = "0.2.0rc1"
 description = "Auditable, human-gated orchestration for local AI-assisted 3D assets."
 readme = "README.md"
@@ -35,7 +35,7 @@ dependencies = [
 
 [project.optional-dependencies]
 local-ai = [
-  # Required by adapters/install_qwen_image_edit_models.py. Keep heavyweight
+  # Required by resources/adapters/install_qwen_image_edit_models.py. Keep heavyweight
   # ComfyUI/PyTorch dependencies in ComfyUI's own isolated environment.
   "huggingface-hub>=0.27,<2",
 ]
@@ -51,49 +51,47 @@ dev = [
 ]
 
 [project.scripts]
-vettedmesh = "darkness.cli:main"
-forge = "darkness.cli:main"
-assetforge = "assetforge.cli:main"
+text2model-forge = "text2model_forge.cli:main"
+text2model-sprites = "text2model_forge.sprites.cli:main"
 
 [project.urls]
-Homepage = "https://github.com/iodriller/vettedmesh"
-Documentation = "https://github.com/iodriller/vettedmesh#readme"
-Issues = "https://github.com/iodriller/vettedmesh/issues"
-Source = "https://github.com/iodriller/vettedmesh"
+Homepage = "https://github.com/iodriller/text2model-forge"
+Documentation = "https://github.com/iodriller/text2model-forge#readme"
+Issues = "https://github.com/iodriller/text2model-forge/issues"
+Source = "https://github.com/iodriller/text2model-forge"
 
 [tool.setuptools.packages.find]
-where = ["."]
-include = ["darkness*", "assetforge*"]
-
-[tool.setuptools]
-py-modules = ["vettedmesh_paths"]
+where = ["src"]
+include = ["text2model_forge*"]
 
 [tool.setuptools.package-data]
-darkness = ["profiles/*.toml"]
+text2model_forge = ["profiles/*.toml"]
 
 # The live compiler invokes these files through typed subprocess contracts.
 # Source checkouts use the repository copies; wheels install the identical
-# tree under <environment>/share/vettedmesh, resolved by vettedmesh_paths.py.
+# tree under <environment>/share/text2model-forge, resolved by
+# text2model_forge.paths.
 [tool.setuptools.data-files]
-"share/vettedmesh/adapters" = ["adapters/*.py"]
-"share/vettedmesh/blender" = ["blender/*.py"]
-"share/vettedmesh/workers" = ["workers/*.json"]
-"share/vettedmesh/registry" = ["registry/*.json"]
-"share/vettedmesh/motion_library" = ["motion_library/*.example.json"]
-"share/vettedmesh/presets" = ["presets/*.json"]
-"share/vettedmesh/assets" = ["assets/*.json"]
-"share/vettedmesh/configs" = ["configs/*.json"]
-"share/vettedmesh/characters" = ["characters/*.json"]
-"share/vettedmesh/creatures" = ["creatures/*.json"]
-"share/vettedmesh/creatures/families" = ["creatures/families/*.json"]
-"share/vettedmesh/genesis/families" = ["genesis/families/*.json"]
-"share/vettedmesh/golden" = ["golden/*.json"]
-"share/vettedmesh/qualifications" = ["qualifications/*.json"]
-"share/vettedmesh/compat/diso" = ["compat/diso/README.md"]
-"share/vettedmesh/compat/diso/diso" = ["compat/diso/diso/*.py"]
-"share/vettedmesh/unity_smoke_template/Assets/Editor" = ["unity_smoke_template/Assets/Editor/*.cs", "unity_smoke_template/Assets/Editor/*.meta"]
-"share/vettedmesh/unity_smoke_template/Packages" = ["unity_smoke_template/Packages/*.json"]
-"share/vettedmesh/unity_smoke_template/ProjectSettings" = ["unity_smoke_template/ProjectSettings/*.txt"]
+"share/text2model-forge/adapters" = ["resources/adapters/*.py"]
+"share/text2model-forge/blender" = ["resources/blender/*.py"]
+"share/text2model-forge/workers" = ["resources/workers/*.json"]
+"share/text2model-forge/registry" = ["resources/registry/*.json"]
+"share/text2model-forge/motion_library" = ["resources/motion_library/*.example.json"]
+"share/text2model-forge/presets" = ["resources/presets/*.json"]
+"share/text2model-forge/assets" = ["resources/assets/*.json"]
+"share/text2model-forge/configs" = ["resources/configs/*.json"]
+"share/text2model-forge/characters" = ["resources/characters/*.json"]
+"share/text2model-forge/creatures" = ["resources/creatures/*.json"]
+"share/text2model-forge/creatures/families" = ["resources/creatures/families/*.json"]
+"share/text2model-forge/genesis/families" = ["resources/genesis/families/*.json"]
+"share/text2model-forge/golden" = ["resources/golden/*.json"]
+"share/text2model-forge/qualifications" = ["resources/qualifications/*.json"]
+"share/text2model-forge/environments" = ["resources/environments/*.txt"]
+"share/text2model-forge/compat/diso" = ["resources/compat/diso/README.md"]
+"share/text2model-forge/compat/diso/diso" = ["resources/compat/diso/diso/*.py"]
+"share/text2model-forge/unity_smoke_template/Assets/Editor" = ["resources/unity_smoke_template/Assets/Editor/*.cs", "resources/unity_smoke_template/Assets/Editor/*.meta"]
+"share/text2model-forge/unity_smoke_template/Packages" = ["resources/unity_smoke_template/Packages/*.json"]
+"share/text2model-forge/unity_smoke_template/ProjectSettings" = ["resources/unity_smoke_template/ProjectSettings/*.txt"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

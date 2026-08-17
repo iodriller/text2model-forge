@@ -5,12 +5,12 @@ from datetime import datetime, timezone
 
 import pytest
 
-from darkness.artifacts import ArtifactConflictError, ArtifactIntegrityError, ArtifactStore
-from darkness.events import EventLog, EventLogIntegrityError
-from darkness.export_policy import decide_export
-from darkness.hashing import sha256_bytes
-from darkness.registry import load_registry
-from darkness.schemas import (
+from text2model_forge.artifacts import ArtifactConflictError, ArtifactIntegrityError, ArtifactStore
+from text2model_forge.events import EventLog, EventLogIntegrityError
+from text2model_forge.export_policy import decide_export
+from text2model_forge.hashing import sha256_bytes
+from text2model_forge.registry import load_registry
+from text2model_forge.schemas import (
     ApprovalRecord,
     ArtifactLineage,
     AssetStage,

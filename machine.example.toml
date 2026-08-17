@@ -1,6 +1,6 @@
 # Machine-local worker bindings: where the real binaries and interpreters live on
 # THIS machine. Copy this file to config.local.toml (gitignored, never committed)
-# and fill in real paths. darkness/config.py loads config.local.toml by default.
+# and fill in real paths. src/text2model_forge/config.py loads config.local.toml by default.
 #
 # This is separate from profiles/*.toml, which hold portable generation
 # parameters (model, style, quality, per-stage settings). Run `forge config show`
@@ -11,23 +11,23 @@
 # TOML key, quoted below, not a nested table path.
 
 schema_version = 1
-workspace_root = "C:/VettedMeshRuns"
+workspace_root = "C:/Text2ModelForgeRuns"
 
 [workers."instant_meshes.retopology"]
 command_prefix = [
   "C:/path/to/python.exe",
-  "C:/path/to/vettedmesh/adapters/instant_meshes_retopology_worker.py",
+  "C:/path/to/text2model-forge/resources/adapters/instant_meshes_retopology_worker.py",
 ]
 [workers."instant_meshes.retopology".environment]
-DARKNESS_INSTANT_MESHES_EXE = "C:/path/to/Instant Meshes.exe"
+TEXT2MODEL_FORGE_INSTANT_MESHES_EXE = "C:/path/to/Instant Meshes.exe"
 
 [workers.autoremesher]
 command_prefix = [
   "C:/path/to/python.exe",
-  "C:/path/to/vettedmesh/adapters/autoremesher_worker.py",
+  "C:/path/to/text2model-forge/resources/adapters/autoremesher_worker.py",
 ]
 [workers.autoremesher.environment]
-DARKNESS_AUTOREMESHER_EXE = "C:/path/to/autoremesher-1.0.0/autoremesher.exe"
+TEXT2MODEL_FORGE_AUTOREMESHER_EXE = "C:/path/to/autoremesher-1.0.0/autoremesher.exe"
 
 [workers.blender]
 command_prefix = [
@@ -36,7 +36,7 @@ command_prefix = [
   "--factory-startup",
   "--offline-mode",
   "--python-exit-code", "23",
-  "--python", "C:/path/to/vettedmesh/adapters/blender_worker.py",
+  "--python", "C:/path/to/text2model-forge/resources/adapters/blender_worker.py",
   "--",
 ]
 [workers.blender.environment]
@@ -44,30 +44,30 @@ command_prefix = [
 [workers."triposg.1.5b"]
 command_prefix = [
   "C:/path/to/TripoSG/.venv/Scripts/python.exe",
-  "C:/path/to/vettedmesh/adapters/triposg_worker.py",
+  "C:/path/to/text2model-forge/resources/adapters/triposg_worker.py",
 ]
 [workers."triposg.1.5b".environment]
-DARKNESS_TRIPOSG_SOURCE = "C:/path/to/TripoSG"
-DARKNESS_TRIPOSG_WEIGHTS = "C:/path/to/TripoSG/pretrained_weights/TripoSG"
-DARKNESS_TRIPOSG_COMPAT = "C:/path/to/vettedmesh/compat/diso"
+TEXT2MODEL_FORGE_TRIPOSG_SOURCE = "C:/path/to/TripoSG"
+TEXT2MODEL_FORGE_TRIPOSG_WEIGHTS = "C:/path/to/TripoSG/pretrained_weights/TripoSG"
+TEXT2MODEL_FORGE_TRIPOSG_COMPAT = "C:/path/to/text2model-forge/resources/compat/diso"
 
 [workers."canonical.short_biped"]
 command_prefix = [
   "C:/path/to/python.exe",
-  "C:/path/to/vettedmesh/adapters/canonical_short_biped_worker.py",
+  "C:/path/to/text2model-forge/resources/adapters/canonical_short_biped_worker.py",
 ]
 [workers."canonical.short_biped".environment]
 
 [workers."trellis2.4b"]
 command_prefix = [
   "C:/path/to/python.exe",
-  "C:/path/to/vettedmesh/adapters/wsl_launch.py",
+  "C:/path/to/text2model-forge/resources/adapters/wsl_launch.py",
   "--distro", "Ubuntu-24.04",
   "--wsl-python", "/home/<user>/miniconda3/envs/trellis2/bin/python",
-  "--wsl-script", "/mnt/c/path/to/vettedmesh/adapters/trellis2_worker.py",
-  "--env", "DARKNESS_TRELLIS2_WEIGHTS=microsoft/TRELLIS.2-4B",
-  "--env", "DARKNESS_TRELLIS2_SOURCE=/home/<user>/AssetForgeDarknessWorkers/TRELLIS.2",
-  "--env", "DARKNESS_TRELLIS2_SOURCE_REVISION=<git-rev-parse-HEAD-of-cloned-TRELLIS.2>",
+  "--wsl-script", "/mnt/c/path/to/text2model-forge/resources/adapters/trellis2_worker.py",
+  "--env", "TEXT2MODEL_FORGE_TRELLIS2_WEIGHTS=microsoft/TRELLIS.2-4B",
+  "--env", "TEXT2MODEL_FORGE_TRELLIS2_SOURCE=/home/<user>/Text2ModelForgeWorkers/TRELLIS.2",
+  "--env", "TEXT2MODEL_FORGE_TRELLIS2_SOURCE_REVISION=<git-rev-parse-HEAD-of-cloned-TRELLIS.2>",
   "--env", "PATH=/usr/local/cuda-12.4/bin:/usr/bin:/bin",
   "--env", "LD_LIBRARY_PATH=/usr/lib/wsl/lib:/usr/local/cuda-12.4/lib64",
   "--env", "LIBRARY_PATH=/usr/lib/wsl/lib",
@@ -77,12 +77,12 @@ command_prefix = [
 [workers."instantmesh.large"]
 command_prefix = [
   "C:/path/to/python.exe",
-  "C:/path/to/vettedmesh/adapters/wsl_launch.py",
+  "C:/path/to/text2model-forge/resources/adapters/wsl_launch.py",
   "--distro", "Ubuntu-24.04",
   "--wsl-python", "/home/<user>/miniconda3/envs/instantmesh/bin/python",
-  "--wsl-script", "/mnt/c/path/to/vettedmesh/adapters/instantmesh_worker.py",
-  "--env", "DARKNESS_INSTANTMESH_SOURCE=/home/<user>/AssetForgeDarknessWorkers/InstantMesh",
-  "--env", "DARKNESS_INSTANTMESH_SOURCE_REVISION=<git-rev-parse-HEAD-of-cloned-InstantMesh>",
+  "--wsl-script", "/mnt/c/path/to/text2model-forge/resources/adapters/instantmesh_worker.py",
+  "--env", "TEXT2MODEL_FORGE_INSTANTMESH_SOURCE=/home/<user>/Text2ModelForgeWorkers/InstantMesh",
+  "--env", "TEXT2MODEL_FORGE_INSTANTMESH_SOURCE_REVISION=<git-rev-parse-HEAD-of-cloned-InstantMesh>",
   "--env", "PATH=/usr/local/cuda-12.4/bin:/usr/bin:/bin",
   "--env", "LD_LIBRARY_PATH=/usr/lib/wsl/lib:/usr/local/cuda-12.4/lib64",
   "--env", "LIBRARY_PATH=/usr/lib/wsl/lib",

@@ -41,17 +41,17 @@ jobs:
       # pytest-randomly shuffles order every run; a seed is printed on
       # failure so a bad ordering can be reproduced with -p randomly --seed=N.
       - name: Test
-        run: python -m pytest tests -q --cov=darkness --cov=assetforge --cov-report=term
+        run: python -m pytest tests -q --cov=text2model_forge --cov-report=term
 
       - name: Deterministic D0-D10 orchestration fixture
-        run: python -m darkness demo --workspace ${{ runner.temp }}/forge-demo
+        run: python -m text2model_forge demo --workspace ${{ runner.temp }}/forge-demo
 
       - name: Resolved configuration is loadable for every shipped profile
         run: |
-          python -m darkness config show --profile base
-          python -m darkness config show --profile simple
-          python -m darkness config show --profile advanced
-          python -m darkness config show --profile 8gb
+          python -m text2model_forge config show --profile base
+          python -m text2model_forge config show --profile simple
+          python -m text2model_forge config show --profile advanced
+          python -m text2model_forge config show --profile 8gb
 
       - name: Native launcher parses
         shell: bash
@@ -59,18 +59,18 @@ jobs:
           if [[ "${{ runner.os }}" == "Windows" ]]; then
             # PowerShell must receive literal dollar signs.
             # shellcheck disable=SC2016
-            pwsh -NoProfile -Command '$errors = $null; [void][System.Management.Automation.Language.Parser]::ParseFile((Resolve-Path ./vettedmesh.ps1), [ref]$null, [ref]$errors); if ($errors.Count) { $errors | Format-List | Out-String | Write-Error }'
+            pwsh -NoProfile -Command '$errors = $null; [void][System.Management.Automation.Language.Parser]::ParseFile((Resolve-Path ./text2model-forge.ps1), [ref]$null, [ref]$errors); if ($errors.Count) { $errors | Format-List | Out-String | Write-Error }'
           else
-            bash -n ./vettedmesh.sh
+            bash -n ./text2model-forge.sh
           fi
 
       - name: Native core launcher installs from its lock and runs its smoke test
         shell: bash
         run: |
           if [[ "${{ runner.os }}" == "Windows" ]]; then
-            pwsh -NoProfile -File ./vettedmesh.ps1 -Action install -AiStack core -IncludeDev -NonInteractive -NoElevation -NoBrowser -MaxAttempts 1
+            pwsh -NoProfile -File ./text2model-forge.ps1 -Action install -AiStack core -IncludeDev -NonInteractive -NoElevation -NoBrowser -MaxAttempts 1
           else
-            bash ./vettedmesh.sh install --ai-stack core --include-dev --non-interactive --no-elevation --no-browser --max-attempts 1
+            bash ./text2model-forge.sh install --ai-stack core --include-dev --non-interactive --no-elevation --no-browser --max-attempts 1
           fi
 
   coupling:
@@ -116,13 +116,13 @@ jobs:
           "${RUNNER_TEMP}/wheel-check/bin/python" -m pip install --require-hashes -r requirements.lock
           "${RUNNER_TEMP}/wheel-check/bin/python" -m pip install --no-deps dist/*.whl
           cd "${RUNNER_TEMP}"
-          "${RUNNER_TEMP}/wheel-check/bin/vettedmesh" config show --profile simple --values-only >/dev/null
-          "${RUNNER_TEMP}/wheel-check/bin/vettedmesh" workers > workers.json
+          "${RUNNER_TEMP}/wheel-check/bin/text2model-forge" config show --profile simple --values-only >/dev/null
+          "${RUNNER_TEMP}/wheel-check/bin/text2model-forge" workers > workers.json
           "${RUNNER_TEMP}/wheel-check/bin/python" -c 'import json; assert len(json.load(open("workers.json", encoding="utf-8"))) == 13'
-          "${RUNNER_TEMP}/wheel-check/bin/vettedmesh" demo --workspace "${RUNNER_TEMP}/wheel-demo" >/dev/null
+          "${RUNNER_TEMP}/wheel-check/bin/text2model-forge" demo --workspace "${RUNNER_TEMP}/wheel-demo" >/dev/null
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: vettedmesh-python-distributions
+          name: text2model-forge-python-distributions
           path: dist/*
 
   container:
@@ -132,11 +132,11 @@ jobs:
       - name: Validate Compose model
         run: docker compose config --quiet
       - name: Build the non-root Studio image
-        run: docker build --build-arg "VETTEDMESH_SOURCE_REVISION=${GITHUB_SHA}" --tag vettedmesh:ci .
+        run: docker build --build-arg "TEXT2MODEL_FORGE_SOURCE_REVISION=${GITHUB_SHA}" --tag text2model-forge:ci .
 
       - name: No stale repo-root path assumptions
         run: |
-          if grep -rn "parents\[3\]\|tools/asset_forge" --include="*.py" darkness/ assetforge/ adapters/; then
+          if grep -rn "parents\[3\]\|tools/text2model_forge" --include="*.py" src/text2model_forge/ resources/adapters/; then
             echo "::error::Found a pre-extraction path assumption."
             exit 1
           fi

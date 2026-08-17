@@ -4,15 +4,15 @@ import subprocess
 import sys
 from pathlib import Path
 
-from darkness.schemas import AssetStage, ExternalWorkerRequest
+from text2model_forge.schemas import AssetStage, ExternalWorkerRequest
 
 
 ROOT = Path(__file__).resolve().parents[1]
-FIXTURES = ROOT / "fixtures" / "mesh"
+FIXTURES = ROOT / "tests" / "fixtures" / "mesh"
 
 
 def test_blender_worker_script_compiles_without_importing_bpy() -> None:
-    source = (ROOT / "adapters" / "blender_worker.py").read_text(encoding="utf-8")
+    source = (ROOT / "resources" / "adapters" / "blender_worker.py").read_text(encoding="utf-8")
     compile(source, "blender_worker.py", "exec")
     assert '"blender.repair"' in source
     assert '"blender.repair_retopology"' in source
@@ -33,7 +33,7 @@ def test_blender_worker_script_compiles_without_importing_bpy() -> None:
 
 
 def test_rig_optimizer_script_compiles_without_running_blender_or_qwen() -> None:
-    source = (ROOT / "adapters" / "optimize_short_biped_rig.py").read_text(encoding="utf-8")
+    source = (ROOT / "resources" / "adapters" / "optimize_short_biped_rig.py").read_text(encoding="utf-8")
     compile(source, "optimize_short_biped_rig.py", "exec")
     assert "LocalDeployOptimizer" in source
     assert "apply_landmark_pair_adjustment" in source
@@ -44,11 +44,11 @@ def test_rig_optimizer_script_compiles_without_running_blender_or_qwen() -> None
 
 
 def test_external_human_approval_script_compiles_and_binds_hash() -> None:
-    source = (ROOT / "adapters" / "record_human_approval.py").read_text(encoding="utf-8")
+    source = (ROOT / "resources" / "adapters" / "record_human_approval.py").read_text(encoding="utf-8")
     compile(source, "record_human_approval.py", "exec")
     assert "ApprovalRecord" in source
     assert "sha256_file" in source
-    assert "Darkness workspace" in source
+    assert "Text2Model workspace" in source
 
 
 def test_blender_request_builder_emits_strict_geometry_contract(tmp_path: Path) -> None:
@@ -57,7 +57,7 @@ def test_blender_request_builder_emits_strict_geometry_contract(tmp_path: Path) 
     result = subprocess.run(
         [
             sys.executable,
-            str(ROOT / "adapters" / "build_blender_request.py"),
+            str(ROOT / "resources" / "adapters" / "build_blender_request.py"),
             "--input",
             str(FIXTURES / "defective_tetrahedron.obj"),
             "--output-directory",
@@ -91,7 +91,7 @@ def test_blender_request_builder_emits_bounded_retopology_repair(tmp_path: Path)
     result = subprocess.run(
         [
             sys.executable,
-            str(ROOT / "adapters" / "build_blender_request.py"),
+            str(ROOT / "resources" / "adapters" / "build_blender_request.py"),
             "--input", str(FIXTURES / "defective_tetrahedron.obj"),
             "--output-directory", str(tmp_path / "output"),
             "--out", str(request_path),
@@ -129,7 +129,7 @@ def test_blender_request_builder_emits_short_biped_rig_probe(tmp_path: Path) -> 
     result = subprocess.run(
         [
             sys.executable,
-            str(ROOT / "adapters" / "build_blender_request.py"),
+            str(ROOT / "resources" / "adapters" / "build_blender_request.py"),
             "--input", str(FIXTURES / "defective_tetrahedron.obj"),
             "--output-directory", str(tmp_path / "output"),
             "--out", str(request_path),
@@ -156,7 +156,7 @@ def test_blender_request_builder_emits_short_biped_motion_authoring(tmp_path: Pa
     result = subprocess.run(
         [
             sys.executable,
-            str(ROOT / "adapters" / "build_blender_request.py"),
+            str(ROOT / "resources" / "adapters" / "build_blender_request.py"),
             "--input", str(FIXTURES / "defective_tetrahedron.obj"),
             "--output-directory", str(tmp_path / "output"),
             "--out", str(request_path),

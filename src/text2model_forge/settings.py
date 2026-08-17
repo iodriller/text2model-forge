@@ -1,0 +1,239 @@
+"""Layered configuration resolver.
+
+Five layers, lowest precedence first: profiles/base.toml (every default,
+documented), profiles/<name>.toml (a named overlay, e.g. "simple" or
+"advanced"), config.local.toml (this machine's worker bindings and
+workspace root -- see text2model_forge.config), an explicit run override dict
+(what a caller passes when creating a run), and a stage-level override
+dict (a per-attempt retry/edit correction -- see StudioStore.decide).
+
+This module only merges plain data; it does not know about StudioRun or
+any other pydantic model. Call studio_overrides() to get just the subset
+of resolved values that map onto known StudioRun constructor fields.
+"""
+from __future__ import annotations
+
+import tomllib
+from pathlib import Path
+from typing import Any
+
+from pydantic import BaseModel
+
+from .config import default_config_path
+
+
+def _default_machine_path() -> Path:
+    """Where config.local.toml lives when the caller does not say.
+
+    Must agree with text2model_forge.config.default_config_path(): the worker
+    bindings and the [studio_defaults] table live in the SAME
+    config.local.toml, so resolving them from two different directories
+    silently drops whichever half the caller did not expect.
+    """
+    return default_config_path()
+
+
+def bundled_profiles_dir() -> Path:
+    """Default profiles shipped inside the installed package (package data),
+    always present regardless of how text2model-forge was installed."""
+    return Path(__file__).resolve().parent / "profiles"
+
+
+def profiles_dir(repo_root: Path | None = None) -> Path:
+    """Where to read profiles/*.toml from. If a project working directory has
+    its own profiles/base.toml (a consuming project keeping project-specific
+    profiles), that wins; otherwise fall back to the profiles bundled with
+    the installed package."""
+    if repo_root is not None:
+        return repo_root / "profiles"
+    cwd_profiles = Path.cwd() / "profiles"
+    if (cwd_profiles / "base.toml").is_file():
+        return cwd_profiles
+    return bundled_profiles_dir()
+
+
+def _load_toml(path: Path) -> dict[str, Any]:
+    if not path.is_file():
+        raise FileNotFoundError(path)
+    with path.open("rb") as stream:
+        return tomllib.load(stream)
+
+
+def _deep_merge(base: dict[str, Any], overlay: dict[str, Any]) -> dict[str, Any]:
+    merged = dict(base)
+    for key, value in overlay.items():
+        existing = merged.get(key)
+        if isinstance(existing, dict) and isinstance(value, dict):
+            merged[key] = _deep_merge(existing, value)
+        else:
+            merged[key] = value
+    return merged
+
+
+def _flatten(values: dict[str, Any], prefix: str = "") -> dict[str, Any]:
+    flat: dict[str, Any] = {}
+    for key, value in values.items():
+        dotted = f"{prefix}.{key}" if prefix else key
+        if isinstance(value, dict):
+            flat.update(_flatten(value, dotted))
+        else:
+            flat[dotted] = value
+    return flat
+
+
+class ResolvedSettings(BaseModel):
+    """A merged configuration plus, for every leaf key, which layer set it."""
+
+    values: dict[str, Any]
+    origin: dict[str, str]
+
+    def get(self, dotted_key: str, default: Any = None) -> Any:
+        node: Any = self.values
+        for part in dotted_key.split("."):
+            if not isinstance(node, dict) or part not in node:
+                return default
+            node = node[part]
+        return node
+
+    def flat(self) -> dict[str, Any]:
+        return _flatten(self.values)
+
+
+def resolve_settings(
+    *,
+    profile: str = "simple",
+    repo_root: Path | None = None,
+    machine_path: str | Path | None = None,
+    run_overrides: dict[str, Any] | None = None,
+    stage_overrides: dict[str, Any] | None = None,
+) -> ResolvedSettings:
+    """Resolve the layered configuration for one run.
+
+    Layer order (later wins): base.toml, profiles/<profile>.toml,
+    config.local.toml's [studio_defaults] table if present, run_overrides,
+    stage_overrides.
+
+    profiles/base.toml is read from ./profiles (relative to repo_root, or
+    the current working directory if repo_root is not given) when present,
+    falling back to the profiles bundled with the installed package -- see
+    profiles_dir(). config.local.toml is read from the same place
+    text2model_forge.config reads worker bindings from, so both halves of that file
+    resolve consistently; it is normal for it not to exist.
+    """
+    profiles = profiles_dir(repo_root)
+
+    base_path = profiles / "base.toml"
+    merged: dict[str, Any] = _load_toml(base_path)
+    origin: dict[str, str] = {key: "base" for key in _flatten(merged)}
+
+    if profile != "base":
+        profile_path = profiles / f"{profile}.toml"
+        if profile_path.is_file():
+            overlay = _load_toml(profile_path)
+            merged = _deep_merge(merged, overlay)
+            for key in _flatten(overlay):
+                origin[key] = f"profile:{profile}"
+
+    if machine_path:
+        machine_target = Path(machine_path)
+    elif repo_root is not None:
+        machine_target = repo_root / "config.local.toml"
+    else:
+        machine_target = _default_machine_path()
+    if machine_target.is_file():
+        machine_data = _load_toml(machine_target)
+        overlay = machine_data.get("studio_defaults")
+        if isinstance(overlay, dict):
+            merged = _deep_merge(merged, {"studio": overlay})
+            for key in _flatten({"studio": overlay}):
+                origin[key] = "machine"
+        # [stage_defaults] is the per-stage counterpart of [studio_defaults].
+        # Without it a machine could tune the [studio] table but nothing under
+        # [stages.*], so a setting that genuinely depends on the hardware --
+        # D3's manifold_policy, which is only needed because a small card
+        # forces an isosurface D2 backend -- had no home outside editing a
+        # checked-in profile.
+        stage_overlay = machine_data.get("stage_defaults")
+        if isinstance(stage_overlay, dict):
+            merged = _deep_merge(merged, {"stages": stage_overlay})
+            for key in _flatten({"stages": stage_overlay}):
+                origin[key] = "machine"
+
+    if run_overrides:
+        merged = _deep_merge(merged, run_overrides)
+        for key in _flatten(run_overrides):
+            origin[key] = "run"
+
+    if stage_overrides:
+        merged = _deep_merge(merged, stage_overrides)
+        for key in _flatten(stage_overrides):
+            origin[key] = "stage"
+
+    return ResolvedSettings(values=merged, origin=origin)
+
+
+# StudioRun constructor fields this resolver is allowed to populate. Keeping
+# this list explicit (rather than passing the whole [studio] table through)
+# means an unrecognized key in profiles/*.toml fails loudly instead of being
+# silently accepted by a future, differently-shaped StudioRun.
+_STUDIO_RUN_FIELDS = (
+    "model",
+    "comfy_url",
+    "localdeploy_url",
+    "concept_backend",
+    "checkpoint",
+    "style_lora",
+    "style_lora_strength",
+    "style_lora_trigger",
+    "prop_lora",
+    "prop_lora_strength",
+    "spec_strategy",
+    "llm_timeout_seconds",
+    "vram_handoff",
+)
+
+
+_OPTIONAL_STRING_FIELDS = ("style_lora", "prop_lora")
+
+# [quality.<tier>] keys that map onto a StudioRun field of the same name.
+# sprite_views is deliberately excluded: it is still DOCUMENTED, not WIRED
+# (see profiles/base.toml) -- StudioRun has no field for it yet.
+_QUALITY_STUDIO_RUN_FIELDS = ("concept_steps", "concept_cfg")
+
+
+def quality_overrides(resolved: ResolvedSettings) -> dict[str, Any]:
+    """Resolve [asset].quality to its [quality.<tier>] section and extract
+    just the keys that map onto a StudioRun field.
+
+    Returns {} (not an error) for an unknown or missing tier -- an invalid
+    quality name is a StudioAssetSpec validation concern, not this
+    resolver's; falling through to StudioRun's own field defaults is the
+    correct fail-safe here, not a raise.
+    """
+    quality_name = resolved.values.get("asset", {}).get("quality")
+    if not isinstance(quality_name, str):
+        return {}
+    tier = resolved.values.get("quality", {}).get(quality_name)
+    if not isinstance(tier, dict):
+        return {}
+    return {key: tier[key] for key in _QUALITY_STUDIO_RUN_FIELDS if key in tier}
+
+
+def studio_overrides(resolved: ResolvedSettings) -> dict[str, Any]:
+    """Extract the subset of resolved values StudioRun's constructor accepts:
+    the [studio] table plus, via quality_overrides(), the [quality.<tier>]
+    section [asset].quality currently names.
+
+    TOML has no null literal, so an optional string field (style_lora,
+    prop_lora) is written as "" in profiles/*.toml to mean "not set"; that
+    is translated to None here, matching StudioRun's own field default.
+    """
+    studio = resolved.values.get("studio", {})
+    if not isinstance(studio, dict):
+        studio = {}
+    result = {key: studio[key] for key in _STUDIO_RUN_FIELDS if key in studio}
+    for key in _OPTIONAL_STRING_FIELDS:
+        if result.get(key) == "":
+            result[key] = None
+    result.update(quality_overrides(resolved))
+    return result

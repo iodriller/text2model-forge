@@ -4,7 +4,7 @@ import runpy
 
 
 ROOT = Path(__file__).resolve().parents[1]
-PIPELINE = ROOT / "adapters/run_motion_candidate_pipeline.py"
+PIPELINE = ROOT / "resources/adapters/run_motion_candidate_pipeline.py"
 
 
 def test_motion_candidate_pipeline_compiles_and_has_resumable_stage_markers() -> None:
@@ -36,8 +36,8 @@ def test_motion_candidate_pipeline_compiles_and_has_resumable_stage_markers() ->
     assert 'manifest.get("automatic_gate_passed") is True' in source
     assert "build_unity_smoke_bundle.py" in source
     assert "ingest_unity_smoke_result.py" in source
-    assert "Darkness painted motion candidate — human review" in source
-    assert "bake_darkness_surface.py" in source
+    assert "Text2Model painted motion candidate — human review" in source
+    assert "bake_surface.py" in source
     assert "review_surface_master.py" in source
     assert "surface_master_sha256" in source
 

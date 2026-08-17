@@ -3,7 +3,7 @@
 These drive `ChunkedSpecCompiler` against a scripted sender rather than a live
 model, so they assert the *method* -- decomposition, deterministic mapping,
 filler rejection -- deterministically and with no GPU. The live behaviour the
-method exists for is recorded in darkness/chunked_spec.py's module docstring
+method exists for is recorded in src/text2model_forge/chunked_spec.py's module docstring
 and was measured separately against qwen3-vl:8b-instruct.
 """
 from __future__ import annotations
@@ -12,15 +12,15 @@ import json
 
 import pytest
 
-from darkness.chunked_spec import (
+from text2model_forge.chunked_spec import (
     ChunkedSpecCompiler,
     _clean_phrases,
     _explicit_articulation_demanded,
     _explicit_equipment_demanded,
     _slug,
 )
-from darkness.localdeploy import LocalDeployStructuredClient
-from darkness.studio_qwen import StudioQwen
+from text2model_forge.localdeploy import LocalDeployStructuredClient
+from text2model_forge.studio_qwen import StudioQwen
 
 
 class ScriptedSender:

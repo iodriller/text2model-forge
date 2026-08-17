@@ -4,7 +4,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from assetforge.families import inspect_canonical_master, inspect_family_contract
+from text2model_forge.sprites.families import inspect_canonical_master, inspect_family_contract
 
 
 def _write(path, value):

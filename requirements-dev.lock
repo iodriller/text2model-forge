@@ -15,7 +15,7 @@ boolean-py==5.0 \
 build==1.5.0 \
     --hash=sha256:13f3eecb844759ab66efec90ca17639bbf14dc06cb2fdf37a9010322d9c50a6f \
     --hash=sha256:302c22c3ba2a0fd5f3911918651341ebb3896176cbdec15bd421f80b1afc7647
-    # via vettedmesh
+    # via text2model-forge
 cachecontrol==0.14.4 \
     --hash=sha256:b7ac014ff72ee199b5f8af1de29d60239954f223e948196fa3d84adaffc71d2b \
     --hash=sha256:e6220afafa4c22a47dd0badb319f84475d79108100d04e26e8542ef7d3ab05a1
@@ -276,7 +276,7 @@ httpcore==1.0.9 \
 httpx==0.28.1 \
     --hash=sha256:75e98c5f16b0f35b567856f597f06ff2270a374470a5c2392242528e3e3e42fc \
     --hash=sha256:d909fcccc110f8c7faf814ca82a9a4d816bc5a6dbfea25d6591d6985b8ba59ad
-    # via vettedmesh
+    # via text2model-forge
 idna==3.18 \
     --hash=sha256:7f952cbe720b688055e3f87de14f5c3e5fdaa8bc3928985c4077ca689de849a2 \
     --hash=sha256:ffb385a7e039654cef1ab9ef32c6fafe283c0c0467bba1d9029738ce4a14a848
@@ -350,7 +350,7 @@ msgpack==1.2.1 \
 networkx==3.6.1 \
     --hash=sha256:26b7c357accc0c8cde558ad486283728b65b6a95d85ee1cd66bafab4c8168509 \
     --hash=sha256:d47fbf302e7d9cbbb9e2555a0d267983d2aa476bac30e90dfbe5669bd57f3762
-    # via vettedmesh
+    # via text2model-forge
 numpy==2.5.2 \
     --hash=sha256:0090ccdd57ec2703e9b49d0bf554767370581c1dd0a6b2bb2b2d9def317d042a \
     --hash=sha256:078f9b027b478c9379b9677babbf0f8b8f1ecfada27636d7b9a93990c638739f \
@@ -419,8 +419,8 @@ numpy==2.5.2 \
     --hash=sha256:f06571a052127dc1b4e8b83029b4d1b20daa2b64a31cdd181fc6bc774e9000eb \
     --hash=sha256:fd0d703772bba096843785bd38371e31bb4a0c1151497ad5739d182114a73f7f
     # via
+    #   text2model-forge
     #   trimesh
-    #   vettedmesh
 packageurl-python==0.17.6 \
     --hash=sha256:1252ce3a102372ca6f86eb968e16f9014c4ba511c5c37d95a7f023e2ca6e5c25 \
     --hash=sha256:31a85c2717bc41dd818f3c62908685ff9eebcb68588213745b14a6ee9e7df7c9
@@ -498,7 +498,7 @@ pillow==12.3.0 \
     --hash=sha256:fdafc9cce40277e0f7a0feabce0ee50dd2fa1800f3b38015e51296b5e814048d \
     --hash=sha256:fe3cca2e4e8a592be0f269a1ca4835c25199d9f3ce815c8491048f785b0a0198 \
     --hash=sha256:ffd0c5368496f41b0944be820fcb7a838aa6e623d250b01acf2643939c3f99d7
-    # via vettedmesh
+    # via text2model-forge
 pip==26.2.1 \
     --hash=sha256:71138adf1f4ca900cdb7d289c21b7494329f2332b6d85f0e1c42108c0384ed3e \
     --hash=sha256:f6ad667e89a1fe78046c8f13232b247200f5258d7828f3f7883d660878e0813f
@@ -510,7 +510,7 @@ pip-api==0.0.34 \
 pip-audit==2.10.1 \
     --hash=sha256:1eb4565d19ebe5d48996f4b770b4d2b32887e12cb12cfa637f1a064011b55ffc \
     --hash=sha256:99ef3f600a317c1945f1e89e227ef26e1c2d618429b8bd3fa6f4f7c440c4611a
-    # via vettedmesh
+    # via text2model-forge
 pip-requirements-parser==32.0.1 \
     --hash=sha256:4659bc2a667783e7a15d190f6fccf8b2486685b6dba4c19c3876314769c57526 \
     --hash=sha256:b4fa3a7a0be38243123cf9d1f3518da10c51bdb165a2b2985566247f9155a7d3
@@ -532,7 +532,7 @@ py-serializable==2.1.0 \
 pydantic==2.13.4 \
     --hash=sha256:45a282cde31d808236fd7ea9d919b128653c8b38b393d1c4ab335c62924d9aba \
     --hash=sha256:c40756b57adaa8b1efeeced5c196f3f3b7c435f90e84ea7f443901bec8099ef6
-    # via vettedmesh
+    # via text2model-forge
 pydantic-core==2.46.4 \
     --hash=sha256:00c603d540afdd6b80eb39f078f33ebd46211f02f33e34a32d9f053bba711de0 \
     --hash=sha256:0186750b482eefa11d7f435892b09c5c606193ef3375bcf94aa00ae6bfb66262 \
@@ -620,15 +620,15 @@ pytest==9.1.1 \
     # via
     #   pytest-cov
     #   pytest-randomly
-    #   vettedmesh
+    #   text2model-forge
 pytest-cov==6.3.0 \
     --hash=sha256:35c580e7800f87ce892e687461166e1ac2bcb8fb9e13aea79032518d6e503ff2 \
     --hash=sha256:440db28156d2468cafc0415b4f8e50856a0d11faefa38f30906048fe490f1749
-    # via vettedmesh
+    # via text2model-forge
 pytest-randomly==3.16.0 \
     --hash=sha256:11bf4d23a26484de7860d82f726c0629837cf4064b79157bd18ec9d41d7feb26 \
     --hash=sha256:8633d332635a1a0983d3bba19342196807f6afb17c3eef78e02c2f85dade45d6
-    # via vettedmesh
+    # via text2model-forge
 requests==2.34.2 \
     --hash=sha256:2a0d60c172f83ac6ab31e4554906c0f3b3588d37b5cb939b1c061f4907e278e0 \
     --hash=sha256:f288924cae4e29463698d6d60bc6a4da69c89185ad1e0bcc4104f584e960b9ed
@@ -690,7 +690,7 @@ tomli-w==1.2.0 \
 trimesh==4.12.2 \
     --hash=sha256:b5b5afa63c5272345f2858f7676bc8c217dc8a89f4fadf6193fe10a81b5ff2aa \
     --hash=sha256:c8ca31571ac00b112e4e160e66a2d4c3491df321f056bd33806be0485d1af9d9
-    # via vettedmesh
+    # via text2model-forge
 typing-extensions==4.16.0 \
     --hash=sha256:481caa481374e813c1b176ada14e97f1f67a4539ce9cfeb3f350d78d6370c2e8 \
     --hash=sha256:dc983d19a509c94dba722ee6abd33940f7c05a89e243c47e907eb4db6f1a43e5

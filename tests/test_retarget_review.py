@@ -1,4 +1,4 @@
-from darkness.retarget_review import (
+from text2model_forge.retarget_review import (
     RetargetClipReview,
     RetargetMediatorDecision,
     RetargetReviewDecision,

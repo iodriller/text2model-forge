@@ -5,7 +5,7 @@ from pathlib import Path
 
 from PIL import Image, ImageDraw
 
-from assetforge.critic import critique_unit
+from text2model_forge.sprites.critic import critique_unit
 
 
 def textured_frame(size, base, accent):

@@ -1,0 +1,32 @@
+{
+  "schema_version": 1,
+  "capability": {
+    "schema_version": 1,
+    "worker_id": "triposg.1.5b",
+    "worker_version": "fc5c40990181e2a756c4e0b1c2f4d6b5202faf8c",
+    "candidate_id": "triposg-1.5b",
+    "stages": ["D2_geometry"],
+    "operations": ["geometry.generate_from_rgba"],
+    "requires_gpu": true,
+    "exclusive_gpu": true,
+    "supports_cancel": true,
+    "deterministic": false,
+    "environment_digest": "torch-2.7.1+cu128-python-3.10",
+    "input_media_types": ["image/png"],
+    "output_media_types": ["model/gltf-binary", "application/json"]
+  },
+  "adapter": "subprocess",
+  "lifecycle": "discovered",
+  "source_url": "https://github.com/VAST-AI-Research/TripoSG",
+  "pinned_revision": "fc5c40990181e2a756c4e0b1c2f4d6b5202faf8c",
+  "environment_kind": "windows",
+  "executable_candidates": ["%TEXT2MODEL_FORGE_TRIPOSG_PYTHON%"],
+  "license_gate": "permitted",
+  "blockers": [
+    "The local environment (venv, weights, repo clone) was removed 2026-07-12 to reclaim 14 GB and to retire the now-unused Python 3.10 install it depended on. This worker requires a rebuild (a fresh venv against Python 3.12, weights re-download) before it can run again; lifecycle demoted from 'research_ready' back to 'discovered' until that happens.",
+    "TripoSG is kept only as the native-Windows offline fallback for machines without a WSL2 geometry environment.",
+    "One RTX 5090 smoke candidate previously passed transport and mesh-health capture (see resources/qualifications/triposg-1.5b_windows_rtx5090.json); corpus-level quality qualification never happened because the observed candidate had 17 disconnected surface components and is not a production deformation body.",
+    "Inputs must contain a valid alpha mask; BRIA RMBG is intentionally excluded.",
+    "The flash DiSo extractor is disabled until a separately isolated compiler toolchain is qualified."
+  ]
+}

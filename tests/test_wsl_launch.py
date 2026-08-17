@@ -6,7 +6,7 @@ from pathlib import Path
 import pytest
 
 
-ADAPTER = Path(__file__).resolve().parents[1] / "adapters" / "wsl_launch.py"
+ADAPTER = Path(__file__).resolve().parents[1] / "resources" / "adapters" / "wsl_launch.py"
 
 
 def _load_adapter_namespace() -> dict:

@@ -7,12 +7,55 @@ config.local.json
 
 # Python
 __pycache__/
-*.pyc
-.venv/
+*.py[cod]
+*$py.class
+.venv*/
+venv/
+.tox/
+.nox/
 .pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.hypothesis/
+.ipynb_checkpoints/
+.cache/
+.coverage
+.coverage.*
+coverage.xml
+htmlcov/
 *.egg-info/
 build/
 dist/
+wheelhouse/
+
+# Editors and operating systems
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+Desktop.ini
+.AppleDouble
+
+# Local secrets and process output
+.env
+.env.*
+!.env.example
+*.log
+*.pid
+*.tmp
+*.bak
+*.dmp
+*.sqlite
+*.sqlite3
+/artifacts/
+/logs/
+/outputs/
+/runs/
+/tmp/
+/temp/
 
 # Vendored/generated ComfyUI-style runtime and downloaded model weights, if
 # a worker environment is ever set up alongside the repo instead of outside it.
@@ -21,13 +64,23 @@ workspaces/
 *.safetensors
 *.ckpt
 *.pt
+*.pth
+*.gguf
 *.onnx
+*.blend[0-9]*
+
+# Unity creates these large machine-specific folders if the optional smoke
+# template is opened directly in the editor.
+/resources/unity_smoke_template/Library/
+/resources/unity_smoke_template/Temp/
+/resources/unity_smoke_template/Obj/
+/resources/unity_smoke_template/Logs/
+/resources/unity_smoke_template/UserSettings/
 
 # Local run output, never checked in.
-/AssetForgeRuns/
-/VettedMeshRuns/
+/Text2ModelForgeRuns/
 
 # Machine-local recovery notes produced while repairing a ComfyUI install.
 /.comfyui-revert-to.txt
 /.comfyui-torch-before.txt
-/motion_library/catalog.json
+/resources/motion_library/catalog.json

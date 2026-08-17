@@ -3,7 +3,7 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
-from darkness.motion_library import (
+from text2model_forge.motion_library import (
     MotionClip,
     MotionLibrary,
     find_motion_clip,
@@ -72,7 +72,12 @@ def test_resolve_donor_motion_path_keeps_an_absolute_local_path_as_is(tmp_path: 
 
 
 def test_load_motion_library_reads_the_bundled_example_catalog():
-    example = Path(__file__).resolve().parents[1] / "motion_library" / "catalog.example.json"
+    example = (
+        Path(__file__).resolve().parents[1]
+        / "resources"
+        / "motion_library"
+        / "catalog.example.json"
+    )
     library = load_motion_library(example)
     assert library.clips[0].clip_id == "example_walk_cycle"
     # the example is explicitly a template with no downloaded file yet

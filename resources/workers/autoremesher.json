@@ -1,0 +1,31 @@
+{
+  "schema_version": 1,
+  "capability": {
+    "schema_version": 1,
+    "worker_id": "autoremesher",
+    "worker_version": "1.0.0-text2model_forge.1",
+    "candidate_id": "autoremesher-1.0.0",
+    "stages": ["D4_topology"],
+    "operations": ["retopology.autoremesher"],
+    "requires_gpu": false,
+    "exclusive_gpu": false,
+    "supports_cancel": false,
+    "deterministic": false,
+    "environment_digest": "autoremesher-1.0.0-windows-x86_64",
+    "input_media_types": ["model/obj"],
+    "output_media_types": ["model/obj", "application/json", "text/plain"]
+  },
+  "adapter": "subprocess",
+  "lifecycle": "research_ready",
+  "source_url": "https://github.com/huxingyi/autoremesher",
+  "pinned_revision": "04c6a39f39d04087dda67ee9e2f4d952c21afc50",
+  "environment_kind": "windows",
+  "executable_candidates": ["%TEXT2MODEL_FORGE_AUTOREMESHER_EXE%", "autoremesher.exe"],
+  "license_gate": "permitted",
+  "blockers": [
+    "The first real TripoSG result preserves the broad silhouette but fails structural and all-quad promotion gates.",
+    "Identical live jobs produced different output hashes and topology counts; the 1.0.0 CLI exposes no seed, so exact-output reproducibility is not qualified.",
+    "GLB input is not supported directly; the Blender empty-scene normalization/export step must precede this worker.",
+    "Windows child-process-tree cancellation is not qualified."
+  ]
+}

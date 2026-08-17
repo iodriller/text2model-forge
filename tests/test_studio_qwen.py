@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import pytest
 
-from darkness.studio_qwen import GateAssessment, _validated_concept_selection
+from text2model_forge.studio_qwen import GateAssessment, _validated_concept_selection
 
 
 IDS = ["d1-i01-candidate-1", "d1-i01-candidate-2"]

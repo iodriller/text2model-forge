@@ -3,7 +3,7 @@ from __future__ import annotations
 import pytest
 from pydantic import ValidationError
 
-from darkness.canonical_optimizer import (
+from text2model_forge.canonical_optimizer import (
     AdjustLandmarkPairParameters,
     CanonicalRigOptimizerDecision,
     LandmarkAxis,

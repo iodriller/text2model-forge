@@ -11,7 +11,7 @@ from pathlib import Path
 
 import pytest
 
-from darkness.hardware import (
+from text2model_forge.hardware import (
     COMFY_RESIDENT_VRAM_GB,
     FINGER_WIDTH_M,
     GpuInfo,
@@ -20,7 +20,7 @@ from darkness.hardware import (
     recommend_stack,
     recommended_voxel_fraction,
 )
-from darkness.preflight import (
+from text2model_forge.preflight import (
     Check,
     check_comfy_nodes,
     check_donor_motion,
@@ -150,7 +150,7 @@ def test_voxel_check_is_skipped_when_no_remesh_runs():
 
 
 def test_preflight_catches_an_unreachable_comfy(monkeypatch: pytest.MonkeyPatch):
-    monkeypatch.setattr("darkness.preflight._http_json", lambda *a, **k: None)
+    monkeypatch.setattr("text2model_forge.preflight._http_json", lambda *a, **k: None)
     check = check_comfy_nodes({"comfy_url": "http://127.0.0.1:9"}, {"D2": {"backend": "hunyuan3d"}})
     assert check.status == "fail"
     assert "Start ComfyUI" in check.remedy
@@ -160,7 +160,7 @@ def test_preflight_catches_a_comfy_without_hunyuan3d_nodes(monkeypatch: pytest.M
     """Regression: an Oct-2024 ComfyUI runs fine and serves object_info, but
     has none of the Hunyuan3D nodes. 'Is ComfyUI installed' never caught it."""
     monkeypatch.setattr(
-        "darkness.preflight._http_json",
+        "text2model_forge.preflight._http_json",
         lambda *a, **k: {"CheckpointLoaderSimple": {}, "SaveGLB": {}},
     )
     check = check_comfy_nodes({"comfy_url": "http://x"}, {"D2": {"backend": "hunyuan3d"}})
@@ -169,7 +169,7 @@ def test_preflight_catches_a_comfy_without_hunyuan3d_nodes(monkeypatch: pytest.M
 
 
 def test_comfy_node_check_skips_a_subprocess_backend(monkeypatch: pytest.MonkeyPatch):
-    monkeypatch.setattr("darkness.preflight._http_json", lambda *a, **k: {})
+    monkeypatch.setattr("text2model_forge.preflight._http_json", lambda *a, **k: {})
     check = check_comfy_nodes({"comfy_url": "http://x"}, {"D2": {"backend": "trellis2.4b"}})
     assert check.status == "skip"
 

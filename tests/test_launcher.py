@@ -7,8 +7,8 @@ import pytest
 
 
 ROOT = Path(__file__).resolve().parents[1]
-POWERSHELL = ROOT / "vettedmesh.ps1"
-SHELL = ROOT / "vettedmesh.sh"
+POWERSHELL = ROOT / "text2model-forge.ps1"
+SHELL = ROOT / "text2model-forge.sh"
 
 
 def test_windows_launcher_exposes_bounded_install_start_and_ai_choices() -> None:
@@ -49,7 +49,7 @@ def test_unix_launcher_has_native_linux_macos_install_start_and_repair_paths() -
     assert "--no-build-isolation" in source
     assert "hunyuan3d-dit-v2_fp16.safetensors" in source
     assert "Keeping the existing gitignored config.local.toml unchanged" in source
-    assert not (ROOT / "vettedmesh.cmd").exists()
+    assert not (ROOT / "text2model-forge.cmd").exists()
 
 
 def test_dependency_manifests_share_pyproject_as_the_source_of_truth() -> None:
@@ -77,11 +77,12 @@ def test_docker_setup_is_local_only_persistent_and_uses_typed_config() -> None:
     nvidia = (ROOT / "compose.nvidia.yaml").read_text(encoding="utf-8")
     config = tomllib.loads((ROOT / "docker" / "config.local.toml").read_text(encoding="utf-8"))
 
-    assert "USER vettedmesh" in dockerfile
+    assert "USER text2model" in dockerfile
     assert "--require-hashes -r requirements.lock" in dockerfile
     assert '"--allow-non-loopback"' in dockerfile
-    assert '127.0.0.1:${VETTEDMESH_PORT:-8766}:8766' in compose
-    assert "vettedmesh-workspace:/workspace" in compose
+    assert '127.0.0.1:${TEXT2MODEL_FORGE_PORT:-8766}:8766' in compose
+    assert "workspace:/workspace" in compose
+    assert 'profiles: ["models"]' in compose
     assert "condition: service_healthy" in compose
     assert "capabilities: [gpu]" in nvidia
     assert config["workspace_root"] == "/workspace"

@@ -10,7 +10,7 @@
 
 - [ ] Narrow regression test
 - [ ] `python -m pytest tests -q`
-- [ ] `python -m darkness demo --workspace <temporary-workspace>`
+- [ ] `python -m text2model_forge demo --workspace <temporary-workspace>`
 - [ ] Real worker check, or explicitly marked not run
 - [ ] Documentation and support status match observed evidence
 - [ ] No credentials, machine paths, downloaded models, or generated run output

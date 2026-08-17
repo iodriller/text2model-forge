@@ -3,7 +3,7 @@
 These drive a real loopback ThreadingHTTPServer rather than calling handler
 methods directly, so routing, CSRF enforcement, form parsing, redirects, and
 error rendering are all exercised as a browser would exercise them. Before
-this file darkness/studio_web.py had zero test coverage.
+this file src/text2model_forge/studio_web.py had zero test coverage.
 """
 from __future__ import annotations
 
@@ -18,8 +18,8 @@ import urllib.request
 
 import pytest
 
-from darkness.studio_pipeline import StudioCoordinator
-from darkness.studio_web import _run_progress, build_server
+from text2model_forge.studio_pipeline import StudioCoordinator
+from text2model_forge.studio_web import _run_progress, build_server
 
 from test_studio import (
     CHAIR_DESCRIPTION,
@@ -328,6 +328,37 @@ def test_approving_a_gate_through_the_web_form_advances_the_run(studio):
     assert decided.stage("D1").human_decisions[-1].comment == "Looks good."
 
 
+def test_ai_recommendation_requires_confirmation_and_records_its_review_id(studio):
+    _post(studio, "/runs", {"csrf": studio.csrf, "description": DESCRIPTION, "profile": "simple"})
+    run = wait_for(studio.store, _only_run_id(studio), "awaiting_review")
+    stage = run.stage("D1")
+    review = stage.qwen_reviews[-1]
+    candidate = next(item for item in stage.evidence if item.evidence_id == review.recommended_evidence_id)
+
+    status, body, _ = _get(studio, f"/run/{run.run_id}")
+    assert status == HTTPStatus.OK
+    assert "AI review recommendation" in body
+    assert "Confirm AI recommendation" in body
+    assert review.review_id in body
+    assert studio.store.load(run.run_id).stage("D1").human_decisions == []
+
+    status, _ = _post(
+        studio,
+        f"/run/{run.run_id}/decision",
+        {
+            "csrf": studio.csrf,
+            "stage_id": "D1",
+            "decision": "approve",
+            "comment": "Confirmed after inspecting the candidate.",
+            "selected_evidence_id": candidate.evidence_id,
+            "assisted_by_review_id": review.review_id,
+        },
+    )
+    assert status in {HTTPStatus.FOUND, HTTPStatus.SEE_OTHER}
+    record = studio.store.load(run.run_id).stage("D1").human_decisions[-1]
+    assert record.assisted_by_review_id == review.review_id
+
+
 def test_run_page_and_json_api_expose_the_runs_state(studio):
     _post(studio, "/runs", {"csrf": studio.csrf, "description": DESCRIPTION, "profile": "simple"})
     run = wait_for(studio.store, _only_run_id(studio), "awaiting_review")
@@ -376,7 +407,7 @@ def test_setup_options_api_returns_discovered_models_without_blocking_the_form(
             "reviewer": {"ready": True, "detail": "HTTP 200"},
         },
     }
-    monkeypatch.setattr("darkness.studio_web._setup_options", lambda profile: payload)
+    monkeypatch.setattr("text2model_forge.studio_web._setup_options", lambda profile: payload)
     status, body, headers = _get(studio, "/api/setup/options?profile=simple")
     assert status == HTTPStatus.OK
     assert headers["Content-Type"].startswith("application/json")
@@ -536,7 +567,7 @@ def test_a_completed_runs_final_evidence_is_reachable_from_its_stage_page(
     not wire up.
     """
     monkeypatch.setattr(
-        "darkness.studio_pipeline.load_local_config",
+        "text2model_forge.studio_pipeline.load_local_config",
         lambda *a, **k: _machine_config_with_blender(tmp_path),
     )
     with ThreadPoolExecutor(max_workers=1) as executor:

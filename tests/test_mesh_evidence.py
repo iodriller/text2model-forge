@@ -3,10 +3,10 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from darkness.mesh_evidence import build_mesh_evidence
+from text2model_forge.mesh_evidence import build_mesh_evidence
 
 
-FIXTURES = Path(__file__).resolve().parents[1] / "fixtures" / "mesh"
+FIXTURES = Path(__file__).resolve().parent / "fixtures" / "mesh"
 
 
 def test_build_mesh_evidence_writes_reviewable_station_three_bundle(tmp_path: Path) -> None:

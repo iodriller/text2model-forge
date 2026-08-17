@@ -1,0 +1,33 @@
+{
+  "schema_version": 1,
+  "capability": {
+    "schema_version": 1,
+    "worker_id": "instantmesh.large",
+    "worker_version": "0.0.0-unpinned",
+    "candidate_id": "instantmesh",
+    "stages": ["D2_geometry"],
+    "operations": ["geometry.generate_from_rgba"],
+    "requires_gpu": true,
+    "exclusive_gpu": true,
+    "supports_cancel": true,
+    "deterministic": false,
+    "environment_digest": null,
+    "input_media_types": ["image/png"],
+    "output_media_types": ["model/gltf-binary", "application/json"]
+  },
+  "adapter": "subprocess",
+  "lifecycle": "research_ready",
+  "source_url": "https://github.com/TencentARC/InstantMesh",
+  "pinned_revision": "08822c52fdc399b93ea00e4fa9e596344ed52ccc",
+  "environment_kind": "wsl2",
+  "executable_candidates": ["%TEXT2MODEL_FORGE_INSTANTMESH_WSL_PYTHON%"],
+  "license_gate": "permitted",
+  "blockers": [
+    "Live RTX 5090 smoke candidate passed transport and mesh-health capture 2026-07-12 (see resources/qualifications/instantmesh-large_wsl2_rtx5090.json): watertight, 10 connected surface components, 27836 vertices, 26.9s end to end. Both checkpoints (sudo-ai/zero123plus-v1.2, TencentARC/InstantMesh) downloaded with zero Hugging Face gate or license-acceptance step -- unlike TRELLIS.2, which was blocked pending review of gated facebook/dinov3-vitl16-pretrain-lvd1689m access.",
+    "IMPORTANT: fewer connected components than TripoSG's baseline (10 vs 17) does NOT mean better visual quality here. The rendered diagnostic shows a disorganized, apparently rotated/tumbled result that is much harder to recognize as a coherent standing goblin than TripoSG's candidate. Do not treat this candidate as qualified on component count alone; corpus-level quality qualification is pending and may need an owned foreground-crop/resize preprocessing step (currently skipped along with rembg).",
+    "InstantMesh is an April 2024 architecture (Zero123++ multi-view diffusion + sparse-view LRM); independent 2026 comparisons place it a research generation behind TRELLIS.2/Hunyuan3D on mesh quality. Treat this as a fast, frictionless baseline, not a replacement for TRELLIS.2 as primary once TRELLIS.2's access clears.",
+    "The official run.py invokes rembg (u2net) for background removal by default. Text2Model always passes --no_rembg and a caller-owned pre-masked RGBA composite instead, matching the policy already applied to TripoSG and TRELLIS.2 -- this worker never downloads or runs rembg's model.",
+    "Native output is OBJ (+ optional MTL texture map), not GLB; the adapter converts via trimesh after run.py completes.",
+    "Required a separate CUDA 12.8 toolkit install and a torch upgrade to 2.7.1+cu128 partway through qualification: torch==2.1.0/2.6.0 builds either lack Blackwell (sm_120) kernels entirely or emit compute_90-only PTX that does not JIT to sm_120 on this GPU, failing with 'no kernel image is available for execution on the device' despite torch.cuda.is_available() reporting True. This same risk applies to TRELLIS.2's pinned torch==2.6.0+cu124 and has not yet been verified there."
+  ]
+}

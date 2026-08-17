@@ -5,7 +5,7 @@ from pathlib import Path
 from PIL import Image
 
 
-ADAPTER = Path(__file__).resolve().parents[1] / "adapters" / "trellis2_worker.py"
+ADAPTER = Path(__file__).resolve().parents[1] / "resources" / "adapters" / "trellis2_worker.py"
 
 
 def _load_adapter_namespace() -> dict:

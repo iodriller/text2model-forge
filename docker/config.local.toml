@@ -1,5 +1,5 @@
 # Container-local defaults. Override the mounted file with
-# VETTEDMESH_DOCKER_CONFIG=/absolute/path/to/another-config.local.toml.
+# TEXT2MODEL_FORGE_DOCKER_CONFIG=/absolute/path/to/another-config.local.toml.
 schema_version = 1
 workspace_root = "/workspace"
 
@@ -16,5 +16,5 @@ spec_strategy = "chunked"
 llm_timeout_seconds = 600
 
 [workers."canonical.short_biped"]
-command_prefix = ["/usr/local/bin/python", "/app/adapters/canonical_short_biped_worker.py"]
+command_prefix = ["/usr/local/bin/python", "/app/resources/adapters/canonical_short_biped_worker.py"]
 [workers."canonical.short_biped".environment]

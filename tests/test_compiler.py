@@ -1,10 +1,10 @@
 from __future__ import annotations
 
-from darkness.cli import run_demo
-from darkness.compiler import DarknessCompiler
-from darkness.fake_worker import build_fake_registry
-from darkness.regression import evaluate_candidate
-from darkness.schemas import AssetStage, ExternalWorkerOutput, ExternalWorkerResponse, MetricResult
+from text2model_forge.cli import run_demo
+from text2model_forge.compiler import Text2ModelCompiler
+from text2model_forge.fake_worker import build_fake_registry
+from text2model_forge.regression import evaluate_candidate
+from text2model_forge.schemas import AssetStage, ExternalWorkerOutput, ExternalWorkerResponse, MetricResult
 
 
 def test_demo_runs_all_stages_and_is_resumable_and_verifiable(tmp_path) -> None:
@@ -15,7 +15,7 @@ def test_demo_runs_all_stages_and_is_resumable_and_verifiable(tmp_path) -> None:
     assert state["stage"] == AssetStage.export.value
     assert len(state["promoted_by_stage"]) == len(AssetStage)
 
-    resumed = DarknessCompiler(workspace, build_fake_registry())
+    resumed = Text2ModelCompiler(workspace, build_fake_registry())
     reduced = resumed.log("goblin.demo").state()
     assert reduced.status == "completed"
     assert len(resumed.log("goblin.demo").read(verify=True)) == reduced.sequence
@@ -25,8 +25,8 @@ def test_demo_runs_all_stages_and_is_resumable_and_verifiable(tmp_path) -> None:
 
 def test_hard_failure_rejects_staged_candidate_without_overwriting_baseline(tmp_path) -> None:
     workspace = tmp_path / "workspace"
-    compiler = DarknessCompiler(workspace, build_fake_registry())
-    from darkness.cli import _demo_brief
+    compiler = Text2ModelCompiler(workspace, build_fake_registry())
+    from text2model_forge.cli import _demo_brief
 
     brief = compiler.create_run("goblin.reject", _demo_brief())
     evaluation = evaluate_candidate(
@@ -45,9 +45,9 @@ def test_hard_failure_rejects_staged_candidate_without_overwriting_baseline(tmp_
 
 
 def test_external_worker_output_enters_staging_with_recursive_lineage(tmp_path) -> None:
-    from darkness.cli import _demo_brief
+    from text2model_forge.cli import _demo_brief
 
-    compiler = DarknessCompiler(tmp_path / "workspace", build_fake_registry())
+    compiler = Text2ModelCompiler(tmp_path / "workspace", build_fake_registry())
     brief = compiler.create_run("goblin.external", _demo_brief())
     brief_eval = evaluate_candidate(
         evaluation_id="eval.brief.external",

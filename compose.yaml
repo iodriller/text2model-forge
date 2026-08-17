@@ -1,4 +1,4 @@
-name: vettedmesh
+name: text2model-forge
 
 services:
   studio:
@@ -6,16 +6,16 @@ services:
       context: .
       dockerfile: Dockerfile
       args:
-        VETTEDMESH_SOURCE_REVISION: ${VETTEDMESH_SOURCE_REVISION:-}
+        TEXT2MODEL_FORGE_SOURCE_REVISION: ${TEXT2MODEL_FORGE_SOURCE_REVISION:-}
     init: true
     restart: unless-stopped
     ports:
       # Studio has no account system. Keep it reachable only from this host.
-      - "127.0.0.1:${VETTEDMESH_PORT:-8766}:8766"
+      - "127.0.0.1:${TEXT2MODEL_FORGE_PORT:-8766}:8766"
     volumes:
-      - vettedmesh-workspace:/workspace
+      - workspace:/workspace
       - type: bind
-        source: ${VETTEDMESH_DOCKER_CONFIG:-./docker/config.local.toml}
+        source: ${TEXT2MODEL_FORGE_DOCKER_CONFIG:-./docker/config.local.toml}
         target: /app/config.local.toml
         read_only: true
     extra_hosts:
@@ -30,9 +30,9 @@ services:
     init: true
     restart: unless-stopped
     ports:
-      - "127.0.0.1:${VETTEDMESH_OLLAMA_PORT:-11434}:11434"
+      - "127.0.0.1:${TEXT2MODEL_FORGE_OLLAMA_PORT:-11434}:11434"
     volumes:
-      - vettedmesh-ollama:/root/.ollama
+      - ollama-data:/root/.ollama
     healthcheck:
       test: ["CMD", "ollama", "list"]
       interval: 5s
@@ -43,6 +43,7 @@ services:
   reviewer-model:
     image: ollama/ollama:0.32.4@sha256:10c13eb515db310990527d36ca14a136da4bcc0fbf2bf3b15e9c1f111e9d3cd4
     restart: "no"
+    profiles: ["models"]
     environment:
       OLLAMA_HOST: http://ollama:11434
     command: ["pull", "qwen3-vl:8b-instruct"]
@@ -51,5 +52,5 @@ services:
         condition: service_healthy
 
 volumes:
-  vettedmesh-workspace:
-  vettedmesh-ollama:
+  workspace:
+  ollama-data:

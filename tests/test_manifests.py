@@ -2,8 +2,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from darkness.config import load_local_config
-from darkness.manifests import load_manifests, preflight
+from text2model_forge.config import load_local_config
+from text2model_forge.manifests import load_manifests, preflight
 
 
 def test_worker_manifests_are_strict_unique_and_keep_rdmesh_blocked() -> None:

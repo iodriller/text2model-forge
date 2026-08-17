@@ -4,14 +4,14 @@ import subprocess
 import sys
 from pathlib import Path
 
-from darkness.schemas import AssetStage, ExternalWorkerRequest
+from text2model_forge.schemas import AssetStage, ExternalWorkerRequest
 
 
 ROOT = Path(__file__).resolve().parents[1]
 
 
 def test_instant_meshes_worker_source_compiles() -> None:
-    source = (ROOT / "adapters" / "instant_meshes_retopology_worker.py").read_text(encoding="utf-8")
+    source = (ROOT / "resources" / "adapters" / "instant_meshes_retopology_worker.py").read_text(encoding="utf-8")
     compile(source, "instant_meshes_retopology_worker.py", "exec")
     assert '"--deterministic"' in source
     assert '"--threads", "1"' in source
@@ -25,7 +25,7 @@ def test_instant_meshes_builder_emits_strict_d4_contract(tmp_path: Path) -> None
     result = subprocess.run(
         [
             sys.executable,
-            str(ROOT / "adapters" / "build_instant_meshes_request.py"),
+            str(ROOT / "resources" / "adapters" / "build_instant_meshes_request.py"),
             "--input", str(source),
             "--output-directory", str(tmp_path / "output"),
             "--out", str(request_path),

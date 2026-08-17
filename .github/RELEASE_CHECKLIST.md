@@ -12,7 +12,7 @@ Release version: `____________`  Commit: `______________________________________
 - [ ] Dependency audit, CodeQL, and all-history Gitleaks checks pass.
 - [ ] Every dependency/model in the selected live stack has an exact revision and reviewed terms.
 - [ ] All ten `static-props-8gb-v1` cases were attempted with real workers.
-- [ ] `vettedmesh golden evaluate` reports at least 8/10 passing cases.
+- [ ] `text2model-forge golden evaluate` reports at least 8/10 passing cases.
 - [ ] The generated evidence gallery and machine/model metadata are attached.
 - [ ] The owner accepted public exposure of historical author names/emails.
 - [ ] The owner completed any required trademark/name and legal review.

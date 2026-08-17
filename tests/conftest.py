@@ -31,8 +31,8 @@ def isolate_machine_config(monkeypatch: pytest.MonkeyPatch, tmp_path_factory) ->
     """Point the default config.local.toml lookup at a path that cannot exist.
 
     Both module-level names are patched, not just the source one:
-    darkness.settings does `from .config import default_config_path`, so it
-    holds its own reference and patching only darkness.config would leave the
+    text2model_forge.settings does `from .config import default_config_path`, so it
+    holds its own reference and patching only text2model_forge.config would leave the
     settings resolver still reading the real file.
     """
     missing = tmp_path_factory.mktemp("no-machine-config") / "config.local.toml"
@@ -40,6 +40,6 @@ def isolate_machine_config(monkeypatch: pytest.MonkeyPatch, tmp_path_factory) ->
     def _absent() -> Path:
         return missing
 
-    monkeypatch.setattr("darkness.config.default_config_path", _absent)
-    monkeypatch.setattr("darkness.settings.default_config_path", _absent, raising=False)
-    monkeypatch.setattr("darkness.settings._default_machine_path", _absent, raising=False)
+    monkeypatch.setattr("text2model_forge.config.default_config_path", _absent)
+    monkeypatch.setattr("text2model_forge.settings.default_config_path", _absent, raising=False)
+    monkeypatch.setattr("text2model_forge.settings._default_machine_path", _absent, raising=False)

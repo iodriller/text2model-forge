@@ -1,6 +1,6 @@
-"""Tests for the headless `darkness studio list/show/decide` CLI surface.
+"""Tests for the headless `text2model_forge studio list/show/decide` CLI surface.
 
-These exercise darkness.studio_cli's functions directly against fakes, the
+These exercise text2model_forge.studio_cli's functions directly against fakes, the
 same boundary tests/test_studio_web.py uses for build_server() -- cli.py's
 own argv-to-dispatch plumbing is covered separately by test_studio_cli_argv
 below, which only checks that argparse wires flags to the right values
@@ -16,10 +16,10 @@ import time
 
 import pytest
 
-from darkness.cli import _parser
-from darkness.studio_cli import decide, list_runs, show_run
-from darkness.studio_pipeline import StudioCoordinator
-from darkness.studio_store import StudioStore
+from text2model_forge.cli import _parser
+from text2model_forge.studio_cli import decide, list_runs, show_run
+from text2model_forge.studio_pipeline import StudioCoordinator
+from text2model_forge.studio_store import StudioStore
 
 from test_studio import BlockingControlFakeComfy, DESCRIPTION, FakeComfy, FakeQwen, wait_for
 
@@ -177,6 +177,8 @@ def test_argv_parses_every_studio_decide_flag(tmp_path: Path) -> None:
             "cand-1",
             "--overrides",
             '{"seed": 7}',
+            "--assisted-by-review-id",
+            "review-1",
             "--no-resume",
         ]
     )
@@ -185,6 +187,7 @@ def test_argv_parses_every_studio_decide_flag(tmp_path: Path) -> None:
     assert decide_args.comment == "Widen the shield."
     assert decide_args.selected_evidence_id == "cand-1"
     assert decide_args.overrides == '{"seed": 7}'
+    assert decide_args.assisted_by_review_id == "review-1"
     assert decide_args.no_resume is True
 
 

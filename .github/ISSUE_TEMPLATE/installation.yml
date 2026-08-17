@@ -15,7 +15,7 @@ body:
     id: launcher
     attributes:
       label: Launcher
-      options: [vettedmesh.ps1, vettedmesh.sh, Docker Compose, manual core]
+      options: [text2model-forge.ps1, text2model-forge.sh, Docker Compose, manual core]
     validations: {required: true}
   - type: input
     id: action

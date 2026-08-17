@@ -2,15 +2,15 @@ from __future__ import annotations
 
 import json
 
-from darkness.localdeploy import LocalDeployStructuredClient
-from darkness.referee import (
+from text2model_forge.localdeploy import LocalDeployStructuredClient
+from text2model_forge.referee import (
     LocalDeployReferee,
     RefereeEvidence,
     RefereeOutcome,
     plateau_reached,
     unblind_referee,
 )
-from darkness.schemas import AssetStage
+from text2model_forge.schemas import AssetStage
 
 
 def test_blinded_referee_calls_a_virtual_match_a_tie_and_unblinds_it() -> None:
@@ -68,7 +68,7 @@ def test_referee_unblinding_and_two_round_plateau_policy() -> None:
         "confidence": "medium",
         "reason": "Option A has a clearer line of action.",
     }
-    from darkness.referee import RefereeDecision
+    from text2model_forge.referee import RefereeDecision
 
     parsed = RefereeDecision.model_validate(decision)
     assert unblind_referee(parsed, candidate_option="a") is RefereeOutcome.material_improvement

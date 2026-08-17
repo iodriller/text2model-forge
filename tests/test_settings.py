@@ -5,8 +5,8 @@ from pathlib import Path
 
 import pytest
 
-from darkness.settings import quality_overrides, resolve_settings, studio_overrides
-from darkness.studio_models import new_studio_run
+from text2model_forge.settings import quality_overrides, resolve_settings, studio_overrides
+from text2model_forge.studio_models import new_studio_run
 
 
 def test_base_profile_matches_documented_studio_defaults():
@@ -38,7 +38,7 @@ def test_advanced_profile_overrides_stage_parameters():
 def test_base_profile_names_the_worker_d2_actually_calls():
     """Regression: base.toml claimed [stages.D2].worker_id was
     canonical.short_biped (the deterministic procedural fallback used by
-    `darkness run-worker`), while _run_d2 has always called trellis2.4b.
+    `text2model_forge run-worker`), while _run_d2 has always called trellis2.4b.
     The documented default must name the worker the stage really uses."""
     assert resolve_settings(profile="base").get("stages.D2.worker_id") == "trellis2.4b"
 
@@ -93,11 +93,11 @@ def test_missing_base_toml_in_an_explicit_repo_root_fails_closed(tmp_path):
 
 def test_studio_defaults_are_read_from_the_same_file_as_worker_bindings():
     """Regression: resolve_settings() defaulted to CWD/config.local.toml while
-    darkness.config read worker bindings from the package root, so the
+    text2model_forge.config read worker bindings from the package root, so the
     documented 'copy machine.example.toml to config.local.toml' workflow
     silently dropped [studio_defaults] unless CWD happened to match."""
-    from darkness.config import default_config_path
-    from darkness.settings import _default_machine_path
+    from text2model_forge.config import default_config_path
+    from text2model_forge.settings import _default_machine_path
 
     assert _default_machine_path() == default_config_path()
 
@@ -149,7 +149,7 @@ def test_standard_quality_matches_studio_runs_own_field_defaults_exactly():
     """The whole point of pinning standard to concept_workflow()'s real
     defaults in base.toml: a run built from the resolved base/simple
     overrides must be pixel-for-pixel identical to one built with none."""
-    from darkness.studio_models import new_studio_run
+    from text2model_forge.studio_models import new_studio_run
 
     default_run = new_studio_run("run.a", "a run with absolutely no overrides")
     resolved = resolve_settings(profile="simple")
@@ -185,7 +185,7 @@ def test_new_studio_run_with_custom_override_actually_changes_the_field():
 def test_cli_config_show_prints_value_and_origin_for_every_key(tmp_path):
     result = subprocess.run(
         [
-            sys.executable, "-m", "darkness", "config", "show", "--profile", "advanced",
+            sys.executable, "-m", "text2model_forge", "config", "show", "--profile", "advanced",
             # A subprocess cannot see conftest's monkeypatch, so it would read
             # the developer's real config.local.toml and report "set_by:
             # machine" for anything that file overrides. Point it at a path
@@ -206,7 +206,7 @@ def test_cli_config_show_prints_value_and_origin_for_every_key(tmp_path):
 def test_cli_config_show_values_only_is_plain_merged_json(tmp_path):
     result = subprocess.run(
         [
-            sys.executable, "-m", "darkness", "config", "show", "--profile", "simple",
+            sys.executable, "-m", "text2model_forge", "config", "show", "--profile", "simple",
             "--values-only", "--machine-path", str(tmp_path / "absent.toml"),
         ],
         cwd=Path(__file__).resolve().parents[1],

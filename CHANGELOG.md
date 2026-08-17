@@ -19,8 +19,8 @@ period, minor versions may change experimental worker and UI contracts.
 
 ### Changed
 
-- Public identity changed from Asset Forge to VettedMesh to avoid established
-  product and Python-distribution collisions.
+- The public identity now makes the text-to-model scope explicit and avoids
+  established product and Python-distribution collisions.
 - Product claims now distinguish deterministic orchestration tests from live
   model qualification.
 - The small-model D0 classifier now defines the complete asset-kind taxonomy,

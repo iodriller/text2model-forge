@@ -2,23 +2,23 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from darkness.cli import _demo_brief
-from darkness.compiler import DarknessCompiler
-from darkness.fake_worker import build_fake_registry
-from darkness.mesh import MeshRepairDecision
-from darkness.mesh_worker import evaluate_mesh_repair, register_mesh_operations
-from darkness.regression import evaluate_candidate
-from darkness.schemas import AssetStage, ExternalWorkerOutput, ExternalWorkerResponse, MetricResult
+from text2model_forge.cli import _demo_brief
+from text2model_forge.compiler import Text2ModelCompiler
+from text2model_forge.fake_worker import build_fake_registry
+from text2model_forge.mesh import MeshRepairDecision
+from text2model_forge.mesh_worker import evaluate_mesh_repair, register_mesh_operations
+from text2model_forge.regression import evaluate_candidate
+from text2model_forge.schemas import AssetStage, ExternalWorkerOutput, ExternalWorkerResponse, MetricResult
 
 
-FIXTURES = Path(__file__).resolve().parents[1] / "fixtures" / "mesh"
+FIXTURES = Path(__file__).resolve().parent / "fixtures" / "mesh"
 
 
-def _compiler_at_geometry(tmp_path: Path) -> tuple[DarknessCompiler, str, str]:
+def _compiler_at_geometry(tmp_path: Path) -> tuple[Text2ModelCompiler, str, str]:
     run_id = "goblin.mesh.cleanup"
     registry = build_fake_registry()
     register_mesh_operations(registry)
-    compiler = DarknessCompiler(tmp_path / "workspace", registry)
+    compiler = Text2ModelCompiler(tmp_path / "workspace", registry)
     brief = compiler.create_run(run_id, _demo_brief())
     brief_evaluation = evaluate_candidate(
         evaluation_id="eval.brief.mesh",
@@ -94,7 +94,7 @@ def test_mesh_repair_is_staged_evaluated_and_promoted_without_overwriting_source
 
 
 def test_destructive_mesh_repair_evaluation_is_rejected() -> None:
-    from darkness.mesh import TriangleMesh
+    from text2model_forge.mesh import TriangleMesh
 
     source = TriangleMesh.from_obj((FIXTURES / "clean_tetrahedron.obj").read_text(encoding="utf-8"))
     _, decision = source.guarded_repair(minimum_component_faces=5)

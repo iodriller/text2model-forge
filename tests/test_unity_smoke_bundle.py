@@ -8,9 +8,9 @@ import pytest
 
 
 ROOT = Path(__file__).resolve().parents[1]
-BUILD = runpy.run_path(str(ROOT / "adapters/build_unity_smoke_bundle.py"))["build"]
-INGEST = runpy.run_path(str(ROOT / "adapters/ingest_unity_smoke_result.py"))["ingest"]
-ARCHIVE = runpy.run_path(str(ROOT / "adapters/archive_unity_smoke_bundle.py"))["archive"]
+BUILD = runpy.run_path(str(ROOT / "resources/adapters/build_unity_smoke_bundle.py"))["build"]
+INGEST = runpy.run_path(str(ROOT / "resources/adapters/ingest_unity_smoke_result.py"))["ingest"]
+ARCHIVE = runpy.run_path(str(ROOT / "resources/adapters/archive_unity_smoke_bundle.py"))["archive"]
 
 
 def _sha256(path: Path) -> str:
@@ -21,7 +21,7 @@ def _candidate(tmp_path: Path) -> Path:
     package = tmp_path / "package"
     package.mkdir()
     master = tmp_path / "candidate.blend"
-    master.write_bytes(b"editable-darkness-master")
+    master.write_bytes(b"editable-text2model-master")
     actions = []
     for clip in ("idle", "walk", "attack", "death"):
         for direction in ("north", "south", "east", "west"):
@@ -60,8 +60,8 @@ def _candidate(tmp_path: Path) -> Path:
 
 def test_standalone_unity_bundle_builds_and_ingests_hash_bound_result(tmp_path: Path) -> None:
     bundle = tmp_path / "bundle"
-    built = BUILD(_candidate(tmp_path), bundle, ROOT / "unity_smoke_template")
-    assert built["bundle_kind"] == "darkness_standalone_unity_smoke"
+    built = BUILD(_candidate(tmp_path), bundle, ROOT / "resources" / "unity_smoke_template")
+    assert built["bundle_kind"] == "text2model_standalone_unity_smoke"
     assert built["directional_actions"] == 16
     assert built["expected_decoded_sprites"] == 16
     assert built["unity_version_family"] == "6000.5"
@@ -81,8 +81,8 @@ def test_standalone_unity_bundle_builds_and_ingests_hash_bound_result(tmp_path: 
     assert first["archive_sha256"] == second["archive_sha256"]
     with zipfile.ZipFile(tmp_path / "bundle.zip") as zipped:
         assert "bundle_manifest.json" in zipped.namelist()
-        assert "UnitySmokeProject/Assets/Editor/DarknessCandidateValidator.cs" in zipped.namelist()
-        assert "UnitySmokeProject/Assets/Editor/DarknessCandidateReviewWindow.cs" in zipped.namelist()
+        assert "UnitySmokeProject/Assets/Editor/Text2ModelCandidateValidator.cs" in zipped.namelist()
+        assert "UnitySmokeProject/Assets/Editor/Text2ModelCandidateReviewWindow.cs" in zipped.namelist()
 
     result = bundle / "result"
     result.mkdir()
@@ -92,7 +92,7 @@ def test_standalone_unity_bundle_builds_and_ingests_hash_bound_result(tmp_path: 
     report = {
         "passed": True,
         "asset_id": built["asset_id"],
-        "project_kind": "darkness_standalone_unity_smoke",
+        "project_kind": "text2model_standalone_unity_smoke",
         "unity_version": "6000.5.3f1",
         "candidate_manifest_sha256": built["candidate_manifest_sha256"],
         "bundle_manifest_sha256": _sha256(bundle_manifest),
@@ -120,7 +120,7 @@ def test_standalone_unity_bundle_builds_and_ingests_hash_bound_result(tmp_path: 
 
 def test_unity_result_ingest_rejects_changed_bundle_file(tmp_path: Path) -> None:
     bundle = tmp_path / "bundle"
-    BUILD(_candidate(tmp_path), bundle, ROOT / "unity_smoke_template")
+    BUILD(_candidate(tmp_path), bundle, ROOT / "resources" / "unity_smoke_template")
     (bundle / "candidate/idle_north.png").write_bytes(b"tampered")
     with pytest.raises(ValueError, match="bundle file changed"):
         INGEST(bundle, bundle / "result", tmp_path / "ingested")

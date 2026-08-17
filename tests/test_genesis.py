@@ -4,8 +4,8 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from assetforge.core import ForgeError
-from assetforge.genesis import inspect_anatomy_target, inspect_genesis_spec, validate_genesis_spec
+from text2model_forge.sprites.core import ForgeError
+from text2model_forge.sprites.genesis import inspect_anatomy_target, inspect_genesis_spec, validate_genesis_spec
 
 
 def _spec():

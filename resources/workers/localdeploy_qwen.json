@@ -1,0 +1,25 @@
+{
+  "schema_version": 1,
+  "capability": {
+    "schema_version": 1,
+    "worker_id": "optimizer.qwen3.6-27b",
+    "worker_version": "83c54730a5fea8a0958598c01617c1419c431e93b33bacf980b49a420c798926",
+    "candidate_id": "qwen3.6-27b",
+    "stages": ["D0_brief", "D1_concept", "D2_geometry", "D3_anatomy", "D4_topology", "D5_rig", "D6_skinning", "D7_motion", "D8_surface", "D9_optimization", "D10_export"],
+    "operations": ["optimizer.diagnose", "optimizer.rank_candidates"],
+    "requires_gpu": true,
+    "exclusive_gpu": true,
+    "supports_cancel": true,
+    "deterministic": false,
+    "input_media_types": ["application/json", "image/png"],
+    "output_media_types": ["application/json"]
+  },
+  "adapter": "localdeploy",
+  "lifecycle": "research_ready",
+  "source_url": "https://github.com/QwenLM/Qwen3.6",
+  "pinned_revision": "sha256:83c54730a5fea8a0958598c01617c1419c431e93b33bacf980b49a420c798926",
+  "environment_kind": "windows",
+  "health_url": "http://127.0.0.1:8000/health",
+  "license_gate": "permitted",
+  "blockers": ["Held-out Text2Model defect-corpus benchmark is incomplete.", "Eight-image requests are not qualified."]
+}
