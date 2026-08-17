@@ -167,14 +167,6 @@ class RevisionPlan(StrictModel):
     stop_reason: str | None = None
 
 
-class GeometrySeedPlan(StrictModel):
-    schema_version: Literal[1] = 1
-    positive_prompt: str = Field(min_length=80, max_length=1400)
-    negative_prompt: str = Field(min_length=20, max_length=700)
-    seed: int = Field(ge=0)
-    rationale: _ReviewSummary
-
-
 class AutomaticAssessment(StrictModel):
     schema_version: Literal[1] = 1
     goal_satisfied: bool
@@ -212,6 +204,10 @@ class RigidPartPlan(StrictModel):
                 self.minimum_degrees,
             )
         return self
+
+
+class _VisualPresence(StrictModel):
+    present: bool
 
 
 class RigidStructurePlan(StrictModel):
@@ -387,6 +383,40 @@ class StudioQwen:
             raise ValueError("spec_strategy must be 'monolithic' or 'chunked'")
         self.spec_strategy = spec_strategy
         self.last_spec_trace: list[dict[str, object]] = []
+
+    def visual_presence(self, image_path: Path, question: str, *, max_tokens: int = 40) -> bool:
+        """One bounded yes/no question about an already-prepared image,
+        typically a small crop.
+
+        Framed as a single spatially-scoped binary rather than an open count
+        or a whole-scene judgement, because that framing is the one the
+        counting-reliability literature actually supports: "Your Vision-
+        Language Model Can't Even Count to 20" (arXiv:2510.04401) and the
+        attention-based counting study (arXiv:2511.17722) both find VLM
+        counting unreliable, and the former specifically finds that
+        decomposing a prompt into counting sub-questions makes it WORSE, not
+        better. A single localized presence/absence question is the
+        exception that stays reliable, which is what spec_conformance.py
+        is built on: many small crops and yes/no answers instead of one
+        "does this look right" judgement over the whole image.
+        """
+        result = self.client.request(
+            model=self.model,
+            messages=[
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": question},
+                        _image_content(image_path),
+                    ],
+                }
+            ],
+            response_model=_VisualPresence,
+            max_attempts=2,
+            temperature=0.0,
+            max_tokens=max_tokens,
+        )
+        return result.present
 
     def compile_spec(self, description: str) -> StudioAssetSpec:
         if self.spec_strategy == "chunked":
@@ -899,39 +929,6 @@ DRAFT={draft.model_dump_json()}
             confidence=result.confidence,
             hard_requirements_satisfied=result.hard_requirements_satisfied,
             request_human_review=True,
-        )
-
-    def geometry_seed_plan(
-        self,
-        spec: StudioAssetSpec,
-        stage: StudioStageState,
-        selected_concept: Path,
-    ) -> GeometrySeedPlan:
-        content = [
-            {
-                "type": "text",
-                "text": (
-                    "Prepare a single SDXL geometry-seed prompt based on this approved identity concept. The output "
-                    "must preserve the same approved original asset alone, centered, fully visible, straight-on, on a "
-                    "flat pure green chroma-key background with no floor shadow. For deformable characters, use an "
-                    "unarmed neutral symmetrical A-pose with both open empty hands; rigid equipment is intentionally "
-                    "omitted because Text2Model constructs and sockets it separately. For props or architecture, show "
-                    "the complete object and all structural/movable pieces in their neutral state; do not invent a "
-                    "humanoid pose. Preserve identity, materials, colors and proportions. Avoid text, scenery and "
-                    "perspective distortion. Include "
-                    "prior numerical/Qwen/human history when choosing the seed and wording.\n\n"
-                    f"SPEC={spec.model_dump_json()}\nHISTORY={_history(stage)}"
-                ),
-            },
-            _image_content(selected_concept),
-        ]
-        return self.client.request(
-            model=self.model,
-            messages=[{"role": "user", "content": content}],
-            response_model=GeometrySeedPlan,
-            max_attempts=2,
-            temperature=0.1,
-            max_tokens=1400,
         )
 
     def review_geometry(

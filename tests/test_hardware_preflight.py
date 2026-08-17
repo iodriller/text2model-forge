@@ -24,6 +24,7 @@ from text2model_forge.preflight import (
     Check,
     check_comfy_nodes,
     check_donor_motion,
+    check_equipment_conformance_capability,
     check_reviewer_fits,
     check_spec_strategy,
     check_voxel_vs_grip,
@@ -132,6 +133,27 @@ def test_preflight_accepts_chunked_on_a_small_model():
         check_spec_strategy({"model": "qwen3-vl:4b-instruct", "spec_strategy": "chunked"}).status
         == "ok"
     )
+
+
+def test_preflight_warns_when_reviewer_is_not_vision_capable():
+    """The D1 equipment-duplication guard and check_equipment_conformance()
+    both call visual_presence unconditionally on the real StudioQwen -- a
+    text-only reviewer does not raise, it just answers image questions it
+    cannot see, so the exact duplicate-equipment defect this mechanism
+    exists to catch would go uncaught with no error anywhere."""
+    check = check_equipment_conformance_capability({"model": "llama3.1:8b"})
+    assert check.status == "warn"
+    assert "vision" in check.detail.lower()
+    assert check.remedy.strip()
+
+
+def test_preflight_accepts_a_vision_model_by_name():
+    check = check_equipment_conformance_capability({"model": "qwen3-vl:4b-instruct"})
+    assert check.status == "ok"
+
+
+def test_equipment_conformance_capability_check_is_skipped_with_no_model():
+    assert check_equipment_conformance_capability({}).status == "skip"
 
 
 def test_preflight_catches_a_voxel_that_would_fuse_fingers():

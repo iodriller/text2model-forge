@@ -40,7 +40,7 @@ from text2model_forge.schemas import (
     ExternalWorkerResponse,
     WorkerBinding,
 )
-from text2model_forge.studio_qwen import ConceptCorrectionPlan, ConceptPlan, GeometrySeedPlan, StudioQwen
+from text2model_forge.studio_qwen import ConceptCorrectionPlan, ConceptPlan, StudioQwen
 from text2model_forge.studio_qwen import RigidPartPlan, RigidStructurePlan, _history
 from text2model_forge.studio_store import StudioStore
 
@@ -128,14 +128,6 @@ class FakeQwen:
             denoise=0.8,
             diagnosis="Shield was too small.",
             preserve=["Right-hand sword."],
-        )
-
-    def geometry_seed_plan(self, spec, stage, selected_concept):
-        return GeometrySeedPlan(
-            positive_prompt="A " * 45 + "unarmed A-pose geometry seed, neutral studio lighting.",
-            negative_prompt="equipment, weapons, cropped limbs, wrong pose",
-            seed=606 + stage.iteration,
-            rationale="Unarmed A-pose isolates body geometry from equipment.",
         )
 
     def review_geometry(self, spec, stage, selected_concept, diagnostic, metrics):

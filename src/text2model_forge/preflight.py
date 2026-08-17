@@ -142,6 +142,48 @@ def check_spec_strategy(settings: dict[str, Any]) -> Check:
     )
 
 
+# Name tokens for reviewer models actually capable of answering an
+# image-grounded question. Inferred from the model id because that is all
+# this fast tier has to go on -- the same limitation check_spec_strategy
+# already accepts for parameter-count inference.
+_VISION_MODEL_TOKENS = ("vl", "vision", "llava", "moondream", "minicpm-v", "pixtral", "bakllava")
+
+
+def check_equipment_conformance_capability(settings: dict[str, Any]) -> Check:
+    """Is the configured reviewer actually able to run the D1
+    equipment-duplication guard and post-render conformance check
+    (spec_conformance.py and duplicate_detection.py)?
+
+    Both call `StudioQwen.visual_presence`, which always exists as a method
+    regardless of the underlying model -- so a text-only model configured as
+    the reviewer does not raise an error, it just answers an image question
+    it cannot see, silently. That is a worse failure than a missing method:
+    the exact "one shield became two and nobody caught it" defect class this
+    mechanism exists to catch would go uncaught with no error anywhere.
+    """
+    model = str(settings.get("model", "")).lower()
+    if not model:
+        return Check(name="equipment-conformance vision capability", status="skip", detail="no model configured")
+    if any(token in model for token in _VISION_MODEL_TOKENS):
+        return Check(
+            name="equipment-conformance vision capability",
+            status="ok",
+            detail=f"{model} looks vision-capable by name",
+        )
+    return Check(
+        name="equipment-conformance vision capability",
+        status="warn",
+        detail=(
+            f"{model} does not look vision-capable by name. D1's shield-repair guard and "
+            "check_equipment_conformance() both ask this model image-grounded yes/no questions; "
+            "a text-only model answers anyway, with no error, and duplicate equipment will not "
+            "be caught."
+        ),
+        remedy="Set [studio_defaults].model to a vision-capable id (contains 'vl', 'vision', "
+        "'llava', etc.) -- the same model already used for D1-D9 image review qualifies.",
+    )
+
+
 def check_llm_endpoint(settings: dict[str, Any]) -> Check:
     url = str(settings.get("localdeploy_url", "")).rstrip("/")
     model = str(settings.get("model", ""))
@@ -585,6 +627,7 @@ def run_preflight(
             pool.submit(check_spec_strategy, settings),
             pool.submit(check_llm_endpoint, settings),
             pool.submit(check_reviewer_context, settings),
+            pool.submit(check_equipment_conformance_capability, settings),
             pool.submit(check_comfy_nodes, settings, stages),
             pool.submit(check_comfy_checkpoints, settings, stages),
             pool.submit(check_voxel_vs_grip, stages, asset_height_m),

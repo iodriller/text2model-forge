@@ -293,6 +293,58 @@ def _smoothstep(start: float, end: float, value: float) -> float:
     return normalized * normalized * (3.0 - 2.0 * normalized)
 
 
+def _bind_modeled_grip(
+    obj: bpy.types.Object,
+    bone_name: str,
+    hand_group: bpy.types.VertexGroup,
+    distal_components: list[set[int]],
+) -> dict[str, object]:
+    """Rigidly bind an already-closed hand to its own hand bone.
+
+    `_build_articulated_grip` exists to *close* an open hand around a weapon
+    this script generates itself.  That is the research fixture's world: an
+    unarmed body whose hand still has separate thumb/finger branches to fold.
+
+    Since D2 began meshing the approved D1 concept image directly, the Studio
+    world is the opposite one -- the concept art shows the character already
+    holding its equipment, so image-to-3D returns a closed fist welded to a
+    weapon, as a single topology branch.  There is no open hand to close, and
+    the grip the artist approved is already modeled.  The correct action is
+    therefore not to articulate anything but to make sure the fist travels
+    rigidly with its hand bone: closed fingers have no reason to deform, and
+    leaving them on blended automatic weights is what makes a gripped weapon
+    shear away from the hand mid-swing.
+
+    Everything past the hand keeps whatever weights D6 assigned; only the
+    detected fist itself is pinned here.  `rigidly_bound_vertices` in the
+    report is what a reviewer should compare against the rendered motion.
+    """
+    rigid = sorted({index for component in distal_components for index in component})
+    # Batched per group, not per vertex: one Blender call per group instead of
+    # one per (vertex, group) pair.  Clearing every group first and re-adding a
+    # single 1.0 influence keeps the weight sum at exactly 1.0 with one
+    # influence, which is what blender_worker._skinning_report gates on.
+    for group in obj.vertex_groups:
+        group.remove(rigid)
+    hand_group.add(rigid, 1.0, "REPLACE")
+    obj.data.update()
+
+    obj["text2model_grip_corrective"] = "modeled_grip_rigid_bind_v1"
+    obj["text2model_grip_bone"] = bone_name
+    obj["text2model_grip_affected_vertices"] = len(rigid)
+    return {
+        "method": "modeled_grip_rigid_bind_v1",
+        "equipment_already_modeled": True,
+        "bone": bone_name,
+        "detected_digit_branches": len(distal_components),
+        "distal_component_sizes": [len(component) for component in distal_components],
+        "rigidly_bound_vertices": len(rigid),
+        "generated_deform_bones": [],
+        "branches": [],
+        "automatic_gate_passed": True,
+    }
+
+
 def _build_articulated_grip(
     armature: bpy.types.Object,
     meshes: set[bpy.types.Object],
@@ -355,11 +407,20 @@ def _build_articulated_grip(
         if len(component) >= 20:
             distal_components.append(component)
     distal_components.sort(key=len, reverse=True)
-    if not 2 <= len(distal_components) <= 4:
+    if not distal_components:
+        # Nothing at all past the hand bone: not a closed grip, a missing hand.
+        # No amount of weighting rescues that, so it stays a hard failure.
         raise RuntimeError(
-            f"grip topology did not resolve the expected target digit branches: "
-            f"{[len(component) for component in distal_components]}"
+            "grip topology found no geometry past the weapon hand bone; the target mesh "
+            f"has no hand to grip with (bone={bone_name!r})"
         )
+    if len(distal_components) > 4 or len(distal_components) == 1:
+        # One branch means the fingers are already closed -- welded to each
+        # other and, in the Studio path, to the weapon the concept image
+        # showed them holding.  More than four means the detector is looking
+        # at something that is not a hand.  Neither can be articulated; bind
+        # the grip as modeled instead of failing the whole run.
+        return _bind_modeled_grip(obj, bone_name, group, distal_components)
 
     region = {
         index
@@ -715,6 +776,37 @@ def _build_articulated_grip(
         "collapsed_polygons": collapsed_polygons,
         "automatic_gate_passed": passed,
     }
+
+
+def _assert_equipment_instance_count(
+    equipment_report: dict[str, object], equipment_already_modeled: bool
+) -> None:
+    """Fail loudly if the scene ends up carrying more equipment than the spec.
+
+    The duplication bugs this pipeline keeps hitting all share a shape: two
+    stages each independently supply the same item, each correct in isolation,
+    and nothing counts the total.  D1 pasted a repair shield beside one the
+    base render had already drawn; D7 bolted a procedural axe onto a mesh that
+    already had one.  Both shipped quietly because every check asked "is this
+    item present?" and none asked "how many are there?".
+
+    So this asks the second question, at the last stage that can still add an
+    item.  It counts only what *this* script generates -- equipment already
+    welded into the body mesh cannot be counted by object, which is precisely
+    why generating on top of it has to stay impossible rather than merely
+    unlikely.
+    """
+    generated = [item for item in bpy.data.objects if item.get("text2model_equipment_category")]
+    expected = 0 if equipment_already_modeled else 1 + (1 if EQUIPMENT.get("shield") else 0)
+    if len(generated) != expected:
+        raise RuntimeError(
+            "equipment instance count does not match the spec: expected "
+            f"{expected} generated equipment object(s) but the scene has {len(generated)} "
+            f"({sorted(item.name for item in generated)}). equipment_already_modeled="
+            f"{equipment_already_modeled}. Generating equipment onto a body that already "
+            "has it is what produces an asset wearing two of everything."
+        )
+    equipment_report["generated_equipment_objects"] = len(generated)
 
 
 def _create_club(armature: bpy.types.Object, body_height: float) -> bpy.types.Object:
@@ -1320,20 +1412,53 @@ def main() -> int:
         body_height,
         body_height * HANDLE_RADIUS_FRACTION,
     )
-    club = _create_club(target, body_height)
-    shield = _create_shield(target, body_height)
-    equipment_report = _validate_equipment_binding(
-        target,
-        club,
-        target_actions,
-        ranges,
-        body_height,
-        source_hand_analysis=source_hand_analysis,
-        grip_corrective=grip_corrective,
-    )
-    equipment_report["shield"] = _validate_shield_binding(
-        target, shield, target_actions, ranges, body_height
-    )
+    # Only generate equipment when the body does not already have it.
+    #
+    # _create_club/_create_shield build a procedural weapon and shield and bind
+    # them to socket bones.  That is right for an unarmed body, and wrong the
+    # moment D2's mesh already contains the equipment the approved concept
+    # image showed: the character then finishes wearing both copies.  On the
+    # run that surfaced this, the mesh already held an axe and two shields, so
+    # the unconditional calls below would have delivered two axes and three
+    # shields -- the equipment-duplication failure this pipeline has been
+    # chasing, arriving from the opposite end of the pipeline to D1's.
+    equipment_already_modeled = bool(grip_corrective.get("equipment_already_modeled"))
+    club = None if equipment_already_modeled else _create_club(target, body_height)
+    shield = None if equipment_already_modeled else _create_shield(target, body_height)
+    if equipment_already_modeled:
+        equipment_report = {
+            **EQUIPMENT,
+            "mesh": "modeled_in_body_mesh",
+            "equipment_source": "d2_image_to_3d_modeled",
+            "generated_equipment_objects": 0,
+            "grip_corrective": grip_corrective,
+            "source_hand_analysis": source_hand_analysis,
+            "automatic_gate_passed": True,
+            "human_approval_required": True,
+            "human_approved": False,
+        }
+        # Not None: the shield is present, it just arrived as mesh rather than
+        # as a generated object, so there is no attachment error to report.
+        # Reporting None here would read as "the spec asked for no shield".
+        equipment_report["shield"] = (
+            {"source": "modeled_in_body_mesh", "spec": EQUIPMENT.get("shield")}
+            if EQUIPMENT.get("shield")
+            else None
+        )
+    else:
+        equipment_report = _validate_equipment_binding(
+            target,
+            club,
+            target_actions,
+            ranges,
+            body_height,
+            source_hand_analysis=source_hand_analysis,
+            grip_corrective=grip_corrective,
+        )
+        equipment_report["shield"] = _validate_shield_binding(
+            target, shield, target_actions, ranges, body_height
+        )
+    _assert_equipment_instance_count(equipment_report, equipment_already_modeled)
     _reset_pose(target)
     target.animation_data.action = None
     bpy.context.scene.frame_set(1)

@@ -16,10 +16,16 @@ from text2model_forge.paths import resource_root
 from PIL import Image, ImageDraw, ImageFilter, ImageOps, ImageStat
 
 from .config import load_local_config, worker_binding
+from .duplicate_detection import patch_already_present_elsewhere
 from .external_worker import SubprocessWorkerAdapter
 from .hashing import sha256_file
 from .manifests import load_manifests
 from .schemas import ArtifactLineage, ArtifactRecord, AssetStage, ExternalWorkerRequest
+from .spec_conformance import (
+    EquipmentConformanceReport,
+    check_equipment_conformance,
+    presence_check,
+)
 from .studio_comfy import (
     StudioComfyClient,
     concept_workflow,
@@ -1501,6 +1507,15 @@ class StudioCoordinator:
                         "workflow_strategy": workflow_strategy,
                     },
                 )
+        # Both the shield-repair "measure before act" guard and the equipment
+        # conformance check below need a vision-capable qwen provider. Real
+        # StudioQwen always has visual_presence; a test double that models an
+        # older/narrower interface (most of this suite's FakeQwen instances)
+        # may not, and must fall back to the pre-existing behaviour exactly
+        # -- unconditional repair, no conformance report -- rather than raise
+        # AttributeError deep inside a stage that a hundred other tests drive
+        # through without caring about this specific mechanism.
+        qwen_supports_vision_presence = callable(getattr(qwen, "visual_presence", None))
         for index, seed in enumerate(plan.seeds, start=1):
             evidence_id = f"d1-i{stage.iteration:02d}-candidate-{index}"
             self._progress(
@@ -1559,45 +1574,114 @@ class StudioCoordinator:
                     attempt_root / f"candidate-{index}" / "composited_full_image.png",
                 )
             shield_repaired = False
+            shield_repair_skipped_reason = ""
+            shield_duplicate_risk_similarity: float | None = None
             if not use_qwen_image_generation and deferred_shield is not None and not (
                 correction and correction.operation_id != "regenerate_complete_asset"
             ):
                 shield_dir = attempt_root / f"candidate-{index}" / "shield_repair"
                 shield_box = _limb_repair_box(deferred_shield.side)
-                shield_crop, shield_mask, shield_crop_box = _prepare_inpaint_crop(image, shield_box, shield_dir)
-                shield_upload_folder = f"text2model_studio/{run.run_id}/i{stage.iteration:02d}"
-                shield_crop_upload = comfy.upload_image(
-                    shield_crop.name, shield_crop.read_bytes(), shield_upload_folder
+                # Measure before acting. This repair used to run
+                # unconditionally, regardless of whether the base render had
+                # already honored -- or, as observed on a real run, ignored --
+                # its own "this side is empty" instruction. Only the target
+                # region is checked here (a cheap, narrow question); a stray
+                # item that landed somewhere ELSE on the character is not
+                # this candidate's target box and is what the deterministic
+                # check below and check_equipment_conformance() after the
+                # loop exist to catch instead.
+                # Short and generic (category noun, not the full spec
+                # description) -- see spec_conformance.py's presence-check
+                # comment for the live-verified reason: the verbose,
+                # spec-worded phrasing measurably degrades the 4B reviewer's
+                # accuracy on the exact same crop.
+                already_present = qwen_supports_vision_presence and presence_check(
+                    qwen,
+                    image,
+                    shield_box,
+                    f"Does this image already clearly show a {deferred_shield.category}?",
                 )
-                shield_mask_upload = comfy.upload_image(
-                    shield_mask.name, shield_mask.read_bytes(), shield_upload_folder
+                if already_present:
+                    shield_repair_skipped_reason = "already_present_in_target_region"
+                else:
+                    shield_crop, shield_mask, shield_crop_box = _prepare_inpaint_crop(
+                        image, shield_box, shield_dir
+                    )
+                    shield_upload_folder = f"text2model_studio/{run.run_id}/i{stage.iteration:02d}"
+                    shield_crop_upload = comfy.upload_image(
+                        shield_crop.name, shield_crop.read_bytes(), shield_upload_folder
+                    )
+                    shield_mask_upload = comfy.upload_image(
+                        shield_mask.name, shield_mask.read_bytes(), shield_upload_folder
+                    )
+                    shield_positive, shield_negative = _deferred_shield_repair_prompts(deferred_shield)
+                    shield_workflow = inpaint_workflow(
+                        checkpoint=run.checkpoint,
+                        positive=shield_positive,
+                        negative=shield_negative,
+                        seed=seed + 1,
+                        prefix=f"Text2ModelStudio/{run.run_id}/concept/i{stage.iteration:02d}_{index}_shield",
+                        source_image=shield_crop_upload,
+                        mask_image=shield_mask_upload,
+                        denoise=0.75,
+                        loras=applied_loras,
+                    )
+                    shield_generated = comfy.generate(
+                        workflow=shield_workflow,
+                        destination=shield_dir / "generated",
+                    )[0]
+                    # Deterministic, model-free second layer, run before the
+                    # paste: does the patch about to be pasted already closely
+                    # resemble something present elsewhere in the base image?
+                    # A near-duplicate here is the pixel-level signature of the
+                    # observed bug (a stray shield the base render produced,
+                    # plus a second one about to be pasted in). Recorded, not
+                    # blocking on its own -- a stylized render can legitimately
+                    # false-positive here -- so check_equipment_conformance()
+                    # after the loop is the semantic, authoritative check.
+                    crop_width = shield_crop_box[2] - shield_crop_box[0]
+                    crop_height = shield_crop_box[3] - shield_crop_box[1]
+                    _duplicate_found, shield_duplicate_risk_similarity = patch_already_present_elsewhere(
+                        image,
+                        shield_generated,
+                        exclude_box=shield_crop_box,
+                        template_resize=(max(1, crop_width), max(1, crop_height)),
+                    )
+                    image = _composite_inpaint_crop(
+                        image, shield_generated, shield_mask, shield_crop_box, shield_dir / "composited.png"
+                    )
+                    shield_repaired = True
+            equipment_conformance = (
+                check_equipment_conformance(qwen, image, run.spec)
+                if qwen_supports_vision_presence
+                else EquipmentConformanceReport(conforms=True)
+            )
+            if equipment_conformance.violations:
+                conformance_path = attempt_root / f"candidate-{index}" / "equipment_conformance.json"
+                _write_json(conformance_path, equipment_conformance.model_dump(mode="json"))
+                self.store.evidence(
+                    run,
+                    "D1",
+                    conformance_path,
+                    evidence_id=f"{evidence_id}-equipment-conformance",
+                    label=f"Equipment contract check, candidate {index}",
+                    media_type="application/json",
+                    metrics={"iteration": stage.iteration, "selectable": False},
                 )
-                shield_positive, shield_negative = _deferred_shield_repair_prompts(deferred_shield)
-                shield_workflow = inpaint_workflow(
-                    checkpoint=run.checkpoint,
-                    positive=shield_positive,
-                    negative=shield_negative,
-                    seed=seed + 1,
-                    prefix=f"Text2ModelStudio/{run.run_id}/concept/i{stage.iteration:02d}_{index}_shield",
-                    source_image=shield_crop_upload,
-                    mask_image=shield_mask_upload,
-                    denoise=0.75,
-                    loras=applied_loras,
-                )
-                shield_generated = comfy.generate(
-                    workflow=shield_workflow,
-                    destination=shield_dir / "generated",
-                )[0]
-                image = _composite_inpaint_crop(
-                    image, shield_generated, shield_mask, shield_crop_box, shield_dir / "composited.png"
-                )
-                shield_repaired = True
             metrics = _image_metrics(image)
             metrics.update(
                 {
                     "seed": seed,
                     "iteration": stage.iteration,
-                    "selectable": True,
+                    # A candidate with a detected equipment duplicate must
+                    # not be approvable at all -- StudioStore.decide() already
+                    # hard-enforces this boolean at approval time, so this is
+                    # the actual gate, not just a recorded finding. Without
+                    # it, D1's own free-form critic (proven unreliable for
+                    # counting -- see spec_conformance.py's module docstring)
+                    # remains the only thing standing between a duplicated
+                    # candidate and approval.
+                    "selectable": equipment_conformance.conforms,
                     "operation_id": correction.operation_id if correction else "regenerate_complete_asset",
                     "base_evidence_id": correction.base_evidence_id if correction else "",
                     "workflow_strategy": workflow_strategy,
@@ -1606,6 +1690,10 @@ class StudioCoordinator:
                     "lora_count": len(applied_loras),
                     "local_high_resolution_crop": correction_crop_box is not None,
                     "deferred_shield_repaired": shield_repaired,
+                    "deferred_shield_repair_skipped_reason": shield_repair_skipped_reason,
+                    "shield_repair_duplicate_risk_similarity": shield_duplicate_risk_similarity,
+                    "equipment_conformance_ok": equipment_conformance.conforms,
+                    "equipment_conformance_violations": "; ".join(equipment_conformance.violations),
                 }
             )
             self.store.evidence(
