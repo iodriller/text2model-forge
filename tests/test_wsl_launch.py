@@ -1,10 +1,20 @@
 from __future__ import annotations
 
 import json
+import sys
 from pathlib import Path
 
 import pytest
 
+# wsl_launch.py bridges native Windows drive paths to their WSL2 DrvFS
+# mounts; windows_path_to_wsl() rejects any path resolve() doesn't turn into
+# a `<drive>:\...` form, which is exactly what happens to every path here on
+# a non-Windows runner. Same constraint ci.yml already applies to this
+# adapter's other Windows-only steps.
+pytestmark = pytest.mark.skipif(
+    sys.platform != "win32",
+    reason="wsl_launch.py translates native Windows drive paths only",
+)
 
 ADAPTER = Path(__file__).resolve().parents[1] / "resources" / "adapters" / "wsl_launch.py"
 
